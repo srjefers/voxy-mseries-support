@@ -14,6 +14,17 @@ layout(local_size_x = 128) in;
 #import <voxy:lod/section.glsl>
 #import <voxy:lod/gl46/bindings.glsl>
 
+// Draw-command region capacities, injected by MDICSectionRenderer.cmdgenDefines()
+// (opaque region size, temporal region size). Fail open if absent so the shader
+// still compiles standalone — a missing cap restores the pre-fix behaviour
+// rather than breaking the build.
+#ifndef MAX_OPAQUE_DRAWS
+#define MAX_OPAQUE_DRAWS 0x7fffffff
+#endif
+#ifndef MAX_TEMPORAL_DRAWS
+#define MAX_TEMPORAL_DRAWS 0x7fffffff
+#endif
+
 //https://github.com/KhronosGroup/GLSL/blob/master/extensions/ext/GL_EXT_shader_16bit_storage.txt
 // adds support for uint8_t which can use for compact visibility buffer
 
@@ -92,10 +103,20 @@ void main() {
 
         uint cmdCnt = bitCount(msk);
         uint cmdPtr = atomicAdd(opaqueDrawCount, cmdCnt);
+        // Clamp the opaque write cursor to the opaque region [0, MAX_OPAQUE_DRAWS).
+        // The atomic is unbounded; a large render list can request more commands
+        // than the slice holds. Writing past it is undefined on Metal (device
+        // fault) and corrupts the translucent/temporal slices on GL. The whole
+        // section's opaque draws are dropped together (graceful — the CPU read
+        // count saturates at the same cap), so cmdPtr stays consistent.
+        bool opaqueInBounds = (cmdPtr + cmdCnt) <= uint(MAX_OPAQUE_DRAWS);
 
         uint tCmdPtr = 0;
+        bool temporalInBounds = false;
         if (renderTemporally) {
-            tCmdPtr = atomicAdd(temporalOpaqueDrawCount, cmdCnt) + TEMPORAL_OFFSET;
+            uint tBase = atomicAdd(temporalOpaqueDrawCount, cmdCnt);
+            tCmdPtr = tBase + TEMPORAL_OFFSET;
+            temporalInBounds = (tBase + cmdCnt) <= uint(MAX_TEMPORAL_DRAWS);
         }
 
         //TODO: make totalQuads also have temporal amount
@@ -123,9 +144,9 @@ void main() {
         //Double sided quads
         count = (counts.x>>16)&0xFFFFu;
         if (count != 0) {
-            writeCmd(cmdPtr++, drawId, ptr, count);
+            if (opaqueInBounds) writeCmd(cmdPtr++, drawId, ptr, count);
             if (renderTemporally) {
-                writeCmd(tCmdPtr++, drawId, ptr, count);
+                if (temporalInBounds) writeCmd(tCmdPtr++, drawId, ptr, count);
             }
             #ifdef HAS_STATISTICS
             totalQuads += count;
@@ -136,9 +157,9 @@ void main() {
         //Down
         count = (counts.y)&0xFFFFu;
         if (((msk&(1u<<0))!=0)) {
-            writeCmd(cmdPtr++, drawId, ptr, count);
+            if (opaqueInBounds) writeCmd(cmdPtr++, drawId, ptr, count);
             if (renderTemporally) {
-                writeCmd(tCmdPtr++, drawId, ptr, count);
+                if (temporalInBounds) writeCmd(tCmdPtr++, drawId, ptr, count);
             }
             #ifdef HAS_STATISTICS
             totalQuads += count;
@@ -149,9 +170,9 @@ void main() {
         //Up
         count = (counts.y>>16)&0xFFFFu;
         if ((msk&(1u<<1))!=0) {
-            writeCmd(cmdPtr++, drawId, ptr, count);
+            if (opaqueInBounds) writeCmd(cmdPtr++, drawId, ptr, count);
             if (renderTemporally) {
-                writeCmd(tCmdPtr++, drawId, ptr, count);
+                if (temporalInBounds) writeCmd(tCmdPtr++, drawId, ptr, count);
             }
             #ifdef HAS_STATISTICS
             totalQuads += count;
@@ -162,9 +183,9 @@ void main() {
         //North
         count = (counts.z)&0xFFFFu;
         if ((msk&(1u<<2))!=0) {
-            writeCmd(cmdPtr++, drawId, ptr, count);
+            if (opaqueInBounds) writeCmd(cmdPtr++, drawId, ptr, count);
             if (renderTemporally) {
-                writeCmd(tCmdPtr++, drawId, ptr, count);
+                if (temporalInBounds) writeCmd(tCmdPtr++, drawId, ptr, count);
             }
             #ifdef HAS_STATISTICS
             totalQuads += count;
@@ -175,9 +196,9 @@ void main() {
         //South
         count = (counts.z>>16)&0xFFFFu;
         if ((msk&(1u<<3))!=0) {
-            writeCmd(cmdPtr++, drawId, ptr, count);
+            if (opaqueInBounds) writeCmd(cmdPtr++, drawId, ptr, count);
             if (renderTemporally) {
-                writeCmd(tCmdPtr++, drawId, ptr, count);
+                if (temporalInBounds) writeCmd(tCmdPtr++, drawId, ptr, count);
             }
             #ifdef HAS_STATISTICS
             totalQuads += count;
@@ -188,9 +209,9 @@ void main() {
         //West
         count = (counts.w)&0xFFFFu;
         if ((msk&(1u<<4))!=0) {
-            writeCmd(cmdPtr++, drawId, ptr, count);
+            if (opaqueInBounds) writeCmd(cmdPtr++, drawId, ptr, count);
             if (renderTemporally) {
-                writeCmd(tCmdPtr++, drawId, ptr, count);
+                if (temporalInBounds) writeCmd(tCmdPtr++, drawId, ptr, count);
             }
             #ifdef HAS_STATISTICS
             totalQuads += count;
@@ -201,9 +222,9 @@ void main() {
         //East
         count = (counts.w>>16)&0xFFFFu;
         if ((msk&(1u<<5))!=0) {
-            writeCmd(cmdPtr++, drawId, ptr, count);
+            if (opaqueInBounds) writeCmd(cmdPtr++, drawId, ptr, count);
             if (renderTemporally) {
-                writeCmd(tCmdPtr++, drawId, ptr, count);
+                if (temporalInBounds) writeCmd(tCmdPtr++, drawId, ptr, count);
             }
             #ifdef HAS_STATISTICS
             totalQuads += count;

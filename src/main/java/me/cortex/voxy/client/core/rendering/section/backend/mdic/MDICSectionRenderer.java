@@ -151,18 +151,45 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                     java.util.Map.of(
                             "TRANSLUCENT_WRITE_BASE", "1024",
                             "TRANSLUCENT_DISTANCE_BUFFER_BINDING", "5",
-                            "TRANSLUCENT_OFFSET", Integer.toString(TRANSLUCENT_OFFSET)),
+                            "TRANSLUCENT_OFFSET", Integer.toString(TRANSLUCENT_OFFSET),
+                            // Exclusive upper bound of the translucent region
+                            // [TRANSLUCENT_OFFSET, TEMPORAL_OFFSET): buildtranslucents.comp
+                            // drops any command whose prefix-sum cursor would land in the
+                            // temporal slice or off the buffer end. INT_MAX under the
+                            // VOXY_CMDGEN_NOCLAMP A/B switch.
+                            "MAX_TRANSLUCENT_DRAW_END",
+                            Integer.toString(cmdgenNoClamp() ? Integer.MAX_VALUE : TEMPORAL_OFFSET)),
                     null, null,
                     128, 1, 1, // matches buildtranslucents.comp's local_size_x=128
                     "MDICSectionRenderer.translucentGen"));
     // M12 chunk 4: translucentGen prepass is dispatched via ComputeEncoder;
     // no cached glProgram id needed.
 
+    /** {@code VOXY_CMDGEN_NOCLAMP=1} removes the cmdgen draw-command bound checks
+     *  (caps injected as INT_MAX) so the pre-fix overflow can be A/B-reproduced
+     *  on-device. Default: clamps ON. */
+    private static boolean cmdgenNoClamp() {
+        return "1".equals(System.getenv("VOXY_CMDGEN_NOCLAMP"));
+    }
+
     private static java.util.Map<String, String> cmdgenDefines() {
         var m = new java.util.LinkedHashMap<String, String>();
         m.put("TRANSLUCENT_WRITE_BASE", "1024");
         m.put("TEMPORAL_OFFSET", Integer.toString(TEMPORAL_OFFSET));
         m.put("TRANSLUCENT_DISTANCE_BUFFER_BINDING", "7");
+        // Capacities of the opaque and temporal draw-command regions, mirroring
+        // MDICViewport.drawCallBuffer = 5*4*(400_000 + 100_000 + 100_000):
+        //   opaque    [0, TRANSLUCENT_OFFSET)               -> 400_000 cmds
+        //   temporal  [TEMPORAL_OFFSET, TEMPORAL_OFFSET+100k) -> 100_000 cmds (the tail)
+        // cmdgen.comp clamps its unbounded atomic write cursors to these so a
+        // large visible-section render list can never scatter draw commands past
+        // a region into the next slice or off the end of the buffer. Past-the-end
+        // SSBO writes are undefined on Metal (device fault / cmd-buffer abort) and
+        // corrupt the adjacent slices on GL; the CPU read side already saturates
+        // its draw counts at the same caps (maxDrawCount / metalDrawCount).
+        boolean noClamp = cmdgenNoClamp();
+        m.put("MAX_OPAQUE_DRAWS",   Integer.toString(noClamp ? Integer.MAX_VALUE : TRANSLUCENT_OFFSET));
+        m.put("MAX_TEMPORAL_DRAWS", Integer.toString(noClamp ? Integer.MAX_VALUE : (TEMPORAL_OFFSET - TRANSLUCENT_OFFSET)));
         if (RenderStatistics.enabled) {
             m.put("HAS_STATISTICS", "");
             m.put("STATISTICS_BUFFER_BINDING", Integer.toString(STATISTICS_BUFFER_BINDING));

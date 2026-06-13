@@ -11,6 +11,12 @@ layout(local_size_x = 128) in;
 #import <voxy:lod/section.glsl>
 #import <voxy:lod/gl46/bindings.glsl>
 
+// Exclusive upper bound of the translucent draw-command region, injected by
+// MDICSectionRenderer (= TEMPORAL_OFFSET). Fail open if absent.
+#ifndef MAX_TRANSLUCENT_DRAW_END
+#define MAX_TRANSLUCENT_DRAW_END 0x7fffffff
+#endif
+
 /*
     uint  count;
     uint  instanceCount;
@@ -47,5 +53,10 @@ void main() {
     dist = (TRANSLUCENT_WRITE_BASE-1)-min(dist, (TRANSLUCENT_WRITE_BASE-1));
 
     uint drawPtr = atomicAdd(translucentCommandData[dist],1)+TRANSLUCENT_OFFSET;
-    writeCmd(drawPtr, drawId, extractQuadStart(meta), meta.b.x&0xFFFF);
+    // Clamp to the translucent region [TRANSLUCENT_OFFSET, MAX_TRANSLUCENT_DRAW_END):
+    // never scatter a command into the temporal slice or off the buffer end
+    // (undefined on Metal, slice corruption on GL).
+    if (drawPtr < uint(MAX_TRANSLUCENT_DRAW_END)) {
+        writeCmd(drawPtr, drawId, extractQuadStart(meta), meta.b.x&0xFFFF);
+    }
 }
