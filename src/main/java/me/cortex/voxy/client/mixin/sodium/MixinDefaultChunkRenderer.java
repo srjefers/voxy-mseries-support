@@ -111,7 +111,30 @@ public abstract class MixinDefaultChunkRenderer extends ShaderChunkRenderer {
 
                 var pipeline = renderer.getPipeline();
                 if (pipeline != null && pipeline.metalBridge() != null) {
-                    if (IrisUtil.vxContractActive()) {
+                    if (pipeline.vxMaterialMode()
+                            && pipeline instanceof me.cortex.voxy.client.core.MetalVxRenderPipeline mvp
+                            && pipeline.metalVxOpaque0() != null
+                            && pipeline.metalDepthBridge() != null) {
+                        // Phase C (issue #11): run the pack's voxy_opaque /
+                        // voxy_translucent over the Metal material g-buffer planes —
+                        // the real LOD pack-shading + water fix. Falls through if the
+                        // Iris pipeline isn't the expected type.
+                        var irisPipe = net.irisshaders.iris.Iris.getPipelineManager().getPipelineNullable();
+                        if (irisPipe instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline irp) {
+                            int oP0 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxOpaque0());
+                            int oP1 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxOpaque1());
+                            int oP2 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxOpaque2());
+                            int oD  = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalDepthBridge());
+                            int tP0 = pipeline.metalVxTrans0() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans0()) : 0;
+                            int tP1 = pipeline.metalVxTrans1() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans1()) : 0;
+                            int tP2 = pipeline.metalVxTrans2() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans2()) : 0;
+                            int tD  = pipeline.metalDepthTransBridge() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalDepthTransBridge()) : 0;
+                            me.cortex.voxy.client.core.util.MetalVxResolvePass.resolve(
+                                    mvp.getPipelineData(), irp,
+                                    oP0, oP1, oP2, oD, tP0, tP1, tP2, tD,
+                                    viewport.width, viewport.height);
+                        }
+                    } else if (IrisUtil.vxContractActive()) {
                         // Native vx contract (milestone issue #9): hand the
                         // LOD depth to the pack's vxDepthTexOpaque/Trans
                         // side-channel and the pre-lit colour to the pack's

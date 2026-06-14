@@ -7,8 +7,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-import static org.lwjgl.opengl.GL11C.GL_FALSE;
+import static org.lwjgl.opengl.GL11C.*;
+import static org.lwjgl.opengl.GL13C.*;
+import static org.lwjgl.opengl.GL15C.*;
 import static org.lwjgl.opengl.GL20C.*;
+import static org.lwjgl.opengl.GL30C.*;
+import static org.lwjgl.opengl.GL31C.*;
 
 /**
  * Phase C of the native vx contract on Metal (milestone issue #10): runs the
@@ -348,5 +352,185 @@ public final class MetalVxResolvePass {
             sb.append(lines[i]).append('\n');
         }
         return sb.toString();
+    }
+
+    // =================== Phase C resolve runtime (increment 5) ===================
+    private static final int GL_TEXTURE_RECTANGLE = 0x84F5;
+
+    private static final class Prog {
+        int prog;
+        int uDepthIsWindow;
+        int samplerCount;
+        int ubo, uboSize;
+        long uboScratch;
+        int fbo;
+        int[] attached = new int[0];
+    }
+
+    private static boolean buildAttempted;
+    private static boolean buildOk;
+    private static Prog opaque;
+    private static Prog trans;
+    private static int resolveVao;
+
+    /** Compile both resolve programs once. Returns true if the opaque program links. */
+    public static boolean build(IrisVoxyRenderPipelineData data) {
+        if (buildAttempted) return buildOk;
+        buildAttempted = true;
+        opaque = buildProg(data, false);
+        trans = buildProg(data, true);
+        resolveVao = glGenVertexArrays();
+        buildOk = opaque != null;
+        Logger.info("MetalVxResolvePass.build: opaque=" + (opaque != null ? "OK" : "FAIL")
+                + " translucent=" + (trans != null ? "OK" : "FAIL"));
+        return buildOk;
+    }
+
+    private static Prog buildProg(IrisVoxyRenderPipelineData data, boolean translucent) {
+        String fs = assembleFragment(data, translucent);
+        if (fs == null) return null;
+        int prog = me.cortex.voxy.client.core.util.VxIrisSideChannel.compile(
+                RESOLVE_VERT, fs, "MetalVxResolve." + (translucent ? "trans" : "opaque"));
+        if (prog == 0) return null;
+        Prog p = new Prog();
+        p.prog = prog;
+        int prev = glGetInteger(GL_CURRENT_PROGRAM);
+        glUseProgram(prog);
+        setTexUnit(prog, "uVxAlbedo", 0);
+        setTexUnit(prog, "uVxTint", 1);
+        setTexUnit(prog, "uVxMisc", 2);
+        setTexUnit(prog, "uVxDepth", 3);
+        p.uDepthIsWindow = glGetUniformLocation(prog, "uVxDepthIsWindow");
+        if (p.uDepthIsWindow >= 0) glUniform1i(p.uDepthIsWindow, 1);
+        // Pack samplers: units 6.. in declaration order (matches bindingFunction.accept(6)).
+        if (data.samplerDecls != null) {
+            int unit = 6;
+            for (var name : data.samplerDecls.keySet()) {
+                int loc = glGetUniformLocation(prog, name);
+                if (loc >= 0) glUniform1i(loc, unit);
+                unit++; p.samplerCount++;
+            }
+        }
+        if (data.getUniforms() != null) {
+            p.uboSize = data.getUniforms().size();
+            int bi = glGetUniformBlockIndex(prog, "ShaderUniformBindings");
+            if (bi != GL_INVALID_INDEX) glUniformBlockBinding(prog, bi, 5);
+            p.ubo = glGenBuffers();
+            p.uboScratch = org.lwjgl.system.MemoryUtil.nmemAlloc(p.uboSize);
+        }
+        p.fbo = glGenFramebuffers();
+        glUseProgram(prev);
+        return p;
+    }
+
+    private static void setTexUnit(int prog, String name, int unit) {
+        int loc = glGetUniformLocation(prog, name);
+        if (loc >= 0) glUniform1i(loc, unit);
+    }
+
+    /**
+     * Per-frame resolve: decode the LOD depth into the pack's vxDepthTex* samplers,
+     * then run the pack's voxy_opaque + voxy_translucent over the Metal material
+     * g-buffer planes, writing the pack's colortexes. depthRect args are the RAW
+     * packed depth bridges. GL state is saved/restored.
+     */
+    public static void resolve(IrisVoxyRenderPipelineData data,
+                               net.irisshaders.iris.pipeline.IrisRenderingPipeline ipipe,
+                               int oP0, int oP1, int oP2, int opaqueDepthRect,
+                               int tP0, int tP1, int tP2, int transDepthRect,
+                               int fbw, int fbh) {
+        if (!build(data)) return;
+        if (oP0 == 0 || opaqueDepthRect == 0) return;
+        var sc = me.cortex.voxy.client.core.util.VxIrisSideChannel.getOrCreate();
+        var ndc = me.cortex.voxy.client.core.rendering.util.MetalMvpUtil.METAL_NDC_REMAP;
+
+        int prevDrawFb = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
+        int prevReadFb = glGetInteger(GL_READ_FRAMEBUFFER_BINDING);
+        int prevProgram = glGetInteger(GL_CURRENT_PROGRAM);
+        int prevVao = glGetInteger(GL_VERTEX_ARRAY_BINDING);
+        int prevActiveTex = glGetInteger(GL_ACTIVE_TEXTURE);
+        int[] prevViewport = new int[4];
+        glGetIntegerv(GL_VIEWPORT, prevViewport);
+        boolean prevDepth = glIsEnabled(GL_DEPTH_TEST);
+        boolean prevBlend = glIsEnabled(GL_BLEND);
+        boolean prevCull = glIsEnabled(GL_CULL_FACE);
+        boolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
+        try {
+            // Fill the pack's vxDepthTexOpaque/Trans samplers (the pack reads them
+            // for its own depth needs; our resolve reads the raw bridge for gl_FragDepth).
+            if (!sc.resolve(oP0, opaqueDepthRect, fbw, fbh, ndc)) return;
+            int[] opaqueTargets = data.resolveOpaqueTargetsNow(ipipe);
+            runOne(data, opaque, oP0, oP1, oP2, opaqueDepthRect, opaqueTargets, fbw, fbh, false);
+
+            if (trans != null && tP0 != 0 && transDepthRect != 0) {
+                sc.resolveTrans(tP0, transDepthRect, fbw, fbh, ndc);
+                int[] transTargets = data.resolveTranslucentTargetsNow(ipipe);
+                runOne(data, trans, tP0, tP1, tP2, transDepthRect, transTargets, fbw, fbh, true);
+            }
+        } catch (Throwable t) {
+            Logger.warn("MetalVxResolvePass.resolve failed: " + t.getMessage());
+        } finally {
+            glUseProgram(prevProgram);
+            glBindVertexArray(prevVao);
+            glActiveTexture(prevActiveTex);
+            if (prevDepth) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+            if (prevBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+            if (prevCull) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+            if (prevScissor) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
+            glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+            glBindBufferBase(GL_UNIFORM_BUFFER, 5, 0);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFb);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFb);
+        }
+    }
+
+    private static void runOne(IrisVoxyRenderPipelineData data, Prog p,
+                               int plane0, int plane1, int plane2, int depthRect,
+                               int[] targets, int fbw, int fbh, boolean blend) {
+        if (p == null || targets == null || targets.length == 0) return;
+        if (plane0 == 0 || depthRect == 0) return;
+        boolean dirty = p.attached.length != targets.length;
+        for (int i = 0; !dirty && i < targets.length; i++) dirty = p.attached[i] != targets[i];
+        glBindFramebuffer(GL_FRAMEBUFFER, p.fbo);
+        if (dirty) {
+            int[] bufs = new int[targets.length];
+            for (int i = 0; i < targets.length; i++) {
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D, targets[i], 0);
+                bufs[i] = GL_COLOR_ATTACHMENT0 + i;
+            }
+            glDrawBuffers(bufs);
+            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+                Logger.error("MetalVxResolvePass: resolve FBO incomplete");
+                return;
+            }
+            p.attached = java.util.Arrays.copyOf(targets, targets.length);
+        }
+        glViewport(0, 0, fbw, fbh);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_SCISSOR_TEST);
+        glUseProgram(p.prog);
+        glBindVertexArray(resolveVao);
+        glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_RECTANGLE, plane0);
+        glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_RECTANGLE, plane1);
+        glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_RECTANGLE, plane2);
+        glActiveTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_RECTANGLE, depthRect);
+        glActiveTexture(GL_TEXTURE0);
+        if (data.getImageSet() != null) data.getImageSet().bindingFunction().accept(6);
+        if (p.ubo != 0 && data.getUniforms() != null) {
+            data.getUniforms().updater().accept(p.uboScratch);
+            glBindBuffer(GL_UNIFORM_BUFFER, p.ubo);
+            glBufferData(GL_UNIFORM_BUFFER,
+                    org.lwjgl.system.MemoryUtil.memByteBuffer(p.uboScratch, p.uboSize), GL_DYNAMIC_DRAW);
+            glBindBufferBase(GL_UNIFORM_BUFFER, 5, p.ubo);
+        }
+        if (blend && data.getBlender() != null) data.getBlender().run();
+        else glDisable(GL_BLEND);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        for (int i = 0; i < p.samplerCount; i++) {
+            glActiveTexture(GL_TEXTURE0 + 6 + i);
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+        glActiveTexture(GL_TEXTURE0);
     }
 }

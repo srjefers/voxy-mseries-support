@@ -937,6 +937,14 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         return this.metalDepthBridge;
     }
 
+    // Phase C material g-buffer planes (null unless vxMaterialMode rendered a frame).
+    public me.cortex.voxy.client.core.interop.IOSurfaceBridge metalVxOpaque0() { return this.metalVxOpaque0; }
+    public me.cortex.voxy.client.core.interop.IOSurfaceBridge metalVxOpaque1() { return this.metalVxOpaque1; }
+    public me.cortex.voxy.client.core.interop.IOSurfaceBridge metalVxOpaque2() { return this.metalVxOpaque2; }
+    public me.cortex.voxy.client.core.interop.IOSurfaceBridge metalVxTrans0() { return this.metalVxTrans0; }
+    public me.cortex.voxy.client.core.interop.IOSurfaceBridge metalVxTrans1() { return this.metalVxTrans1; }
+    public me.cortex.voxy.client.core.interop.IOSurfaceBridge metalVxTrans2() { return this.metalVxTrans2; }
+
     public void addDebug(List<String> debug) {
         this.sectionRenderer.addDebug(debug);
         RenderStatistics.addDebug(debug);
