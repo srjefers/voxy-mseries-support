@@ -629,9 +629,15 @@ public class MetalRenderBackend implements RenderBackend {
             }
             MetalNative.mtlRenderPipelineDescriptorSetVertexFunction(pipelineDesc, vertexFn);
             MetalNative.mtlRenderPipelineDescriptorSetFragmentFunction(pipelineDesc, fragmentFn);
-            if (desc.colorAttachmentFormat != 0) {
-                int metalPixelFormat = MetalFormatUtil.glFormatToMetal(desc.colorAttachmentFormat);
-                MetalNative.mtlRenderPipelineDescriptorSetColorAttachmentFormat(pipelineDesc, 0, metalPixelFormat);
+            // Phase C: set the format for EACH MRT color attachment (the material
+            // g-buffer uses 3). Single-attachment pipelines have a 1-element array.
+            // A 0 entry means "no attachment at this index".
+            for (int i = 0; i < desc.colorAttachmentFormats.length; i++) {
+                int fmt = desc.colorAttachmentFormats[i];
+                if (fmt != 0) {
+                    MetalNative.mtlRenderPipelineDescriptorSetColorAttachmentFormat(
+                            pipelineDesc, i, MetalFormatUtil.glFormatToMetal(fmt));
+                }
             }
             // Blocker 1: enable ICB usage on every pipeline. The only Metal
             // features that conflict (vertex amplification, function constants

@@ -32,8 +32,13 @@ public final class GraphicsPipelineDesc {
      * RuntimeShaderCompiler on Metal/Vulkan, and to {@code #define} prepends
      * on the GL side. May be null/empty. */
     public final java.util.Map<String, String> defines;
-    /** OpenGL-style color format (e.g. GL_RGBA8 = 0x8058). Backends translate. */
+    /** OpenGL-style color format of attachment 0 (e.g. GL_RGBA8 = 0x8058) — kept for
+     *  back-compat; equals {@code colorAttachmentFormats[0]}. Backends translate. */
     public final int colorAttachmentFormat;
+    /** OpenGL-style color formats for ALL MRT attachments. Single-attachment call
+     *  sites get a 1-element array; the Phase C material g-buffer uses 3. A 0 entry
+     *  means "no attachment at this index". */
+    public final int[] colorAttachmentFormats;
     /** Vertex inputs. Use {@link VertexLayout#EMPTY} for gl_VertexIndex-driven shaders. */
     public final VertexLayout vertexLayout;
     /** Static state baked into the pipeline (depth, blend, raster). */
@@ -68,26 +73,31 @@ public final class GraphicsPipelineDesc {
                                 VertexLayout vertexLayout,
                                 PipelineState state,
                                 String label) {
-        this.vertexGlsl = vertexGlsl;
-        this.fragmentGlsl = fragmentGlsl;
-        this.defines = defines != null ? defines : java.util.Map.of();
-        this.vertexMsl = vertexMsl;
-        this.fragmentMsl = fragmentMsl;
-        this.vertexSpirv = vertexSpirv;
-        this.fragmentSpirv = fragmentSpirv;
-        this.colorAttachmentFormat = colorAttachmentFormat;
-        this.vertexLayout = vertexLayout != null ? vertexLayout : VertexLayout.EMPTY;
-        this.state = state != null ? state : PipelineState.DEFAULT;
-        this.label = label;
-        this.usedInIndirectCommandBuffer = false;
+        this(vertexGlsl, fragmentGlsl, defines, vertexMsl, fragmentMsl,
+                vertexSpirv, fragmentSpirv, new int[]{colorAttachmentFormat},
+                vertexLayout, state, label, false);
     }
 
-    /** Internal constructor for callers that need to opt the pipeline into ICB usage. */
+    /** MRT constructor (Phase C material g-buffer): multiple color attachment formats. */
+    public GraphicsPipelineDesc(String vertexGlsl, String fragmentGlsl,
+                                java.util.Map<String, String> defines,
+                                String vertexMsl, String fragmentMsl,
+                                byte[] vertexSpirv, byte[] fragmentSpirv,
+                                int[] colorAttachmentFormats,
+                                VertexLayout vertexLayout,
+                                PipelineState state,
+                                String label) {
+        this(vertexGlsl, fragmentGlsl, defines, vertexMsl, fragmentMsl,
+                vertexSpirv, fragmentSpirv, colorAttachmentFormats,
+                vertexLayout, state, label, false);
+    }
+
+    /** Internal terminal constructor (int[] formats + ICB opt-in). */
     GraphicsPipelineDesc(String vertexGlsl, String fragmentGlsl,
                          java.util.Map<String, String> defines,
                          String vertexMsl, String fragmentMsl,
                          byte[] vertexSpirv, byte[] fragmentSpirv,
-                         int colorAttachmentFormat,
+                         int[] colorAttachmentFormats,
                          VertexLayout vertexLayout,
                          PipelineState state,
                          String label,
@@ -99,7 +109,9 @@ public final class GraphicsPipelineDesc {
         this.fragmentMsl = fragmentMsl;
         this.vertexSpirv = vertexSpirv;
         this.fragmentSpirv = fragmentSpirv;
-        this.colorAttachmentFormat = colorAttachmentFormat;
+        this.colorAttachmentFormats = (colorAttachmentFormats != null && colorAttachmentFormats.length > 0)
+                ? colorAttachmentFormats : new int[]{0};
+        this.colorAttachmentFormat = this.colorAttachmentFormats[0];
         this.vertexLayout = vertexLayout != null ? vertexLayout : VertexLayout.EMPTY;
         this.state = state != null ? state : PipelineState.DEFAULT;
         this.label = label;
@@ -110,7 +122,7 @@ public final class GraphicsPipelineDesc {
     public GraphicsPipelineDesc withIndirectCommandBufferUsage(boolean used) {
         return new GraphicsPipelineDesc(this.vertexGlsl, this.fragmentGlsl, this.defines,
                 this.vertexMsl, this.fragmentMsl, this.vertexSpirv, this.fragmentSpirv,
-                this.colorAttachmentFormat, this.vertexLayout, this.state, this.label, used);
+                this.colorAttachmentFormats, this.vertexLayout, this.state, this.label, used);
     }
 
     /** Backward-compat overload without explicit pipeline state (uses DEFAULT). */
