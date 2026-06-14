@@ -183,6 +183,15 @@ public final class IOSurfaceBridge implements AutoCloseable {
 
     @Override
     public void close() {
+        // Unregister the lazily-created GpuTexture adapter's MetalHandleMap entry
+        // (registered in BridgedGpuTexture's ctor) BEFORE releasing the MTLTexture,
+        // so the entry is removed while its pointer is still valid. Without this,
+        // every bridge close (e.g. on each framebuffer resize / fullscreen toggle /
+        // GUI-scale change) leaks an entry into the process-lifetime static maps.
+        if (this.gpuTextureView != null) {
+            me.cortex.voxy.client.core.metal.MetalHandleMap.unregister(this.gpuTextureView.id());
+            this.gpuTextureView = null;
+        }
         if (this.metalTextureHandle != 0) {
             MetalNative.mtlRelease(this.metalTextureHandle);
             this.metalTextureHandle = 0;

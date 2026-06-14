@@ -250,6 +250,12 @@ public final class MetalRenderEncoder implements RenderEncoder {
         MetalNative.mtlEncoderEndEncoding(this.encoderHandle);
         MetalNative.mtlRelease(this.encoderHandle);
         this.encoderHandle = 0;
+        // Free the per-instance off-heap scratch buffer (MemoryUtil.memAlloc in the
+        // field initializer). It is native memory, NOT GC-tracked, so without this
+        // every render pass leaks 16 bytes that never shows up in JVM heap stats.
+        // The encoderHandle!=0 early-return above makes this run exactly once, so a
+        // double close() cannot double-free.
+        org.lwjgl.system.MemoryUtil.memFree(this.perDrawScratch);
     }
 
     private static long bufferHandle(IGpuBuffer buffer) {
