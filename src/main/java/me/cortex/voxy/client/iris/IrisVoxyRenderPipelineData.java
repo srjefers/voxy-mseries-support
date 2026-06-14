@@ -447,7 +447,7 @@ public class IrisVoxyRenderPipelineData {
     }
 
     private record TextureWSampler(String name, IntSupplier texture, IntSupplier sampler) { }
-    public record ImageSet(String layout, IntConsumer bindingFunction) {
+    public record ImageSet(String layout, IntConsumer bindingFunction, java.util.List<String> orderedNames) {
 
     }
     private static ImageSet createImageSet(IrisRenderingPipeline ipipe, IrisShaderPatch patch) {
@@ -549,7 +549,13 @@ public class IrisVoxyRenderPipelineData {
                 }//TODO: might need to bind sampler 0
             }
         };
-        return new ImageSet(builder.toString(), bindingFunction);
+        // Ordered sampler names in bindingFunction order (samplers[j] -> unit base+j).
+        // The Apple-GL resolve (MetalVxResolvePass) assigns its binding-free sampler
+        // units in THIS order so they match the textures bindingFunction binds — NOT
+        // voxy.json (samplerDecls) order, which differs.
+        java.util.List<String> orderedNames = new java.util.ArrayList<>(samplers.length);
+        for (var s : samplers) orderedNames.add(s.name);
+        return new ImageSet(builder.toString(), bindingFunction, orderedNames);
     }
 
     public record SSBOSet(String layout, IntConsumer bindingFunction){}

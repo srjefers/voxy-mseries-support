@@ -401,11 +401,19 @@ public final class MetalVxResolvePass {
         setTexUnit(prog, "uVxMisc", 2);
         setTexUnit(prog, "uVxDepth", 3);
         p.uDepthIsWindow = glGetUniformLocation(prog, "uVxDepthIsWindow");
-        if (p.uDepthIsWindow >= 0) glUniform1i(p.uDepthIsWindow, 1);
-        // Pack samplers: units 6.. in declaration order (matches bindingFunction.accept(6)).
-        if (data.samplerDecls != null) {
+        // Match the working VxIrisSideChannel depth convention: the bridge packs the
+        // LOD depth needing a *0.5+0.5 window remap unless VOXY_LOD_METAL_NDC is set.
+        if (p.uDepthIsWindow >= 0) {
+            glUniform1i(p.uDepthIsWindow,
+                    me.cortex.voxy.client.core.rendering.util.MetalMvpUtil.METAL_NDC_REMAP ? 1 : 0);
+        }
+        // Pack samplers: assign units 6.. in the ImageSet's bindingFunction order
+        // (Iris's addGbufferOrShadowSamplers order), NOT voxy.json/samplerDecls order —
+        // otherwise every pack sampler lands on the wrong unit and BSL reads the wrong
+        // shadow/depth/light textures (the uniform-dark LOD bug).
+        if (data.getImageSet() != null && data.getImageSet().orderedNames() != null) {
             int unit = 6;
-            for (var name : data.samplerDecls.keySet()) {
+            for (var name : data.getImageSet().orderedNames()) {
                 int loc = glGetUniformLocation(prog, name);
                 if (loc >= 0) glUniform1i(loc, unit);
                 unit++; p.samplerCount++;
