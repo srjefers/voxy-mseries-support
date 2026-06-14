@@ -281,13 +281,21 @@ void main() {
     //Check the minimum bounding texture and ensure we are greater than it.
     // M13 chunk 1 split: this used to live under `#ifndef VOXY_NO_ATLAS` so
     // the atlas-disabled debug path also skipped the depth-bounding check.
-    // Splitting them lets Metal sample the real atlas while still skipping
-    // the depth-bounding check (depthTex is M13 chunk 3 — MC depth import
-    // hasn't landed yet, so the texture would be unbound and the check
-    // would discard everything).
+    // M13 chunk 3: the chunk-bound depth mask now renders on Metal too
+    // (ChunkBoundRenderer.renderMetal → depthBoundingBuffer, bound at
+    // texture slot 2), so this check is ON by default on every backend;
+    // VOXY_NO_DEPTH_BOUND=1 is the Metal kill switch that removes it.
     if (gl_FragCoord.z < texelFetch(depthTex, ivec2(gl_FragCoord.xy), 0).r) {
+        #ifdef VOXY_BOUND_DEBUG
+        // VOXY_BOUND_DEBUG=1 (Metal mask-verification aid): paint the
+        // bound-discarded fragments solid red instead of discarding so a
+        // screenshot shows exactly where the chunk-bound depth mask bites.
+        outColour = vec4(1.0, 0.0, 0.0, 1.0);
+        return;
+        #else
         discard;
         return;
+        #endif
     }
 #endif // VOXY_NO_DEPTH_BOUND
 

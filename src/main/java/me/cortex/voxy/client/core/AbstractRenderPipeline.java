@@ -132,6 +132,8 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
     private me.cortex.voxy.client.core.rendering.util.DepthMirror metalDepthMirror;
     /** Animation counter for the placeholder Metal render — replaced by real Voxy output incrementally. */
     private int metalFrame;
+    /** VOXY_UNDERWATER_LOD=1 forces LOD draws even when submerged-fog saturates the far field. */
+    private static final boolean UNDERWATER_LOD_FORCE = "1".equals(System.getenv("VOXY_UNDERWATER_LOD"));
 
     // [Metal-FLICKER] diagnostic (2026-05-26): track whether the rendered
     // section set (renderList count) varies frame-to-frame. With a perfectly
@@ -496,6 +498,26 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                 .clearColor(this.metalBridge.asGpuTexture(), clearR, clearG, clearB, clearA)
                 .clearDepth(this.metalDepthTex, 1.0f)
                 .build();
+        // Submersion far-field skip: with the eye in water/lava the env fog
+        // saturates at 24-96 blocks while every LOD fragment sits far beyond
+        // it — the whole LOD field is 100% fog colour by construction. Drawing
+        // it anyway only exposes artifacts: Sodium's fog-occlusion culling
+        // de-renders near seafloor whose pixels then fall through the opaque
+        // blit to the LOD field ("sand turns transparent", flooded caverns),
+        // and any residual draw nondeterminism strobes. Skip the LOD draws and
+        // let the fog-coloured clear stand — visually identical murk, stable
+        // by construction. Guarded so tiny render distances (where LOD could
+        // outrange the fog) keep drawing. VOXY_UNDERWATER_LOD=1 forces draws.
+        boolean submersionSkip = false;
+        // useEnvFog() gate: with Voxy fog disabled there is no murk to hide
+        // behind — the skip only applies when the far field is provably
+        // fog-saturated. (Previously fog-off avoided the skip only by the
+        // accident of MixinFogRenderer inflating envEnd to 999999999.)
+        if (!UNDERWATER_LOD_FORCE && this.useEnvFog() && viewport.fogParameters != null) {
+            float envEnd = viewport.fogParameters.environmentalEnd();
+            int rdBlocks = net.minecraft.client.Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
+            submersionSkip = envEnd < 128.0f && rdBlocks > envEnd * 2.0f;
+        }
         try (var enc = backend.beginRenderPass(pass)) {
             enc.setViewport(0, 0, fbw, fbh, 0.0f, 1.0f);
             // M12 close — invoke MDIC's Metal-aware draws in the same order
@@ -505,7 +527,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             // typing follows from the RenderPipelineFactory pairing).
             // postOpaquePreTranslucent (SSAO) is skipped on Metal — SSAO
             // is M13 polish; the LOD result is intelligible without it.
-            if (!bridgeSolidTest
+            if (!bridgeSolidTest && !submersionSkip
                     && this.sectionRenderer instanceof me.cortex.voxy.client.core.rendering.section.backend.mdic.MDICSectionRenderer mdic
                     && viewport instanceof me.cortex.voxy.client.core.rendering.section.backend.mdic.MDICViewport mv) {
                 mdic.renderOpaqueMetal(enc, mv);

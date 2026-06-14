@@ -124,6 +124,9 @@ public class ModelFactory {
 
     private final Mapper mapper;
     private final ModelStore storage;
+    // Metal-only LOD water animation (null on GL / when killed via
+    // VOXY_WATER_ANIMATE=0) — see WaterAnimator.
+    private final WaterAnimator waterAnimator;
     private final RawDownloadStream downstream = new RawDownloadStream(8*1024*1024);//8mb downstream
 
     private final ConcurrentLinkedDeque<RawBakeResult> rawBakeResults = new ConcurrentLinkedDeque<>();
@@ -143,6 +146,7 @@ public class ModelFactory {
     public ModelFactory(Mapper mapper, ModelStore storage) {
         this.mapper = mapper;
         this.storage = storage;
+        this.waterAnimator = WaterAnimator.createIfEnabled(storage);
         this.bakery = new ModelTextureBakery(MODEL_TEXTURE_SIZE, MODEL_TEXTURE_SIZE);
 
         this.metadataCache = new long[1<<16];
@@ -304,6 +308,14 @@ public class ModelFactory {
     public void tickAndProcessUploads() {
         this.downstream.tick();
 
+        // Metal water animation: runs BEFORE the upload drain so a target
+        // registered below (same tick as its bake upload) gets its first
+        // animated frame on the NEXT tick — always after the frozen bake
+        // frame landed, never racing it.
+        if (this.waterAnimator != null) {
+            this.waterAnimator.tick();
+        }
+
         var upload = this.uploadResults.poll();
         if (upload==null) return;
 
@@ -312,6 +324,13 @@ public class ModelFactory {
         glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
         do {
+            // Register water-animated cells on the render thread while the
+            // upload still carries its modelId (upload() resets it to -1).
+            if (this.waterAnimator != null
+                    && upload instanceof ModelBakeResultUpload bake
+                    && bake.waterAnimFaces != 0) {
+                this.waterAnimator.register(bake.modelId, bake.waterAnimFaces);
+            }
             upload.upload(this.storage);
             DIAG_ATLAS_UPLOADS.incrementAndGet();
             upload.free();
@@ -330,6 +349,11 @@ public class ModelFactory {
         private final MemoryBuffer texture = new MemoryBuffer((2L*3*computeSizeWithMips(MODEL_TEXTURE_SIZE))*4);
 
         public int modelId = -1;
+
+        /** Metal water animation: face mask (WaterAnimator.STILL_WATER_FACES)
+         * set on the factory thread for source-water fluid bakes; consumed on
+         * the render thread in tickAndProcessUploads. 0 = not animated. */
+        public int waterAnimFaces = 0;
 
         public int biomeUploadIndex = -1;
         public @Nullable MemoryBuffer biomeUpload;
@@ -463,6 +487,17 @@ public class ModelFactory {
         uploadResult.modelId = modelId;
         long uploadPtr = uploadResult.model.address;
 
+        // Metal water animation (2026-06-10): mark the source-water fluid
+        // bake so the render thread registers its water_still cells (UP +
+        // DOWN — the side faces sample water_flow, follow-up) with the
+        // WaterAnimator once this upload lands. Waterlogged blocks map to
+        // this same model through the fluid LUT, so they share the cells.
+        if (this.waterAnimator != null && isFluid
+                && blockState.is(Blocks.WATER)
+                && blockState.getFluidState().isSource()) {
+            uploadResult.waterAnimFaces = WaterAnimator.STILL_WATER_FACES;
+        }
+
         //TODO: implement;
         // TODO: if it has a constant colour instead... idk why (apparently for things like spruce leaves)?? but premultiply the texture data by the constant colour
 
@@ -500,6 +535,25 @@ public class ModelFactory {
                 if (sizes[face] < -0.1f) {
                     sizes[face] = 0.0f; // face at the block boundary → a flat water quad
                 }
+            }
+        }
+
+        // Metal fluid surface height (2026-06-10): the Metal capture path
+        // synthesizes depth metadata from alpha (MetalViewCapture.emitToStream
+        // writes 0x80/0 — no real depth bits), so computeModelDepth returns 0
+        // for the fluid UP face and the LOD water plane lands at the full
+        // block top (1.0) instead of MC's 8/9 ≈ 0.889 — a visible step at the
+        // LOD<->MC water seam and a 0.111-block eye-level window where the two
+        // sides disagree about "above water". Use the fluid's real own height
+        // (packs enc=7 → plane at 0.8906, within 0.002 of MC). GL bakes real
+        // depth and never hits the ==0 condition.
+        if (isFluid
+                && me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                        != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+            int up = Direction.UP.get3DDataValue();
+            float ownHeight = blockState.getFluidState().getOwnHeight();
+            if (sizes[up] >= 0.0f && sizes[up] < 0.01f && ownHeight > 0.0f && ownHeight < 1.0f) {
+                sizes[up] = 1.0f - ownHeight;
             }
         }
 
@@ -949,6 +1003,9 @@ public class ModelFactory {
     public void free() {
         this.bakery.free();
         this.downstream.free();
+        if (this.waterAnimator != null) {
+            this.waterAnimator.free();
+        }
         while (!this.rawBakeResults.isEmpty()) {
             this.rawBakeResults.poll().rawData.free();
         }
