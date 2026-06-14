@@ -287,6 +287,23 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             java.util.Map<String, String> opaqueDefines = new java.util.LinkedHashMap<>(commonDefines);
             java.util.Map<String, String> translucentDefines = new java.util.LinkedHashMap<>(commonDefines);
             translucentDefines.put("TRANSLUCENT", "");
+
+            // Phase C material g-buffer mode (Metal + Iris vx-contract). Compile
+            // quads.frag's PATCHED_SHADER path with the MRT emitter appended so it
+            // writes the 3 material planes (albedo/tint/misc) instead of a final
+            // colour; the pack's real voxy_opaque/voxy_translucent runs later GL-side
+            // in MetalVxResolvePass. quads.frag's water/flat early-outs are guarded by
+            // !defined(PATCHED_SHADER), so they are bypassed automatically here.
+            boolean vxMaterial = pipeline.vxMaterialMode();
+            String terrainFrag = vxMaterial
+                    ? frag + me.cortex.voxy.client.core.util.MetalVxGbufferEmitter.SOURCE
+                    : frag;
+            if (vxMaterial) {
+                opaqueDefines.put("PATCHED_SHADER", "");
+                opaqueDefines.put("VOXY_VX_GBUFFER", "");
+                translucentDefines.put("PATCHED_SHADER", "");
+                translucentDefines.put("VOXY_VX_GBUFFER", "");
+            }
             if (this.backend.getType() != BackendType.OPENGL) {
                 // M13 chunk 3: the chunk-bound depth mask now renders on Metal
                 // (ChunkBoundRenderer.renderMetal → viewport.depthBoundingBuffer,
@@ -552,19 +569,24 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                         me.cortex.voxy.client.core.gpu.PipelineState.BlendState.PREMULTIPLIED_ALPHA,
                         me.cortex.voxy.client.core.gpu.PipelineState.RasterState.NO_CULL);
             }
+            // Material mode renders 3 BGRA8 planes (P0 albedo, P1 tint, P2 misc);
+            // otherwise the single colour attachment as before.
+            int[] terrainFormats = vxMaterial
+                    ? new int[]{GL_RGBA8, GL_RGBA8, GL_RGBA8}
+                    : new int[]{GL_RGBA8};
             this.terrainPipeline = this.backend.createGraphicsPipeline(
                     new me.cortex.voxy.client.core.gpu.GraphicsPipelineDesc(
-                            vertex, frag, opaqueDefines,
+                            vertex, terrainFrag, opaqueDefines,
                             null, null, null, null,
-                            GL_RGBA8,
+                            terrainFormats,
                             me.cortex.voxy.client.core.gpu.VertexLayout.EMPTY,
                             opaqueState,
                             "MDIC.terrain"));
             this.translucentTerrainPipeline = this.backend.createGraphicsPipeline(
                     new me.cortex.voxy.client.core.gpu.GraphicsPipelineDesc(
-                            vertex, frag, translucentDefines,
+                            vertex, terrainFrag, translucentDefines,
                             null, null, null, null,
-                            GL_RGBA8,
+                            terrainFormats,
                             me.cortex.voxy.client.core.gpu.VertexLayout.EMPTY,
                             translucentState,
                             "MDIC.translucentTerrain"));

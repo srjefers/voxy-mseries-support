@@ -912,6 +912,18 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         return null;
     }
 
+    /**
+     * Phase C (issue #11): when true, the Metal LOD terrain pipelines render a
+     * material g-buffer (quads.frag under PATCHED_SHADER + VOXY_VX_GBUFFER + the
+     * {@link me.cortex.voxy.client.core.util.MetalVxGbufferEmitter} into 3 BGRA8
+     * planes) instead of compositing a final colour, for the GL-side
+     * {@link me.cortex.voxy.client.core.util.MetalVxResolvePass} to shade. Only
+     * {@code MetalVxRenderPipeline} (Metal + Iris vx-contract) enables it.
+     */
+    public boolean vxMaterialMode() {
+        return false;
+    }
+
     //null means dont transform the shader
     public String patchOpaqueShader(AbstractSectionRenderer<?,?> renderer, String input) {
         return null;

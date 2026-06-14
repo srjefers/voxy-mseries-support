@@ -21,7 +21,11 @@ public final class ShaderCompilerSmokeTest {
 
     private ShaderCompilerSmokeTest() {}
 
-    private record ShaderCase(String relPath, RuntimeShaderCompiler.Stage stage, Map<String, String> defines, String label) {}
+    private record ShaderCase(String relPath, RuntimeShaderCompiler.Stage stage, Map<String, String> defines, String label, String append) {
+        ShaderCase(String relPath, RuntimeShaderCompiler.Stage stage, Map<String, String> defines, String label) {
+            this(relPath, stage, defines, label, null);
+        }
+    }
 
     public static void main(String[] args) throws Exception {
         Path root = Path.of(args.length > 0 ? args[0] : "src/main/resources/assets/voxy/shaders").toAbsolutePath();
@@ -180,6 +184,22 @@ public final class ShaderCompilerSmokeTest {
                 // M12 chunk 5 Metal cull stub — force-all-visible compute.
                 new ShaderCase("lod/gl46/force_all_visible.comp", RuntimeShaderCompiler.Stage.COMPUTE, empty,
                         "lod/gl46/force_all_visible.comp (M12 Metal cull stub)"),
+                // Phase C (issue #11) material g-buffer: quads.frag's PATCHED_SHADER
+                // path + the MetalVxGbufferEmitter appended, writing the 3 MRT planes.
+                // Probes that this permutation transpiles to MSL on Apple before the
+                // pipeline is wired on-device (MDIC vxMaterialMode path).
+                new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT,
+                        Map.of("PATCHED_SHADER", "", "VOXY_VX_GBUFFER", "", "VOXY_FORCE_OPAQUE_ALPHA", "",
+                               "NO_SHADE_FACE_TINT", "1.0", "UP_FACE_TINT", "1.0", "DOWN_FACE_TINT", "0.5",
+                               "Z_AXIS_FACE_TINT", "0.8", "X_AXIS_FACE_TINT", "0.6"),
+                        "lod/gl46/quads.frag (Phase C material g-buffer — opaque)",
+                        me.cortex.voxy.client.core.util.MetalVxGbufferEmitter.SOURCE),
+                new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT,
+                        Map.of("PATCHED_SHADER", "", "VOXY_VX_GBUFFER", "", "TRANSLUCENT", "",
+                               "NO_SHADE_FACE_TINT", "1.0", "UP_FACE_TINT", "1.0", "DOWN_FACE_TINT", "0.5",
+                               "Z_AXIS_FACE_TINT", "0.8", "X_AXIS_FACE_TINT", "0.6"),
+                        "lod/gl46/quads.frag (Phase C material g-buffer — translucent)",
+                        me.cortex.voxy.client.core.util.MetalVxGbufferEmitter.SOURCE),
         };
 
         int passSpv = 0, failSpv = 0, passMsl = 0, failMsl = 0;
@@ -190,6 +210,7 @@ public final class ShaderCompilerSmokeTest {
         Path assetsBase = root.getParent().getParent().getParent();
         for (ShaderCase c : cases) {
             String src = expandImports(root.resolve(c.relPath), assetsBase);
+            if (c.append() != null) src = src + c.append();
             RuntimeShaderCompiler.Result spvResult;
             try {
                 spvResult = RuntimeShaderCompiler.compile(src, c.stage, c.defines, RuntimeShaderCompiler.Target.VULKAN_SPIRV);
