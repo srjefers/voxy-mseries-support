@@ -132,6 +132,24 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
     private me.cortex.voxy.client.core.gpu.IGpuTexture metalDepthTransTex;
     private me.cortex.voxy.client.core.gpu.IGpuBuffer metalTransReadBuffer;
     private me.cortex.voxy.client.core.interop.MetalDepthRestore metalDepthRestore;
+
+    // --- Phase C material g-buffer (issue #11; vxMaterialMode; all lazy) ---
+    // 3 BGRA8 planes per LOD layer: P0 albedo, P1 tint, P2 misc(light/face/customId).
+    private me.cortex.voxy.client.core.interop.IOSurfaceBridge metalVxOpaque0, metalVxOpaque1, metalVxOpaque2;
+    private me.cortex.voxy.client.core.interop.IOSurfaceBridge metalVxTrans0, metalVxTrans1, metalVxTrans2;
+
+    /** Lazy-(re)allocate a BGRA8 plane bridge sized to the framebuffer. */
+    private static me.cortex.voxy.client.core.interop.IOSurfaceBridge ensurePlaneBridge(
+            me.cortex.voxy.client.core.interop.IOSurfaceBridge cur,
+            me.cortex.voxy.client.core.metal.MetalRenderBackend mrb, int fbw, int fbh) {
+        if (cur == null || cur.width() != fbw || cur.height() != fbh) {
+            if (cur != null) cur.close();
+            return me.cortex.voxy.client.core.interop.IOSurfaceBridge.create(
+                    mrb.device(), fbw, fbh,
+                    me.cortex.voxy.client.core.interop.IOSurfaceBridge.IOSurfaceFormat.BGRA8);
+        }
+        return cur;
+    }
     /**
      * Blit destination for {@link #metalDepthTex} (w×h raw D32F floats) and
      * read source of the export pass. Exists because Metal silently reads
@@ -350,6 +368,12 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         if (this.metalDepthTransTex != null) { this.metalDepthTransTex.free(); this.metalDepthTransTex = null; }
         if (this.metalTransReadBuffer != null) { this.metalTransReadBuffer.free(); this.metalTransReadBuffer = null; }
         if (this.metalDepthRestore != null) { this.metalDepthRestore.close(); this.metalDepthRestore = null; }
+        if (this.metalVxOpaque0 != null) { this.metalVxOpaque0.close(); this.metalVxOpaque0 = null; }
+        if (this.metalVxOpaque1 != null) { this.metalVxOpaque1.close(); this.metalVxOpaque1 = null; }
+        if (this.metalVxOpaque2 != null) { this.metalVxOpaque2.close(); this.metalVxOpaque2 = null; }
+        if (this.metalVxTrans0 != null) { this.metalVxTrans0.close(); this.metalVxTrans0 = null; }
+        if (this.metalVxTrans1 != null) { this.metalVxTrans1.close(); this.metalVxTrans1 = null; }
+        if (this.metalVxTrans2 != null) { this.metalVxTrans2.close(); this.metalVxTrans2 = null; }
         if (this.metalDepthTex != null) {
             this.metalDepthTex.free();
             this.metalDepthTex = null;
@@ -553,10 +577,28 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         boolean irisGbufferInject = me.cortex.voxy.client.core.util.IrisUtil.vxContractActive()
                 || me.cortex.voxy.client.core.util.IrisUtil.irisGbufferInjectMode();
         float clearA = (bridgeSolidTest || (IOSurfaceBridgeCompositor.USE_BLIT && !irisGbufferInject)) ? 1.0f : 0.0f;
-        var pass = me.cortex.voxy.client.core.gpu.RenderPassDesc.builder(fbw, fbh)
-                .clearColor(this.metalBridge.asGpuTexture(), clearR, clearG, clearB, clearA)
-                .clearDepth(this.metalDepthTex, 1.0f)
-                .build();
+        // Phase C material g-buffer (vxMaterialMode): the opaque LOD renders into 3
+        // BGRA8 planes (P0 albedo, P1 tint, P2 misc) for the GL resolve to shade,
+        // instead of the single composited bridge colour. Lazy-allocate all 6 planes
+        // (opaque + translucent) up front so the translucent split below has targets.
+        boolean vxMaterial = this.vxMaterialMode();
+        if (vxMaterial) {
+            this.metalVxOpaque0 = ensurePlaneBridge(this.metalVxOpaque0, mrb, fbw, fbh);
+            this.metalVxOpaque1 = ensurePlaneBridge(this.metalVxOpaque1, mrb, fbw, fbh);
+            this.metalVxOpaque2 = ensurePlaneBridge(this.metalVxOpaque2, mrb, fbw, fbh);
+            this.metalVxTrans0 = ensurePlaneBridge(this.metalVxTrans0, mrb, fbw, fbh);
+            this.metalVxTrans1 = ensurePlaneBridge(this.metalVxTrans1, mrb, fbw, fbh);
+            this.metalVxTrans2 = ensurePlaneBridge(this.metalVxTrans2, mrb, fbw, fbh);
+        }
+        var passBuilder = me.cortex.voxy.client.core.gpu.RenderPassDesc.builder(fbw, fbh);
+        if (vxMaterial) {
+            passBuilder.clearColor(this.metalVxOpaque0.asGpuTexture(), 0f, 0f, 0f, 0f)
+                       .clearColor(this.metalVxOpaque1.asGpuTexture(), 0f, 0f, 0f, 0f)
+                       .clearColor(this.metalVxOpaque2.asGpuTexture(), 0f, 0f, 0f, 0f);
+        } else {
+            passBuilder.clearColor(this.metalBridge.asGpuTexture(), clearR, clearG, clearB, clearA);
+        }
+        var pass = passBuilder.clearDepth(this.metalDepthTex, 1.0f).build();
         // Submersion far-field skip: with the eye in water/lava the env fog
         // saturates at 24-96 blocks while every LOD fragment sits far beyond
         // it — the whole LOD field is 100% fog colour by construction. Drawing
@@ -661,7 +703,9 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                     && this.sectionRenderer instanceof me.cortex.voxy.client.core.rendering.section.backend.mdic.MDICSectionRenderer mdicT
                     && viewport instanceof me.cortex.voxy.client.core.rendering.section.backend.mdic.MDICViewport mvT
                     && !this.deferTranslucency) {
-                if (this.metalTransBridge == null || this.metalTransBridgeWidth != fbw || this.metalTransBridgeHeight != fbh) {
+                // Material mode uses the 3 translucent planes (allocated above);
+                // the single trans colour bridge is only for the Phase D-lite path.
+                if (!vxMaterial && (this.metalTransBridge == null || this.metalTransBridgeWidth != fbw || this.metalTransBridgeHeight != fbh)) {
                     if (this.metalTransBridge != null) this.metalTransBridge.close();
                     this.metalTransBridge = me.cortex.voxy.client.core.interop.IOSurfaceBridge.create(
                             mrb.device(), fbw, fbh,
@@ -692,8 +736,15 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
 
                 this.metalDepthRestore.render(backend, this.metalDepthReadBuffer, this.metalDepthTransTex, fbw, fbh);
 
-                var transPass = me.cortex.voxy.client.core.gpu.RenderPassDesc.builder(fbw, fbh)
-                        .clearColor(this.metalTransBridge.asGpuTexture(), 0.0f, 0.0f, 0.0f, 0.0f)
+                var transPassBuilder = me.cortex.voxy.client.core.gpu.RenderPassDesc.builder(fbw, fbh);
+                if (vxMaterial) {
+                    transPassBuilder.clearColor(this.metalVxTrans0.asGpuTexture(), 0f, 0f, 0f, 0f)
+                                    .clearColor(this.metalVxTrans1.asGpuTexture(), 0f, 0f, 0f, 0f)
+                                    .clearColor(this.metalVxTrans2.asGpuTexture(), 0f, 0f, 0f, 0f);
+                } else {
+                    transPassBuilder.clearColor(this.metalTransBridge.asGpuTexture(), 0.0f, 0.0f, 0.0f, 0.0f);
+                }
+                var transPass = transPassBuilder
                         .depthAttachment(this.metalDepthTransTex, 0,
                                 me.cortex.voxy.client.core.gpu.RenderPassDesc.LoadAction.LOAD,
                                 me.cortex.voxy.client.core.gpu.RenderPassDesc.StoreAction.STORE, 1.0f)
