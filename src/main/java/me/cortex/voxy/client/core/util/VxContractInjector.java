@@ -10,8 +10,10 @@ import static org.lwjgl.opengl.GL13C.GL_TEXTURE0;
 import static org.lwjgl.opengl.GL13C.GL_TEXTURE1;
 import static org.lwjgl.opengl.GL13C.GL_ACTIVE_TEXTURE;
 import static org.lwjgl.opengl.GL13C.glActiveTexture;
+import static org.lwjgl.opengl.GL15C.*;
 import static org.lwjgl.opengl.GL20C.*;
 import static org.lwjgl.opengl.GL30C.*;
+import static org.lwjgl.opengl.GL31C.*;
 
 /**
  * Phase B of the native vx contract on Metal (milestone issue #9): drives
@@ -54,6 +56,10 @@ public final class VxContractInjector {
     private static final int INJECT_SQRT = "0".equals(System.getenv("VOXY_IRIS_INJECT_SQRT")) ? 0 : 1;
     private static final boolean COMPILE_PROBE = "1".equals(System.getenv("VOXY_VX_RESOLVE_COMPILE_TEST"));
     private static boolean compileProbeRan;
+
+    /** Phase D spike (issue #11): run BSL's voxy_translucent over the LOD water
+     *  instead of the flat passthrough. A/B kill switch; default OFF. */
+    private static final boolean TRANS_RESOLVE = "1".equals(System.getenv("VOXY_VX_TRANS_RESOLVE"));
 
     private static float parseEnvF(String name, float dflt) {
         String v = System.getenv(name);
@@ -205,7 +211,15 @@ public final class VxContractInjector {
                     boolean transDepthOk = VxIrisSideChannel.getOrCreate().resolveTrans(
                             transColourRect, transDepthRect, fbw, fbh,
                             me.cortex.voxy.client.core.rendering.util.MetalMvpUtil.METAL_NDC_REMAP);
-                    if (transDepthOk && ensureTransFbo(translucentTargets[0])) {
+                    // Phase D spike (VOXY_VX_TRANS_RESOLVE=1): run the pack's
+                    // voxy_translucent over the LOD water instead of the flat
+                    // passthrough. Falls back to the passthrough on any failure.
+                    boolean resolved = false;
+                    if (transDepthOk && TRANS_RESOLVE) {
+                        resolved = runTransResolveSpike(pipeData, transColourRect, transDepthRect,
+                                fbw, fbh, translucentTargets);
+                    }
+                    if (!resolved && transDepthOk && ensureTransFbo(translucentTargets[0])) {
                         glBindFramebuffer(GL_FRAMEBUFFER, transFbo);
                         glActiveTexture(GL_TEXTURE0);
                         glBindTexture(GL_TEXTURE_RECTANGLE, transColourRect);
@@ -348,6 +362,165 @@ public final class VxContractInjector {
         uTransDepth = glGetUniformLocation(transProgram, "uDepthTex");
         uTransGamma = glGetUniformLocation(transProgram, "uInjectGamma");
         uTransSqrt = glGetUniformLocation(transProgram, "uInjectSqrt");
+        return true;
+    }
+
+    // ---- Phase D spike: run the pack's voxy_translucent over the LOD water ----
+    private static int rsProgram = -1; // -1 untried, 0 failed, >0 ready
+    private static int rsUAlbedo, rsUDepth, rsUDepthIsWindow, rsUWaterId;
+    private static int rsUbo, rsUboSize;
+    private static long rsUboScratch;
+    private static int rsSamplerCount;
+    private static int rsWaterId = Integer.MIN_VALUE;
+    private static int rsFbo;
+    private static int[] rsAttached = new int[0];
+    private static boolean rsWarned;
+
+    private static int resolveWaterId() {
+        String env = System.getenv("VOXY_VX_WATER_ID");
+        if (env != null && !env.isBlank()) {
+            try { return Integer.parseInt(env.trim()); } catch (NumberFormatException ignored) {}
+        }
+        try {
+            var ids = net.irisshaders.iris.shaderpack.materialmap.WorldRenderingSettings.INSTANCE.getBlockStateIds();
+            if (ids != null) {
+                return ids.getInt(net.minecraft.world.level.block.Blocks.WATER.defaultBlockState());
+            }
+        } catch (Throwable t) {
+            Logger.warn("VxContractInjector: could not resolve water customId: " + t.getMessage());
+        }
+        return -1;
+    }
+
+    private static boolean buildTransResolveSpike(me.cortex.voxy.client.iris.IrisVoxyRenderPipelineData pipeData) {
+        if (rsProgram != -1) return rsProgram > 0;
+        rsProgram = 0; // mark tried (don't retry on failure)
+        String fs = MetalVxResolvePass.assembleTranslucentSpike(pipeData);
+        if (fs == null) {
+            Logger.warn("VxContractInjector: trans resolve spike — pack not resolvable (null assembly)");
+            return false;
+        }
+        int prog = VxIrisSideChannel.compile(MetalVxResolvePass.RESOLVE_VERT, fs, "VxContractInjector.transResolveSpike");
+        if (prog == 0) {
+            Logger.error("VxContractInjector: trans resolve spike program failed to compile/link");
+            return false;
+        }
+        int prev = glGetInteger(GL_CURRENT_PROGRAM);
+        glUseProgram(prog);
+        rsUAlbedo = glGetUniformLocation(prog, "uVxAlbedo");
+        rsUDepth = glGetUniformLocation(prog, "uVxDepth");
+        rsUDepthIsWindow = glGetUniformLocation(prog, "uVxDepthIsWindow");
+        rsUWaterId = glGetUniformLocation(prog, "uVxWaterId");
+        glUniform1i(rsUAlbedo, 0);
+        glUniform1i(rsUDepth, 1);
+        glUniform1i(rsUDepthIsWindow, 1);
+        // Pack samplers: units 6.. in declaration order (matches bindingFunction.accept(6)).
+        rsSamplerCount = 0;
+        if (pipeData.samplerDecls != null) {
+            int unit = 6;
+            for (var name : pipeData.samplerDecls.keySet()) {
+                int loc = glGetUniformLocation(prog, name);
+                if (loc >= 0) glUniform1i(loc, unit);
+                unit++;
+                rsSamplerCount++;
+            }
+        }
+        if (pipeData.getUniforms() != null) {
+            rsUboSize = pipeData.getUniforms().size();
+            int blockIdx = glGetUniformBlockIndex(prog, "ShaderUniformBindings");
+            if (blockIdx != GL_INVALID_INDEX) {
+                glUniformBlockBinding(prog, blockIdx, 5);
+            }
+            rsUbo = glGenBuffers();
+            rsUboScratch = org.lwjgl.system.MemoryUtil.nmemAlloc(rsUboSize);
+        }
+        glUseProgram(prev);
+        rsWaterId = resolveWaterId();
+        rsProgram = prog;
+        Logger.info("VxContractInjector: trans resolve spike READY (samplers=" + rsSamplerCount
+                + ", uboSize=" + rsUboSize + ", waterId=" + rsWaterId + ")");
+        return true;
+    }
+
+    private static boolean ensureTransResolveFbo(int[] targets) {
+        int n = targets.length;
+        if (rsFbo == 0) { rsFbo = glGenFramebuffers(); rsAttached = new int[0]; }
+        boolean dirty = rsAttached.length != n;
+        for (int i = 0; !dirty && i < n; i++) dirty = rsAttached[i] != targets[i];
+        if (!dirty) return true;
+        int prevFb = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
+        glBindFramebuffer(GL_FRAMEBUFFER, rsFbo);
+        int[] bufs = new int[n];
+        for (int i = 0; i < n; i++) {
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D, targets[i], 0);
+            bufs[i] = GL_COLOR_ATTACHMENT0 + i;
+        }
+        glDrawBuffers(bufs);
+        int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        glBindFramebuffer(GL_FRAMEBUFFER, prevFb);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+            Logger.error("VxContractInjector: trans resolve FBO incomplete: 0x" + Integer.toHexString(status));
+            return false;
+        }
+        rsAttached = java.util.Arrays.copyOf(targets, n);
+        Logger.info("VxContractInjector: bound trans resolve targets " + java.util.Arrays.toString(rsAttached));
+        return true;
+    }
+
+    private static boolean runTransResolveSpike(me.cortex.voxy.client.iris.IrisVoxyRenderPipelineData pipeData,
+                                                int albedoRect, int depthRect, int fbw, int fbh, int[] targets) {
+        if (!buildTransResolveSpike(pipeData)) return false;
+        if (rsWaterId <= 0) {
+            if (!rsWarned) {
+                rsWarned = true;
+                Logger.warn("VxContractInjector: trans resolve spike — no usable water customId ("
+                        + rsWaterId + "); set VOXY_VX_WATER_ID. Falling back to passthrough.");
+            }
+            return false;
+        }
+        if (!ensureTransResolveFbo(targets)) return false;
+
+        glBindFramebuffer(GL_FRAMEBUFFER, rsFbo);
+        glViewport(0, 0, fbw, fbh);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glUseProgram(rsProgram);
+        glBindVertexArray(vao);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_RECTANGLE, albedoRect);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_RECTANGLE, depthRect);
+        glActiveTexture(GL_TEXTURE0);
+
+        if (pipeData.getImageSet() != null) {
+            pipeData.getImageSet().bindingFunction().accept(6);
+        }
+        if (rsUbo != 0 && pipeData.getUniforms() != null) {
+            pipeData.getUniforms().updater().accept(rsUboScratch);
+            glBindBuffer(GL_UNIFORM_BUFFER, rsUbo);
+            glBufferData(GL_UNIFORM_BUFFER,
+                    org.lwjgl.system.MemoryUtil.memByteBuffer(rsUboScratch, rsUboSize), GL_DYNAMIC_DRAW);
+            glBindBufferBase(GL_UNIFORM_BUFFER, 5, rsUbo);
+        }
+        glUniform1ui(rsUWaterId, rsWaterId);
+
+        if (pipeData.getBlender() != null) {
+            pipeData.getBlender().run();
+        } else {
+            glDisable(GL_BLEND);
+        }
+
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        // Clean the extra units/UBO point we touched (outer finally only restores 0/1).
+        for (int i = 0; i < rsSamplerCount; i++) {
+            glActiveTexture(GL_TEXTURE0 + 6 + i);
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+        glActiveTexture(GL_TEXTURE0);
+        glBindBufferBase(GL_UNIFORM_BUFFER, 5, 0);
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
         return true;
     }
 

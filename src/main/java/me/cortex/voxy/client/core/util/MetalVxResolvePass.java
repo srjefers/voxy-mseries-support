@@ -170,13 +170,99 @@ public final class MetalVxResolvePass {
         return out;
     }
 
-    private static final String RESOLVE_VERT = """
+    public static final String RESOLVE_VERT = """
             #version 410 core
             void main() {
                 vec2 p = vec2((gl_VertexID & 1) * 2, (gl_VertexID & 2));
                 gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
             }
             """;
+
+    /**
+     * Phase D spike (issue #11): assemble a translucent resolve that runs the
+     * pack's {@code voxy_translucent} over the LOD water using ONLY the existing
+     * Phase D-lite bridges — the premultiplied water colour ({@code uVxAlbedo})
+     * and the side-channel depth ({@code uVxDepth}) — with CONSTANT material
+     * attributes and a host-supplied water {@code customId} ({@code uVxWaterId}).
+     * The full Phase C material g-buffer is NOT required: the translucent LOD
+     * layer is ~entirely water, so a constant water id lets the pack's water
+     * branch (waves/reflections/depth-grade) run. This answers whether
+     * albedo+depth+water-id is enough before investing in the material g-buffer.
+     *
+     * @return assembled GLSL, or null when the pack can't be resolved this way.
+     */
+    public static String assembleTranslucentSpike(IrisVoxyRenderPipelineData data) {
+        String patchText = data.translucentFragPatch();
+        if (patchText == null) {
+            return null;
+        }
+        if (data.getSsboSet() != null && data.getSsboSet().layout() != null
+                && !data.getSsboSet().layout().isBlank()) {
+            Logger.warn("MetalVxResolvePass spike: pack declares SSBOs (GL 4.3) — not resolvable on Apple GL 4.1");
+            return null;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("#version 410 core\n\n");
+        sb.append("#define texture2D texture\n");
+        sb.append("#define texture3D texture\n");
+        sb.append("#define texture2DLod textureLod\n");
+        sb.append("#define shadow2D texture\n\n");
+
+        if (data.getUniforms() != null) {
+            // Binding-free (Apple GL 4.1) — block binding assigned post-link.
+            sb.append("layout(std140) uniform ShaderUniformBindings ")
+                    .append(data.getUniforms().layout())
+                    .append(";\n\n");
+        }
+
+        if (data.samplerDecls != null) {
+            // Binding-free sampler decls; units assigned post-link with
+            // glUniform1i in declaration order, matching bindingFunction's base.
+            data.samplerDecls.forEach((name, type) ->
+                    sb.append("uniform ").append(type).append(' ').append(name).append(";\n"));
+            sb.append('\n');
+        }
+
+        sb.append("""
+                uniform sampler2DRect uVxAlbedo;
+                uniform sampler2DRect uVxDepth;
+                uniform int uVxDepthIsWindow;
+                uniform uint uVxWaterId;
+
+                """);
+
+        sb.append(PARAMS_STRUCT).append('\n');
+
+        sb.append("""
+                vec4 vx_fragCoord;
+
+                void main() {
+                    ivec2 vxSz = textureSize(uVxDepth);
+                    vec2 vxTexel = vec2(gl_FragCoord.x, float(vxSz.y) - gl_FragCoord.y);
+                    vec3 vxDEnc = texture(uVxDepth, vxTexel).rgb;
+                    float vxD = dot(vxDEnc, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+                    if (vxD <= 0.0 || vxD >= 0.9999999) discard;
+                    vec4 vxA = texture(uVxAlbedo, vxTexel);
+                    if (vxA.a <= 0.001) discard;
+                    // Bridge holds premultiplied colour — un-premultiply to straight albedo.
+                    vec3 vxStraight = vxA.rgb / max(vxA.a, 0.0001);
+                    vec4 vxAlbedo = vec4(vxStraight, vxA.a);
+                    float vxWz = (uVxDepthIsWindow == 1) ? vxD : vxD * 0.5 + 0.5;
+                    gl_FragDepth = vxWz;
+                    vx_fragCoord = vec4(gl_FragCoord.xy, vxWz, 1.0);
+                    // Spike: constant material attrs + water customId so the pack's
+                    // voxy_translucent shades the whole LOD translucent layer as water.
+                    voxy_emitFragment(VoxyFragmentParameters(
+                        vxAlbedo, vec2(0.0), vec2(0.0), 1u, 0u, vec2(1.0, 0.0), vec4(1.0), uVxWaterId));
+                }
+
+                #define gl_FragCoord vx_fragCoord
+                """);
+
+        sb.append('\n').append(appleStrictCompat(patchText)).append('\n');
+        return sb.toString();
+    }
 
     /**
      * Compile probe: assemble + compile + link both stages, dump everything
