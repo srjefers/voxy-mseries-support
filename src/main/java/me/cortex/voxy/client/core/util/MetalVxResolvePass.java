@@ -116,6 +116,29 @@ public final class MetalVxResolvePass {
 
         sb.append(PARAMS_STRUCT).append('\n');
 
+        // Sky-light floor (VOXY_VX_SKY_FLOOR=0..15, default 0 = off). The LOD bake
+        // under-propagates sky light for many far/mipped sections (CPU plane dump:
+        // ~56% of opaque pixels read sky=0 at noon, the count rising as the world
+        // settles). BSL's GetLighting squares sky light (skylightSqr = lightmap.y^2)
+        // and gates ALL sun/scene lighting on it, so sky=0 -> near-black; the normal
+        // (non-vx) path tolerates the same data because MC's lightmap texture has a
+        // non-zero daytime floor. This clamps the resolve's decoded sky light up to a
+        // floor so BSL can light the LODs comparably. floor=15 is the confirm-the-cause
+        // setting (everything should go bright); a moderate floor is the candidate fix.
+        float skyFloor = 0.0f;
+        String skyFloorEnv = System.getenv("VOXY_VX_SKY_FLOOR");
+        if (skyFloorEnv != null) {
+            try { skyFloor = Math.max(0, Math.min(15, Integer.parseInt(skyFloorEnv.trim()))) / 15.0f; }
+            catch (NumberFormatException ignored) {}
+        }
+        String skyFloorLine = skyFloor > 0.0f
+                ? String.format("vxLight.y = max(vxLight.y, %.5f);\n", skyFloor)
+                : "";
+        if (skyFloor > 0.0f) {
+            Logger.info("MetalVxResolvePass: VOXY_VX_SKY_FLOOR active, sky light floored to " + skyFloor
+                    + " (" + skyFloorEnv + "/15)");
+        }
+
         sb.append("""
                 vec4 vx_fragCoord;
 
@@ -135,7 +158,7 @@ public final class MetalVxResolvePass {
                     vec2 vxLight = vec2(
                         (float(vxMr >> 4u) * 16.0 + 8.0) / 256.0,
                         (float(vxMg >> 4u) * 16.0 + 8.0) / 256.0);
-                    uint vxCustomId = uint(vxMisc.b + 0.5) | (uint(vxMisc.a + 0.5) << 8u);
+                    __SKY_FLOOR__uint vxCustomId = uint(vxMisc.b + 0.5) | (uint(vxMisc.a + 0.5) << 8u);
                     float vxWz = (uVxDepthIsWindow == 1) ? vxD : vxD * 0.5 + 0.5;
                     gl_FragDepth = vxWz;
                     vx_fragCoord = vec4(gl_FragCoord.xy, vxWz, 1.0);
@@ -144,7 +167,7 @@ public final class MetalVxResolvePass {
                 }
 
                 #define gl_FragCoord vx_fragCoord
-                """);
+                """.replace("__SKY_FLOOR__", skyFloorLine));
 
         sb.append('\n').append(appleStrictCompat(patchText)).append('\n');
         return sb.toString();
@@ -373,6 +396,51 @@ public final class MetalVxResolvePass {
     private static Prog trans;
     private static int resolveVao;
 
+    // Diagnostic: VOXY_VX_DEBUG_PLANE=albedo|tint|misc|depth bypasses the pack and
+    // writes the chosen raw material plane straight to the pack's first colortex,
+    // so we can see whether the planes themselves carry data (textures/colour) or
+    // the problem is in the pack invocation.
+    private static final int DEBUG_PLANE = parseDebugPlane();
+    private static int debugProg = -1;
+    private static int uDbgPlane;
+    private static int debugFbo;
+    private static int[] debugAttached = new int[0];
+
+    private static int parseDebugPlane() {
+        String v = System.getenv("VOXY_VX_DEBUG_PLANE");
+        if (v == null) return -1;
+        return switch (v.trim().toLowerCase()) {
+            case "albedo", "0" -> 0;
+            case "tint", "1" -> 1;
+            case "misc", "2" -> 2;
+            case "depth", "3" -> 3;
+            default -> -1;
+        };
+    }
+
+    private static final String DEBUG_FS = """
+            #version 410 core
+            uniform sampler2DRect uVxAlbedo;
+            uniform sampler2DRect uVxTint;
+            uniform sampler2DRect uVxMisc;
+            uniform sampler2DRect uVxDepth;
+            uniform int uVxDebugPlane;
+            out vec4 o0;
+            void main() {
+                ivec2 sz = textureSize(uVxDepth);
+                vec2 t = vec2(gl_FragCoord.x, float(sz.y) - gl_FragCoord.y);
+                float d = dot(texture(uVxDepth, t).rgb, vec3(1.0, 1.0/255.0, 1.0/65025.0));
+                if (d <= 0.0 || d >= 0.9999999) discard;
+                vec4 a = texture(uVxAlbedo, t);
+                vec3 c;
+                if (uVxDebugPlane == 0) c = a.rgb / max(a.a, 0.0001);
+                else if (uVxDebugPlane == 1) c = texture(uVxTint, t).rgb;
+                else if (uVxDebugPlane == 2) c = texture(uVxMisc, t).rgb;
+                else c = vec3(d);
+                o0 = vec4(c, 1.0);
+            }
+            """;
+
     /** Compile both resolve programs once. Returns true if the opaque program links. */
     public static boolean build(IrisVoxyRenderPipelineData data) {
         if (buildAttempted) return buildOk;
@@ -464,6 +532,12 @@ public final class MetalVxResolvePass {
         boolean prevCull = glIsEnabled(GL_CULL_FACE);
         boolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
         try {
+            if (DEBUG_PLANE >= 0) {
+                // Diagnostic: write the raw chosen plane straight to colortex0, bypassing
+                // the pack — shows whether the material g-buffer planes carry data.
+                runDebug(oP0, oP1, oP2, opaqueDepthRect, data.resolveOpaqueTargetsNow(ipipe), fbw, fbh);
+                return;
+            }
             // Fill the pack's vxDepthTexOpaque/Trans samplers (the pack reads them
             // for its own depth needs; our resolve reads the raw bridge for gl_FragDepth).
             if (!sc.resolve(oP0, opaqueDepthRect, fbw, fbh, ndc)) return;
@@ -490,6 +564,50 @@ public final class MetalVxResolvePass {
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFb);
             glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFb);
         }
+    }
+
+    private static void runDebug(int p0, int p1, int p2, int depthRect, int[] targets, int fbw, int fbh) {
+        if (targets == null || targets.length == 0 || p0 == 0 || depthRect == 0) return;
+        if (resolveVao == 0) resolveVao = glGenVertexArrays();
+        if (debugProg == -1) {
+            debugProg = me.cortex.voxy.client.core.util.VxIrisSideChannel.compile(RESOLVE_VERT, DEBUG_FS, "MetalVxResolve.debug");
+            if (debugProg != 0) {
+                int prev = glGetInteger(GL_CURRENT_PROGRAM);
+                glUseProgram(debugProg);
+                setTexUnit(debugProg, "uVxAlbedo", 0);
+                setTexUnit(debugProg, "uVxTint", 1);
+                setTexUnit(debugProg, "uVxMisc", 2);
+                setTexUnit(debugProg, "uVxDepth", 3);
+                uDbgPlane = glGetUniformLocation(debugProg, "uVxDebugPlane");
+                glUseProgram(prev);
+                debugFbo = glGenFramebuffers();
+            }
+            Logger.info("MetalVxResolvePass DEBUG plane=" + DEBUG_PLANE + " prog=" + debugProg);
+        }
+        if (debugProg == 0) return;
+        boolean dirty = debugAttached.length != targets.length;
+        for (int i = 0; !dirty && i < targets.length; i++) dirty = debugAttached[i] != targets[i];
+        glBindFramebuffer(GL_FRAMEBUFFER, debugFbo);
+        if (dirty) {
+            int[] bufs = new int[targets.length];
+            for (int i = 0; i < targets.length; i++) {
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D, targets[i], 0);
+                bufs[i] = GL_COLOR_ATTACHMENT0 + i;
+            }
+            glDrawBuffers(bufs);
+            debugAttached = java.util.Arrays.copyOf(targets, targets.length);
+        }
+        glViewport(0, 0, fbw, fbh);
+        glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND);
+        glUseProgram(debugProg);
+        glBindVertexArray(resolveVao);
+        glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_RECTANGLE, p0);
+        glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_RECTANGLE, p1);
+        glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_RECTANGLE, p2);
+        glActiveTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_RECTANGLE, depthRect);
+        glActiveTexture(GL_TEXTURE0);
+        glUniform1i(uDbgPlane, DEBUG_PLANE);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }
 
     private static void runOne(IrisVoxyRenderPipelineData data, Prog p,

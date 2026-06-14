@@ -150,6 +150,107 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         }
         return cur;
     }
+
+    /** Lock + read a material plane IOSurface and log center pixels (BGRA8; the int
+     *  prints as 0xAARRGGBB). Diagnostic for the dark-LOD investigation. */
+    private static void dumpVxPlane(String label, me.cortex.voxy.client.core.interop.IOSurfaceBridge plane, int fbw, int fbh) {
+        if (plane == null) { Logger.info("[Metal-VXPLANES] " + label + " = null"); return; }
+        long surf = plane.ioSurfaceHandle();
+        if (me.cortex.voxy.client.core.metal.MetalNative.iosurfaceLockReadOnly(surf) != 0) {
+            Logger.info("[Metal-VXPLANES] " + label + " lock FAILED");
+            return;
+        }
+        try {
+            long sbase = me.cortex.voxy.client.core.metal.MetalNative.iosurfaceGetBaseAddress(surf);
+            int bpr = me.cortex.voxy.client.core.metal.MetalNative.iosurfaceGetBytesPerRow(surf);
+            long rowAddr = sbase + (long) (fbh * 2 / 3) * bpr; // lower third = LOD terrain, below sky
+            StringBuilder px = new StringBuilder();
+            for (int i = 0; i < 8; i++) {
+                int x = fbw / 4 + i * (fbw / 16);
+                px.append(String.format(" %08X", MemoryUtil.memGetInt(rowAddr + (long) x * 4)));
+            }
+            Logger.info("[Metal-VXPLANES] " + label + " (0xAARRGGBB):" + px);
+        } finally {
+            me.cortex.voxy.client.core.metal.MetalNative.iosurfaceUnlockReadOnly(surf);
+        }
+    }
+
+    /**
+     * Comprehensive one-shot statistical read-back of the three REAL material
+     * planes (albedo/tint/misc) over a grid spanning the lower 2/3 of the frame
+     * (below the sky). Decodes each pixel the same way MetalVxResolvePass does and
+     * reports aggregates so a single run characterises the whole g-buffer instead
+     * of 8 cherry-picked pixels: albedo coverage + mean RGB + grayscale fraction,
+     * tint white-vs-biome split with sample non-white tints, and a block/sky light
+     * histogram (the input BSL's GetLighting gates scene lighting on). VOXY_VX_DUMP_PLANES=1.
+     */
+    private void dumpVxStats(int fbw, int fbh) {
+        var a = this.metalVxOpaque0; var t = this.metalVxOpaque1; var m = this.metalVxOpaque2;
+        if (a == null || t == null || m == null) { Logger.info("[Metal-VXSTATS] a plane is null"); return; }
+        long sa = a.ioSurfaceHandle(), st = t.ioSurfaceHandle(), sm = m.ioSurfaceHandle();
+        if (me.cortex.voxy.client.core.metal.MetalNative.iosurfaceLockReadOnly(sa) != 0
+                || me.cortex.voxy.client.core.metal.MetalNative.iosurfaceLockReadOnly(st) != 0
+                || me.cortex.voxy.client.core.metal.MetalNative.iosurfaceLockReadOnly(sm) != 0) {
+            Logger.info("[Metal-VXSTATS] lock FAILED"); return;
+        }
+        try {
+            long ba = me.cortex.voxy.client.core.metal.MetalNative.iosurfaceGetBaseAddress(sa);
+            long bt = me.cortex.voxy.client.core.metal.MetalNative.iosurfaceGetBaseAddress(st);
+            long bm = me.cortex.voxy.client.core.metal.MetalNative.iosurfaceGetBaseAddress(sm);
+            int pra = me.cortex.voxy.client.core.metal.MetalNative.iosurfaceGetBytesPerRow(sa);
+            int prt = me.cortex.voxy.client.core.metal.MetalNative.iosurfaceGetBytesPerRow(st);
+            int prm = me.cortex.voxy.client.core.metal.MetalNative.iosurfaceGetBytesPerRow(sm);
+            int covered = 0, total = 0, gray = 0, tintWhite = 0, tintBiome = 0;
+            long sumR = 0, sumG = 0, sumB = 0;
+            int[] blockHist = new int[16], skyHist = new int[16];
+            StringBuilder tintSamples = new StringBuilder();
+            int tintSampleN = 0;
+            // 24 rows across the lower 2/3, 48 cols across the full width.
+            for (int ry = 0; ry < 24; ry++) {
+                int y = fbh / 3 + ry * (fbh * 2 / 3) / 24;
+                long raA = ba + (long) y * pra, raT = bt + (long) y * prt, raM = bm + (long) y * prm;
+                for (int rx = 0; rx < 48; rx++) {
+                    int x = rx * fbw / 48;
+                    total++;
+                    int av = MemoryUtil.memGetInt(raA + (long) x * 4); // 0xAARRGGBB
+                    int alpha = (av >>> 24) & 0xFF;
+                    if (alpha <= 1) continue; // matches resolve discard (albedo.a <= 0.001)
+                    covered++;
+                    int ar = (av >> 16) & 0xFF, ag = (av >> 8) & 0xFF, ab = av & 0xFF;
+                    sumR += ar; sumG += ag; sumB += ab;
+                    if (Math.abs(ar - ag) < 6 && Math.abs(ag - ab) < 6) gray++;
+                    int tv = MemoryUtil.memGetInt(raT + (long) x * 4);
+                    int tr = (tv >> 16) & 0xFF, tg = (tv >> 8) & 0xFF, tb = tv & 0xFF;
+                    if (tr >= 250 && tg >= 250 && tb >= 250) tintWhite++;
+                    else {
+                        tintBiome++;
+                        if (tintSampleN < 6) { tintSamples.append(String.format(" %02X%02X%02X", tr, tg, tb)); tintSampleN++; }
+                    }
+                    int mv = MemoryUtil.memGetInt(raM + (long) x * 4);
+                    int mr = (mv >> 16) & 0xFF, mg = (mv >> 8) & 0xFF; // misc.r, misc.g
+                    int block = (mr >> 4) & 0xF, sky = (mg >> 4) & 0xF;
+                    blockHist[block]++; skyHist[sky]++;
+                }
+            }
+            Logger.info(String.format("[Metal-VXSTATS] covered=%d/%d (%.0f%%) meanRGB=(%d,%d,%d) grayFrac=%.0f%%",
+                    covered, total, 100.0 * covered / Math.max(1, total),
+                    covered > 0 ? (int)(sumR / covered) : 0, covered > 0 ? (int)(sumG / covered) : 0,
+                    covered > 0 ? (int)(sumB / covered) : 0, 100.0 * gray / Math.max(1, covered)));
+            Logger.info(String.format("[Metal-VXSTATS] tint white=%d biome=%d  biomeSamples(RRGGBB):%s",
+                    tintWhite, tintBiome, tintSamples.length() == 0 ? " none" : tintSamples.toString()));
+            Logger.info("[Metal-VXSTATS] blockLight hist[0..15]=" + java.util.Arrays.toString(blockHist));
+            Logger.info("[Metal-VXSTATS] skyLight   hist[0..15]=" + java.util.Arrays.toString(skyHist));
+            var mc = net.minecraft.client.Minecraft.getInstance();
+            if (mc != null && mc.level != null) {
+                long dt = mc.level.getDayTime() % 24000L;
+                Logger.info("[Metal-VXSTATS] worldDayTime=" + dt + " (0-12000=day, 13000-23000=night)");
+            }
+        } finally {
+            me.cortex.voxy.client.core.metal.MetalNative.iosurfaceUnlockReadOnly(sa);
+            me.cortex.voxy.client.core.metal.MetalNative.iosurfaceUnlockReadOnly(st);
+            me.cortex.voxy.client.core.metal.MetalNative.iosurfaceUnlockReadOnly(sm);
+        }
+    }
     /**
      * Blit destination for {@link #metalDepthTex} (w×h raw D32F floats) and
      * read source of the export pass. Exists because Metal silently reads
@@ -761,6 +862,22 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         }
         backend.submit();
         this.metalFrame++;
+
+        // [Metal-VXPLANES] one-shot CPU read-back of the material g-buffer planes
+        // (VOXY_VX_DUMP_PLANES=1). submit() waited, so the IOSurface holds the exact
+        // rendered bytes — definitive (no tonemap / overdraw confound). Center-row px.
+        if (vxMaterial && "1".equals(System.getenv("VOXY_VX_DUMP_PLANES"))
+                && this.metalFrame % 600 == 200) {
+            if ("1".equals(System.getenv("VOXY_VX_GBUFFER_DEBUG"))) {
+                // Raw interData byte dump (debug-emit mode rewrites planes to raw attrs).
+                dumpVxPlane("P0-albedo", this.metalVxOpaque0, fbw, fbh);
+                dumpVxPlane("P1-tint",   this.metalVxOpaque1, fbw, fbh);
+                dumpVxPlane("P2-misc",   this.metalVxOpaque2, fbw, fbh);
+            } else {
+                // Real material planes — statistical grid characterisation.
+                dumpVxStats(fbw, fbh);
+            }
+        }
 
         // [Metal-DEPTHDIAG] chain-bisect instrumentation: the blit buffer is
         // Shared storage and submit() waited, so its contents are the exact

@@ -48,6 +48,15 @@ public final class MetalVxGbufferEmitter {
             layout(location = 2) out vec4 vxGbMisc;
 
             void voxy_emitFragment(VoxyFragmentParameters p) {
+            #ifdef VOXY_VX_GBUFFER_DEBUG
+                // Diagnostic: write the raw interData.x/y/z bytes into the 3 planes so a
+                // CPU read-back reveals the actual vertex attributes (flags / lighting /
+                // tintColour). interData is the flat varying from quads.frag.
+                vxGbAlbedo = vec4(uvec4(interData.x, interData.x >> 8u, interData.x >> 16u, interData.x >> 24u) & 0xFFu) / 255.0;
+                vxGbTint   = vec4(uvec4(interData.y, interData.y >> 8u, interData.y >> 16u, interData.y >> 24u) & 0xFFu) / 255.0;
+                vxGbMisc   = vec4(uvec4(interData.z, interData.z >> 8u, interData.z >> 16u, interData.z >> 24u) & 0xFFu) / 255.0;
+                return;
+            #endif
                 vxGbAlbedo = p.sampledColour;
                 vxGbTint = p.tinting;
                 // Quantize each lightmap channel back to its 16-level nibble — exact

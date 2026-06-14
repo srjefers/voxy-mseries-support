@@ -303,6 +303,10 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                 opaqueDefines.put("VOXY_VX_GBUFFER", "");
                 translucentDefines.put("PATCHED_SHADER", "");
                 translucentDefines.put("VOXY_VX_GBUFFER", "");
+                if ("1".equals(System.getenv("VOXY_VX_GBUFFER_DEBUG"))) {
+                    opaqueDefines.put("VOXY_VX_GBUFFER_DEBUG", "");
+                    translucentDefines.put("VOXY_VX_GBUFFER_DEBUG", "");
+                }
             }
             if (this.backend.getType() != BackendType.OPENGL) {
                 // M13 chunk 3: the chunk-bound depth mask now renders on Metal
