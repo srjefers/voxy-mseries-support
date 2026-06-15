@@ -111,14 +111,14 @@ public abstract class MixinDefaultChunkRenderer extends ShaderChunkRenderer {
 
                 var pipeline = renderer.getPipeline();
                 if (pipeline != null && pipeline.metalBridge() != null) {
-                    if (pipeline.vxMaterialMode()
+                    if (pipeline.vxOpaqueMaterialMode()
                             && pipeline instanceof me.cortex.voxy.client.core.MetalVxRenderPipeline mvp
                             && pipeline.metalVxOpaque0() != null
                             && pipeline.metalDepthBridge() != null) {
-                        // Phase C (issue #11): run the pack's voxy_opaque /
-                        // voxy_translucent over the Metal material g-buffer planes —
-                        // the real LOD pack-shading + water fix. Falls through if the
-                        // Iris pipeline isn't the expected type.
+                        // FULL material path (A/B only, VOXY_VX_MATERIAL_OPAQUE=1): run the
+                        // pack's voxy_opaque AND voxy_translucent over the material g-buffer.
+                        // Darkens far opaque (BSL deferred shading of grazing LOD) — not the
+                        // mergeable shape; kept for comparison.
                         var irisPipe = net.irisshaders.iris.Iris.getPipelineManager().getPipelineNullable();
                         if (irisPipe instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline irp) {
                             int oP0 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxOpaque0());
@@ -132,6 +132,26 @@ public abstract class MixinDefaultChunkRenderer extends ShaderChunkRenderer {
                             me.cortex.voxy.client.core.util.MetalVxResolvePass.resolve(
                                     mvp.getPipelineData(), irp,
                                     oP0, oP1, oP2, oD, tP0, tP1, tP2, tD,
+                                    viewport.width, viewport.height);
+                        }
+                    } else if (pipeline.vxMaterialMode()
+                            && pipeline instanceof me.cortex.voxy.client.core.MetalVxRenderPipeline mvp2
+                            && pipeline.metalVxTrans0() != null
+                            && pipeline.metalDepthTransBridge() != null) {
+                        // TRANS-ONLY (issue #11, the mergeable shape): opaque LODs go through
+                        // the proven Phase-B inject (bridge colour + vxDepthTexOpaque, untouched
+                        // vs dev); ONLY the translucent (water) layer runs voxy_translucent over
+                        // its material g-buffer → colortex16, so water gets real BSL shading.
+                        me.cortex.voxy.client.core.util.VxContractInjector.inject(viewport,
+                                pipeline.metalBridge(), pipeline.metalDepthBridge(), null, null);
+                        var irisPipe = net.irisshaders.iris.Iris.getPipelineManager().getPipelineNullable();
+                        if (irisPipe instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline irp) {
+                            int tP0 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans0());
+                            int tP1 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans1());
+                            int tP2 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans2());
+                            int tD  = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalDepthTransBridge());
+                            me.cortex.voxy.client.core.util.MetalVxResolvePass.resolveTranslucentOnly(
+                                    mvp2.getPipelineData(), irp, tP0, tP1, tP2, tD,
                                     viewport.width, viewport.height);
                         }
                     } else if (IrisUtil.vxContractActive()) {

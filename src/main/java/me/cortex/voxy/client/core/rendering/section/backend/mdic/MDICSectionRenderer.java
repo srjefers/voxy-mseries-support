@@ -295,18 +295,25 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             // in MetalVxResolvePass. quads.frag's water/flat early-outs are guarded by
             // !defined(PATCHED_SHADER), so they are bypassed automatically here.
             boolean vxMaterial = pipeline.vxMaterialMode();
-            String terrainFrag = vxMaterial
-                    ? frag + me.cortex.voxy.client.core.util.MetalVxGbufferEmitter.SOURCE
-                    : frag;
-            if (vxMaterial) {
+            // Opaque uses the material emitter (3 planes for the GL resolve) ONLY when
+            // opaque-material is explicitly opted in. Default trans-only: opaque keeps the
+            // proven base shader (single lit colour → bridge → normal composite, untouched
+            // on dev); only the TRANSLUCENT (water) layer goes through the material g-buffer
+            // + voxy_translucent resolve (issue #11). This is the mergeable shape.
+            boolean vxOpaqueMat = pipeline.vxOpaqueMaterialMode();
+            String emitter = me.cortex.voxy.client.core.util.MetalVxGbufferEmitter.SOURCE;
+            String vxOpaqueFrag = vxOpaqueMat ? frag + emitter : frag;
+            String vxTransFrag = vxMaterial ? frag + emitter : frag;
+            boolean gbufferDebug = "1".equals(System.getenv("VOXY_VX_GBUFFER_DEBUG"));
+            if (vxOpaqueMat) {
                 opaqueDefines.put("PATCHED_SHADER", "");
                 opaqueDefines.put("VOXY_VX_GBUFFER", "");
+                if (gbufferDebug) opaqueDefines.put("VOXY_VX_GBUFFER_DEBUG", "");
+            }
+            if (vxMaterial) {
                 translucentDefines.put("PATCHED_SHADER", "");
                 translucentDefines.put("VOXY_VX_GBUFFER", "");
-                if ("1".equals(System.getenv("VOXY_VX_GBUFFER_DEBUG"))) {
-                    opaqueDefines.put("VOXY_VX_GBUFFER_DEBUG", "");
-                    translucentDefines.put("VOXY_VX_GBUFFER_DEBUG", "");
-                }
+                if (gbufferDebug) translucentDefines.put("VOXY_VX_GBUFFER_DEBUG", "");
             }
             if (this.backend.getType() != BackendType.OPENGL) {
                 // M13 chunk 3: the chunk-bound depth mask now renders on Metal
@@ -575,22 +582,25 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             }
             // Material mode renders 3 BGRA8 planes (P0 albedo, P1 tint, P2 misc);
             // otherwise the single colour attachment as before.
-            int[] terrainFormats = vxMaterial
-                    ? new int[]{GL_RGBA8, GL_RGBA8, GL_RGBA8}
-                    : new int[]{GL_RGBA8};
+            // 3-plane material g-buffer only for the layer(s) that go through the resolve:
+            // opaque only when opted in, translucent under vxMaterial; else single bridge colour.
+            int[] threePlane = new int[]{GL_RGBA8, GL_RGBA8, GL_RGBA8};
+            int[] onePlane = new int[]{GL_RGBA8};
+            int[] opaqueFormats = vxOpaqueMat ? threePlane : onePlane;
+            int[] translucentFormats = vxMaterial ? threePlane : onePlane;
             this.terrainPipeline = this.backend.createGraphicsPipeline(
                     new me.cortex.voxy.client.core.gpu.GraphicsPipelineDesc(
-                            vertex, terrainFrag, opaqueDefines,
+                            vertex, vxOpaqueFrag, opaqueDefines,
                             null, null, null, null,
-                            terrainFormats,
+                            opaqueFormats,
                             me.cortex.voxy.client.core.gpu.VertexLayout.EMPTY,
                             opaqueState,
                             "MDIC.terrain"));
             this.translucentTerrainPipeline = this.backend.createGraphicsPipeline(
                     new me.cortex.voxy.client.core.gpu.GraphicsPipelineDesc(
-                            vertex, terrainFrag, translucentDefines,
+                            vertex, vxTransFrag, translucentDefines,
                             null, null, null, null,
-                            terrainFormats,
+                            translucentFormats,
                             me.cortex.voxy.client.core.gpu.VertexLayout.EMPTY,
                             translucentState,
                             "MDIC.translucentTerrain"));

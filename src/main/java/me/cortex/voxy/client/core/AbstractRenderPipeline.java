@@ -184,6 +184,58 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
      * tint white-vs-biome split with sample non-white tints, and a block/sky light
      * histogram (the input BSL's GetLighting gates scene lighting on). VOXY_VX_DUMP_PLANES=1.
      */
+    /**
+     * Translucent-plane water-detection probe (VOXY_VX_DUMP_PLANES=1). Reads the TRANSLUCENT
+     * misc plane's packed customId and reports, over covered water pixels, how many BSL would
+     * detect as water (blockID = customId/100 == 200 or 204) vs not. If a meaningful fraction
+     * read as NON-water, that's the flat-translucent "square artifact" cause: voxy_translucent
+     * only runs its water branch when customId says water; otherwise it renders generic flat
+     * translucent. Pairs with the opaque dumpVxStats.
+     */
+    private void dumpVxTransStats(int fbw, int fbh) {
+        var a = this.metalVxTrans0; var m = this.metalVxTrans2;
+        if (a == null || m == null) { Logger.info("[Metal-VXTRANS] trans planes null"); return; }
+        long sa = a.ioSurfaceHandle(), sm = m.ioSurfaceHandle();
+        if (me.cortex.voxy.client.core.metal.MetalNative.iosurfaceLockReadOnly(sa) != 0
+                || me.cortex.voxy.client.core.metal.MetalNative.iosurfaceLockReadOnly(sm) != 0) {
+            Logger.info("[Metal-VXTRANS] lock FAILED"); return;
+        }
+        try {
+            long ba = me.cortex.voxy.client.core.metal.MetalNative.iosurfaceGetBaseAddress(sa);
+            long bm = me.cortex.voxy.client.core.metal.MetalNative.iosurfaceGetBaseAddress(sm);
+            int pra = me.cortex.voxy.client.core.metal.MetalNative.iosurfaceGetBytesPerRow(sa);
+            int prm = me.cortex.voxy.client.core.metal.MetalNative.iosurfaceGetBytesPerRow(sm);
+            int covered = 0, water = 0, notWater = 0;
+            java.util.HashMap<Integer,Integer> idHist = new java.util.HashMap<>();
+            for (int ry = 0; ry < 24; ry++) {
+                int y = fbh / 4 + ry * (fbh * 3 / 4) / 24;
+                long raA = ba + (long) y * pra, raM = bm + (long) y * prm;
+                for (int rx = 0; rx < 48; rx++) {
+                    int x = rx * fbw / 48;
+                    int av = MemoryUtil.memGetInt(raA + (long) x * 4); // 0xAARRGGBB
+                    if (((av >>> 24) & 0xFF) <= 1) continue; // trans coverage = albedo alpha
+                    covered++;
+                    int mv = MemoryUtil.memGetInt(raM + (long) x * 4);
+                    int aCh = (mv >>> 24) & 0xFF, bCh = mv & 0xFF; // customId = b | (a<<8)
+                    int customId = bCh | (aCh << 8);
+                    int blockID = customId / 100;
+                    if (blockID == 200 || blockID == 204) water++; else {
+                        notWater++;
+                        idHist.merge(customId, 1, Integer::sum);
+                    }
+                }
+            }
+            StringBuilder samp = new StringBuilder();
+            idHist.entrySet().stream().sorted((p,q)->q.getValue()-p.getValue()).limit(6)
+                    .forEach(e -> samp.append(String.format(" id=%d(blk=%d)x%d", e.getKey(), e.getKey()/100, e.getValue())));
+            Logger.info(String.format("[Metal-VXTRANS] covered=%d waterDetected=%d notWater=%d  topNonWaterIds:%s",
+                    covered, water, notWater, samp.length()==0?" none":samp.toString()));
+        } finally {
+            me.cortex.voxy.client.core.metal.MetalNative.iosurfaceUnlockReadOnly(sa);
+            me.cortex.voxy.client.core.metal.MetalNative.iosurfaceUnlockReadOnly(sm);
+        }
+    }
+
     private void dumpVxStats(int fbw, int fbh) {
         var a = this.metalVxOpaque0; var t = this.metalVxOpaque1; var m = this.metalVxOpaque2;
         if (a == null || t == null || m == null) { Logger.info("[Metal-VXSTATS] a plane is null"); return; }
@@ -683,16 +735,22 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         // instead of the single composited bridge colour. Lazy-allocate all 6 planes
         // (opaque + translucent) up front so the translucent split below has targets.
         boolean vxMaterial = this.vxMaterialMode();
-        if (vxMaterial) {
+        boolean vxOpaqueMat = this.vxOpaqueMaterialMode();
+        // Translucent (water) planes whenever the material contract is on; opaque planes
+        // ONLY when opaque-material is opted in. Default (trans-only): opaque renders to the
+        // base bridge → normal composite (untouched/mergeable), water → material resolve.
+        if (vxOpaqueMat) {
             this.metalVxOpaque0 = ensurePlaneBridge(this.metalVxOpaque0, mrb, fbw, fbh);
             this.metalVxOpaque1 = ensurePlaneBridge(this.metalVxOpaque1, mrb, fbw, fbh);
             this.metalVxOpaque2 = ensurePlaneBridge(this.metalVxOpaque2, mrb, fbw, fbh);
+        }
+        if (vxMaterial) {
             this.metalVxTrans0 = ensurePlaneBridge(this.metalVxTrans0, mrb, fbw, fbh);
             this.metalVxTrans1 = ensurePlaneBridge(this.metalVxTrans1, mrb, fbw, fbh);
             this.metalVxTrans2 = ensurePlaneBridge(this.metalVxTrans2, mrb, fbw, fbh);
         }
         var passBuilder = me.cortex.voxy.client.core.gpu.RenderPassDesc.builder(fbw, fbh);
-        if (vxMaterial) {
+        if (vxOpaqueMat) {
             passBuilder.clearColor(this.metalVxOpaque0.asGpuTexture(), 0f, 0f, 0f, 0f)
                        .clearColor(this.metalVxOpaque1.asGpuTexture(), 0f, 0f, 0f, 0f)
                        .clearColor(this.metalVxOpaque2.asGpuTexture(), 0f, 0f, 0f, 0f);
@@ -876,6 +934,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             } else {
                 // Real material planes — statistical grid characterisation.
                 dumpVxStats(fbw, fbh);
+                dumpVxTransStats(fbw, fbh);
             }
         }
 
@@ -1098,6 +1157,21 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
      */
     public boolean vxMaterialMode() {
         return false;
+    }
+
+    /**
+     * Whether the OPAQUE LOD layer also goes through the material g-buffer + BSL resolve.
+     * Default FALSE: opaque LODs render on the proven base path (lit colour → bridge →
+     * normal composite), which is what's stable on dev — the resolve runs ONLY on the
+     * translucent (water) layer (issue #11). The full opaque-material path darkened far
+     * terrain (BSL deferred shading of grazing LOD); kept behind VOXY_VX_MATERIAL_OPAQUE=1
+     * for A/B only. Trans-only is the mergeable shape: water BSL-shaded, opaque untouched.
+     */
+    public static final boolean VX_MATERIAL_OPAQUE = "1".equals(System.getenv("VOXY_VX_MATERIAL_OPAQUE"));
+
+    /** Opaque LOD uses the material g-buffer + resolve only when explicitly opted in. */
+    public boolean vxOpaqueMaterialMode() {
+        return vxMaterialMode() && VX_MATERIAL_OPAQUE;
     }
 
     //null means dont transform the shader

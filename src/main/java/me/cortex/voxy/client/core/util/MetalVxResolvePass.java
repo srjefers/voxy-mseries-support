@@ -556,7 +556,7 @@ public final class MetalVxResolvePass {
             // Fill the pack's vxDepthTexOpaque/Trans samplers (the pack reads them
             // for its own depth needs; our resolve reads the raw bridge for gl_FragDepth).
             if (!sc.resolve(oP0, opaqueDepthRect, fbw, fbh, ndc)) return;
-            if (DUMP_OUT && dumpFrame % 300 == 100) sc.dumpDepthStats(fbw, fbh);
+            if (DUMP_OUT && dumpFrame % 300 == 100) { sc.dumpDepthStats(fbw, fbh); dumpAoStats(ipipe, sc, fbw, fbh); }
             int[] opaqueTargets = data.resolveOpaqueTargetsNow(ipipe);
             runOne(data, opaque, oP0, oP1, oP2, opaqueDepthRect, opaqueTargets, fbw, fbh, false);
 
@@ -579,6 +579,113 @@ public final class MetalVxResolvePass {
             glBindBufferBase(GL_UNIFORM_BUFFER, 5, 0);
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFb);
             glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFb);
+        }
+    }
+
+    /**
+     * Translucent-only resolve (issue #11 mergeable shape): runs ONLY the pack's
+     * voxy_translucent over the translucent (water) material g-buffer → the pack's
+     * translucent targets (colortex16), leaving the OPAQUE LOD layer entirely on the base
+     * path (VxContractInjector handles opaque colour + vxDepthTexOpaque). So water gets real
+     * BSL water shading while opaque LODs stay byte-identical to dev. GL state saved/restored.
+     */
+    public static void resolveTranslucentOnly(IrisVoxyRenderPipelineData data,
+                               net.irisshaders.iris.pipeline.IrisRenderingPipeline ipipe,
+                               int tP0, int tP1, int tP2, int transDepthRect,
+                               int fbw, int fbh) {
+        if (!build(data)) return;
+        if (trans == null || tP0 == 0 || transDepthRect == 0) return;
+        var sc = me.cortex.voxy.client.core.util.VxIrisSideChannel.getOrCreate();
+        var ndc = me.cortex.voxy.client.core.rendering.util.MetalMvpUtil.METAL_NDC_REMAP;
+
+        int prevDrawFb = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
+        int prevReadFb = glGetInteger(GL_READ_FRAMEBUFFER_BINDING);
+        int prevProgram = glGetInteger(GL_CURRENT_PROGRAM);
+        int prevVao = glGetInteger(GL_VERTEX_ARRAY_BINDING);
+        int prevActiveTex = glGetInteger(GL_ACTIVE_TEXTURE);
+        int[] prevViewport = new int[4];
+        glGetIntegerv(GL_VIEWPORT, prevViewport);
+        boolean prevDepth = glIsEnabled(GL_DEPTH_TEST);
+        boolean prevBlend = glIsEnabled(GL_BLEND);
+        boolean prevCull = glIsEnabled(GL_CULL_FACE);
+        boolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
+        try {
+            sc.resolveTrans(tP0, transDepthRect, fbw, fbh, ndc);
+            int[] transTargets = data.resolveTranslucentTargetsNow(ipipe);
+            runOne(data, trans, tP0, tP1, tP2, transDepthRect, transTargets, fbw, fbh, true);
+        } catch (Throwable t) {
+            Logger.warn("MetalVxResolvePass.resolveTranslucentOnly failed: " + t.getMessage());
+        } finally {
+            glUseProgram(prevProgram);
+            glBindVertexArray(prevVao);
+            glActiveTexture(prevActiveTex);
+            if (prevDepth) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+            if (prevBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+            if (prevCull) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+            if (prevScissor) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
+            glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+            glBindBufferBase(GL_UNIFORM_BUFFER, 5, 0);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFb);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFb);
+        }
+    }
+
+    private static int aoReadFbo;
+
+    /**
+     * VOXY_VX_DUMP_OUT=1 objective confirmation that BSL's SSAO (colortex4) is what blacks
+     * out opaque LODs. Reads back colortex4 (deferred.glsl writes ao into .r) correlated
+     * with vxDepthTexOpaque coverage: for LOD pixels (vxZ&lt;1) reports the AO mean/min and a
+     * histogram. colortex4 is last-frame at this hook, but with a static camera that's the
+     * value deferred1 multiplies the LOD colour by. If AO is ~0 over LOD pixels -> confirmed.
+     */
+    private static void dumpAoStats(net.irisshaders.iris.pipeline.IrisRenderingPipeline ipipe,
+                                    me.cortex.voxy.client.core.util.VxIrisSideChannel sc, int fbw, int fbh) {
+        try {
+            var rt = ((me.cortex.voxy.client.mixin.iris.IrisRenderingPipelineAccessor) ipipe).getRenderTargets();
+            var ct4 = rt.getOrCreate(4);
+            int prevRead = glGetInteger(GL_READ_FRAMEBUFFER_BINDING);
+            if (aoReadFbo == 0) aoReadFbo = glGenFramebuffers();
+            // Read vxDepthTexOpaque (coverage) and colortex4 (AO) over the same grid.
+            java.nio.FloatBuffer depthBuf = org.lwjgl.system.MemoryUtil.memAllocFloat(fbw * fbh);
+            java.nio.FloatBuffer aoMain = org.lwjgl.system.MemoryUtil.memAllocFloat(fbw * fbh);
+            java.nio.FloatBuffer aoAlt = org.lwjgl.system.MemoryUtil.memAllocFloat(fbw * fbh);
+            try {
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, sc.fboOpaqueId());
+                glReadPixels(0, 0, fbw, fbh, GL_DEPTH_COMPONENT, GL_FLOAT, depthBuf);
+                for (int side = 0; side < 2; side++) {
+                    int tex = side == 0 ? ct4.getMainTexture() : ct4.getAltTexture();
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, aoReadFbo);
+                    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+                    glReadBuffer(GL_COLOR_ATTACHMENT0);
+                    glReadPixels(0, 0, fbw, fbh, GL_RED, GL_FLOAT, side == 0 ? aoMain : aoAlt);
+                }
+                // Correlate at the same 24x48 grid the depth stat uses.
+                for (int side = 0; side < 2; side++) {
+                    var ao = side == 0 ? aoMain : aoAlt;
+                    int lodN = 0, lodDark = 0, emptyN = 0; double lodSum = 0, emptySum = 0; float lodMin = 2f, lodMax = -1f;
+                    for (int ry = 0; ry < 24; ry++) {
+                        int y = fbh / 3 + ry * (fbh * 2 / 3) / 24;
+                        for (int rx = 0; rx < 48; rx++) {
+                            int x = rx * fbw / 48;
+                            float d = depthBuf.get(y * fbw + x);
+                            float a = ao.get(y * fbw + x);
+                            if (d < 0.99999f) { lodN++; lodSum += a; if (a < 0.1f) lodDark++; if (a < lodMin) lodMin = a; if (a > lodMax) lodMax = a; }
+                            else { emptyN++; emptySum += a; }
+                        }
+                    }
+                    Logger.info(String.format("[VX-OUT] colortex4 AO (%s): LODpx=%d aoMean=%.3f aoMin=%.3f aoMax=%.3f darkFrac(<0.1)=%.0f%% | emptyAoMean=%.3f",
+                            side == 0 ? "main" : "alt", lodN, lodN > 0 ? lodSum / lodN : -1, lodN > 0 ? lodMin : -1,
+                            lodN > 0 ? lodMax : -1, 100.0 * lodDark / Math.max(1, lodN), emptyN > 0 ? emptySum / emptyN : -1));
+                }
+            } finally {
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, prevRead);
+                org.lwjgl.system.MemoryUtil.memFree(depthBuf);
+                org.lwjgl.system.MemoryUtil.memFree(aoMain);
+                org.lwjgl.system.MemoryUtil.memFree(aoAlt);
+            }
+        } catch (Throwable t) {
+            Logger.warn("[VX-OUT] AO readback failed: " + t.getMessage());
         }
     }
 

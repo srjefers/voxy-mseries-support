@@ -74,6 +74,11 @@ public final class VxIrisSideChannel {
         return this.depthTexOpaque;
     }
 
+    /** Diagnostic accessor: the FBO whose GL_DEPTH_ATTACHMENT is the opaque LOD depth (D32F). */
+    public int fboOpaqueId() {
+        return this.fboOpaque;
+    }
+
     /**
      * Diagnostic (VOXY_VX_DUMP_OUT=1): read back vxDepthTexOpaque over a grid and report
      * how many LOD pixels are covered (depth &lt; 1.0) vs empty (== 1.0), plus the covered
@@ -90,18 +95,41 @@ public final class VxIrisSideChannel {
             glReadPixels(0, 0, fbw, fbh, GL_DEPTH_COMPONENT, GL_FLOAT, fb);
             int covered = 0, empty = 0, total = 0;
             double sum = 0; float mn = 2f, mx = -1f;
+            // Neighbour-density probe: for each covered grid pixel, count how many of its 8
+            // immediate (+-1px) neighbours are also covered. BSL's SSAO reconstructs the
+            // surface normal from +-1px neighbour depths; if those are empty (1.0) the normal
+            // is garbage -> AO collapses -> black. High density (~8/8) = contiguous coverage
+            // (SSAO sees a real surface); low = sparse/dithered (the SSAO-breaking case).
+            long nbrCoveredSum = 0; int nbrSampleN = 0;
+            // Local depth roughness: mean |d - neighbourAvg| over covered pixels with full
+            // covered neighbourhood — high = noisy depth (also breaks normal reconstruction).
+            double roughSum = 0; int roughN = 0;
             for (int ry = 0; ry < 24; ry++) {
                 int y = fbh / 3 + ry * (fbh * 2 / 3) / 24;
                 for (int rx = 0; rx < 48; rx++) {
                     int x = rx * fbw / 48;
                     float d = fb.get(y * fbw + x);
                     total++;
-                    if (d < 0.99999f) { covered++; sum += d; if (d < mn) mn = d; if (d > mx) mx = d; }
-                    else empty++;
+                    if (d < 0.99999f) {
+                        covered++; sum += d; if (d < mn) mn = d; if (d > mx) mx = d;
+                        if (x >= 1 && x < fbw - 1 && y >= 1 && y < fbh - 1) {
+                            int nc = 0; double navg = 0; int nn = 0;
+                            for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+                                if (dx == 0 && dy == 0) continue;
+                                float nd = fb.get((y + dy) * fbw + (x + dx));
+                                if (nd < 0.99999f) { nc++; navg += nd; nn++; }
+                            }
+                            nbrCoveredSum += nc; nbrSampleN++;
+                            if (nn == 8) { roughSum += Math.abs(d - navg / nn); roughN++; }
+                        }
+                    } else empty++;
                 }
             }
             Logger.info(String.format("[VX-OUT] vxDepthTexOpaque grid: covered(<1)=%d empty(==1)=%d /%d  coveredDepth mean=%.5f min=%.5f max=%.5f",
                     covered, empty, total, covered > 0 ? sum / covered : -1, covered > 0 ? mn : -1, covered > 0 ? mx : -1));
+            Logger.info(String.format("[VX-OUT] depth coverage density: avg covered neighbours=%.2f/8 (samples=%d)  localRoughness(meanAbsDevWindowZ)=%.6f (n=%d)",
+                    nbrSampleN > 0 ? (double) nbrCoveredSum / nbrSampleN : -1, nbrSampleN,
+                    roughN > 0 ? roughSum / roughN : -1, roughN));
         } catch (Throwable t) {
             Logger.warn("[VX-OUT] depth readback failed: " + t.getMessage());
         } finally {
