@@ -75,6 +75,42 @@ public final class VxIrisSideChannel {
     }
 
     /**
+     * Diagnostic (VOXY_VX_DUMP_OUT=1): read back vxDepthTexOpaque over a grid and report
+     * how many LOD pixels are covered (depth &lt; 1.0) vs empty (== 1.0), plus the covered
+     * mean/min/max. BSL's deferred1 gates LOD lighting on {@code vxZ &lt; 1.0}: if this is
+     * ~all 1.0 the LOD falls to BSL's sky branch (sky-gray); if it's &lt;1.0 but clustered
+     * near 1.0 the unprojection/fog is wrong (fog-gray). Disambiguates the two dark modes.
+     */
+    public void dumpDepthStats(int fbw, int fbh) {
+        if (this.fboOpaque == 0 || this.width == 0) return;
+        int prevRead = glGetInteger(GL_READ_FRAMEBUFFER_BINDING);
+        java.nio.FloatBuffer fb = org.lwjgl.system.MemoryUtil.memAllocFloat(fbw * fbh);
+        try {
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, this.fboOpaque);
+            glReadPixels(0, 0, fbw, fbh, GL_DEPTH_COMPONENT, GL_FLOAT, fb);
+            int covered = 0, empty = 0, total = 0;
+            double sum = 0; float mn = 2f, mx = -1f;
+            for (int ry = 0; ry < 24; ry++) {
+                int y = fbh / 3 + ry * (fbh * 2 / 3) / 24;
+                for (int rx = 0; rx < 48; rx++) {
+                    int x = rx * fbw / 48;
+                    float d = fb.get(y * fbw + x);
+                    total++;
+                    if (d < 0.99999f) { covered++; sum += d; if (d < mn) mn = d; if (d > mx) mx = d; }
+                    else empty++;
+                }
+            }
+            Logger.info(String.format("[VX-OUT] vxDepthTexOpaque grid: covered(<1)=%d empty(==1)=%d /%d  coveredDepth mean=%.5f min=%.5f max=%.5f",
+                    covered, empty, total, covered > 0 ? sum / covered : -1, covered > 0 ? mn : -1, covered > 0 ? mx : -1));
+        } catch (Throwable t) {
+            Logger.warn("[VX-OUT] depth readback failed: " + t.getMessage());
+        } finally {
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, prevRead);
+            org.lwjgl.system.MemoryUtil.memFree(fb);
+        }
+    }
+
+    /**
      * Phase D: real translucent depth when the split pass ran this frame;
      * falls back to the opaque depth until then.
      */

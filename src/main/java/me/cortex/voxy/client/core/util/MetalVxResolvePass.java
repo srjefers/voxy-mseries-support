@@ -396,6 +396,15 @@ public final class MetalVxResolvePass {
     private static Prog trans;
     private static int resolveVao;
 
+    // Diagnostic (VOXY_VX_DUMP_OUT=1): objectively measure what BSL's resolve actually
+    // produces. gbufferData0 here is the LIT albedo (this BSL voxy program applies
+    // GetLighting in-place in the gbuffer pass, not a deferred pass), so reading back the
+    // output colortex's mean RGB tells us if BSL output is dark (UBO/uniform fault) vs
+    // bright-but-darkened-downstream. Also dumps the first UBO scratch floats so a
+    // zero/identity vxModelView (broken normal -> NoL=0 -> no sun) is visible.
+    private static final boolean DUMP_OUT = "1".equals(System.getenv("VOXY_VX_DUMP_OUT"));
+    private static int dumpFrame;
+
     // Diagnostic: VOXY_VX_DEBUG_PLANE=albedo|tint|misc|depth bypasses the pack and
     // writes the chosen raw material plane straight to the pack's first colortex,
     // so we can see whether the planes themselves carry data (textures/colour) or
@@ -451,6 +460,11 @@ public final class MetalVxResolvePass {
         buildOk = opaque != null;
         Logger.info("MetalVxResolvePass.build: opaque=" + (opaque != null ? "OK" : "FAIL")
                 + " translucent=" + (trans != null ? "OK" : "FAIL"));
+        if (DUMP_OUT && data.getUniforms() != null) {
+            String lay = data.getUniforms().layout();
+            Logger.info("[VX-OUT] UBO size=" + data.getUniforms().size() + " layoutChars=" + (lay == null ? 0 : lay.length()));
+            if (lay != null) Logger.info("[VX-OUT] UBO layout head: " + lay.substring(0, Math.min(900, lay.length())).replace("\n", " "));
+        }
         return buildOk;
     }
 
@@ -517,6 +531,7 @@ public final class MetalVxResolvePass {
                                int fbw, int fbh) {
         if (!build(data)) return;
         if (oP0 == 0 || opaqueDepthRect == 0) return;
+        if (DUMP_OUT) dumpFrame++;
         var sc = me.cortex.voxy.client.core.util.VxIrisSideChannel.getOrCreate();
         var ndc = me.cortex.voxy.client.core.rendering.util.MetalMvpUtil.METAL_NDC_REMAP;
 
@@ -541,6 +556,7 @@ public final class MetalVxResolvePass {
             // Fill the pack's vxDepthTexOpaque/Trans samplers (the pack reads them
             // for its own depth needs; our resolve reads the raw bridge for gl_FragDepth).
             if (!sc.resolve(oP0, opaqueDepthRect, fbw, fbh, ndc)) return;
+            if (DUMP_OUT && dumpFrame % 300 == 100) sc.dumpDepthStats(fbw, fbh);
             int[] opaqueTargets = data.resolveOpaqueTargetsNow(ipipe);
             runOne(data, opaque, oP0, oP1, oP2, opaqueDepthRect, opaqueTargets, fbw, fbh, false);
 
@@ -653,10 +669,46 @@ public final class MetalVxResolvePass {
         if (blend && data.getBlender() != null) data.getBlender().run();
         else glDisable(GL_BLEND);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        if (DUMP_OUT && !blend) dumpResolveOutput(p, fbw, fbh);
         for (int i = 0; i < p.samplerCount; i++) {
             glActiveTexture(GL_TEXTURE0 + 6 + i);
             glBindTexture(GL_TEXTURE_2D, 0);
         }
         glActiveTexture(GL_TEXTURE0);
+    }
+
+    /**
+     * VOXY_VX_DUMP_OUT=1 objective ground truth: read back a center patch of the resolve's
+     * gbufferData0 (the LIT albedo BSL just wrote) and report mean RGB, plus the first UBO
+     * scratch floats (vxModelView etc.) so a zero/identity matrix or zero light uniforms are
+     * directly visible. Periodic + small patch to keep the readback off the per-frame hot path.
+     */
+    private static void dumpResolveOutput(Prog p, int fbw, int fbh) {
+        if (dumpFrame % 300 != 100) return;
+        // UBO scratch: first 32 floats (matrices/scalars depend on layout order — pair with
+        // the [VX-OUT] UBO layout head log to map them).
+        if (p.uboScratch != 0 && p.uboSize >= 128) {
+            StringBuilder fl = new StringBuilder();
+            for (int i = 0; i < 32; i++) fl.append(String.format(" %.3f", org.lwjgl.system.MemoryUtil.memGetFloat(p.uboScratch + (long) i * 4)));
+            Logger.info("[VX-OUT] uboScratch[0..31]:" + fl);
+        }
+        // Read back an 8x8 patch at the lower-third center (LOD terrain) from colortex0.
+        int rx = Math.max(0, fbw / 2 - 4), ry = Math.max(0, fbh / 3 - 4);
+        java.nio.ByteBuffer buf = org.lwjgl.system.MemoryUtil.memAlloc(8 * 8 * 4);
+        try {
+            glReadBuffer(GL_COLOR_ATTACHMENT0);
+            org.lwjgl.opengl.GL11C.glReadPixels(rx, ry, 8, 8, GL_RGBA, org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE, buf);
+            long sr = 0, sg = 0, sb = 0, sa = 0;
+            for (int i = 0; i < 64; i++) {
+                sr += buf.get(i * 4) & 0xFF; sg += buf.get(i * 4 + 1) & 0xFF;
+                sb += buf.get(i * 4 + 2) & 0xFF; sa += buf.get(i * 4 + 3) & 0xFF;
+            }
+            Logger.info(String.format("[VX-OUT] resolve out colortex0 meanRGBA=(%d,%d,%d,%d) at (%d,%d) 8x8",
+                    sr / 64, sg / 64, sb / 64, sa / 64, rx, ry));
+        } catch (Throwable t) {
+            Logger.warn("[VX-OUT] readback failed: " + t.getMessage());
+        } finally {
+            org.lwjgl.system.MemoryUtil.memFree(buf);
+        }
     }
 }
