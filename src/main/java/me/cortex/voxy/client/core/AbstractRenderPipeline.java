@@ -207,6 +207,8 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             int prm = me.cortex.voxy.client.core.metal.MetalNative.iosurfaceGetBytesPerRow(sm);
             int covered = 0, water = 0, notWater = 0;
             java.util.HashMap<Integer,Integer> idHist = new java.util.HashMap<>();
+            int[] faceHist = new int[8]; // face = (misc.r>>1)&7 — the per-quad normal selector
+            int[] skyHist = new int[16], blockHist = new int[16]; // light nibbles: block=misc.r>>4, sky=misc.g>>4
             for (int ry = 0; ry < 24; ry++) {
                 int y = fbh / 4 + ry * (fbh * 3 / 4) / 24;
                 long raA = ba + (long) y * pra, raM = bm + (long) y * prm;
@@ -216,7 +218,11 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                     if (((av >>> 24) & 0xFF) <= 1) continue; // trans coverage = albedo alpha
                     covered++;
                     int mv = MemoryUtil.memGetInt(raM + (long) x * 4);
+                    int rCh = (mv >> 16) & 0xFF; // misc.r: (nib.x<<4)|((face&7)<<1)  [block nib in bits4-7]
+                    int gCh = (mv >> 8) & 0xFF;   // misc.g: nib.y<<4  [sky nib in bits4-7]
                     int aCh = (mv >>> 24) & 0xFF, bCh = mv & 0xFF; // customId = b | (a<<8)
+                    faceHist[(rCh >> 1) & 7]++;
+                    blockHist[(rCh >> 4) & 0xF]++; skyHist[(gCh >> 4) & 0xF]++;
                     int customId = bCh | (aCh << 8);
                     int blockID = customId / 100;
                     if (blockID == 200 || blockID == 204) water++; else {
@@ -230,6 +236,14 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                     .forEach(e -> samp.append(String.format(" id=%d(blk=%d)x%d", e.getKey(), e.getKey()/100, e.getValue())));
             Logger.info(String.format("[Metal-VXTRANS] covered=%d waterDetected=%d notWater=%d  topNonWaterIds:%s",
                     covered, water, notWater, samp.length()==0?" none":samp.toString()));
+            // face 0=DOWN 1=UP 2=NORTH 3=SOUTH 4=WEST 5=EAST (axis=face>>1, dir=face&1).
+            // Flat water surface should be ~all UP(1); a spread => per-quad normals differ -> Fresnel squares.
+            Logger.info("[Metal-VXTRANS] water face hist[0..7]=" + java.util.Arrays.toString(faceHist));
+            // BSL scales the water SKY REFLECTION by sky-light (waterSkyOcclusion=lightmap.y^2,
+            // voxy_translucent.glsl:357-362). A multi-modal/per-chunk sky histogram => per-chunk
+            // reflection brightness => the lighter/darker chunk SQUARES; uniform => flat far water.
+            Logger.info("[Metal-VXTRANS] water skyLight hist[0..15]=" + java.util.Arrays.toString(skyHist));
+            Logger.info("[Metal-VXTRANS] water blockLight hist[0..15]=" + java.util.Arrays.toString(blockHist));
         } finally {
             me.cortex.voxy.client.core.metal.MetalNative.iosurfaceUnlockReadOnly(sa);
             me.cortex.voxy.client.core.metal.MetalNative.iosurfaceUnlockReadOnly(sm);

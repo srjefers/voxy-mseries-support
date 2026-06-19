@@ -611,6 +611,13 @@ public final class MetalVxResolvePass {
         boolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
         try {
             sc.resolveTrans(tP0, transDepthRect, fbw, fbh, ndc);
+            if (DUMP_OUT && (++dumpFrame % 300 == 100)) {
+                // Decisive probe: is the WATER depth per-pixel smooth or chunk-stepped?
+                // The pow(8) Fresnel in voxy_translucent amplifies any depth steps into the
+                // flat "square" artifacts. Low roughness + dense neighbours => depth is fine,
+                // squares are elsewhere; high/stepped => depth-reconstruction is the cause.
+                sc.dumpDepthStats("trans", sc.fboTransId(), fbw, fbh);
+            }
             int[] transTargets = data.resolveTranslucentTargetsNow(ipipe);
             runOne(data, trans, tP0, tP1, tP2, transDepthRect, transTargets, fbw, fbh, true);
         } catch (Throwable t) {

@@ -86,12 +86,21 @@ public final class VxIrisSideChannel {
      * ~all 1.0 the LOD falls to BSL's sky branch (sky-gray); if it's &lt;1.0 but clustered
      * near 1.0 the unprojection/fog is wrong (fog-gray). Disambiguates the two dark modes.
      */
+    /** The FBO holding the translucent (water) LOD depth (D32F), for diagnostics. */
+    public int fboTransId() {
+        return this.fboTrans;
+    }
+
     public void dumpDepthStats(int fbw, int fbh) {
-        if (this.fboOpaque == 0 || this.width == 0) return;
+        dumpDepthStats("opaque", this.fboOpaque, fbw, fbh);
+    }
+
+    public void dumpDepthStats(String label, int fbo, int fbw, int fbh) {
+        if (fbo == 0 || this.width == 0) return;
         int prevRead = glGetInteger(GL_READ_FRAMEBUFFER_BINDING);
         java.nio.FloatBuffer fb = org.lwjgl.system.MemoryUtil.memAllocFloat(fbw * fbh);
         try {
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, this.fboOpaque);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
             glReadPixels(0, 0, fbw, fbh, GL_DEPTH_COMPONENT, GL_FLOAT, fb);
             int covered = 0, empty = 0, total = 0;
             double sum = 0; float mn = 2f, mx = -1f;
@@ -125,10 +134,10 @@ public final class VxIrisSideChannel {
                     } else empty++;
                 }
             }
-            Logger.info(String.format("[VX-OUT] vxDepthTexOpaque grid: covered(<1)=%d empty(==1)=%d /%d  coveredDepth mean=%.5f min=%.5f max=%.5f",
-                    covered, empty, total, covered > 0 ? sum / covered : -1, covered > 0 ? mn : -1, covered > 0 ? mx : -1));
-            Logger.info(String.format("[VX-OUT] depth coverage density: avg covered neighbours=%.2f/8 (samples=%d)  localRoughness(meanAbsDevWindowZ)=%.6f (n=%d)",
-                    nbrSampleN > 0 ? (double) nbrCoveredSum / nbrSampleN : -1, nbrSampleN,
+            Logger.info(String.format("[VX-OUT] %s depth grid: covered(<1)=%d empty(==1)=%d /%d  coveredDepth mean=%.5f min=%.5f max=%.5f",
+                    label, covered, empty, total, covered > 0 ? sum / covered : -1, covered > 0 ? mn : -1, covered > 0 ? mx : -1));
+            Logger.info(String.format("[VX-OUT] %s coverage density: avg covered neighbours=%.2f/8 (samples=%d)  localRoughness(meanAbsDevWindowZ)=%.6f (n=%d)",
+                    label, nbrSampleN > 0 ? (double) nbrCoveredSum / nbrSampleN : -1, nbrSampleN,
                     roughN > 0 ? roughSum / roughN : -1, roughN));
         } catch (Throwable t) {
             Logger.warn("[VX-OUT] depth readback failed: " + t.getMessage());
