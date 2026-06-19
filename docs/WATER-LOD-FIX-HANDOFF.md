@@ -27,11 +27,8 @@ exact next steps.
   - `f4a16b77` diagnose dark LODs (sky-light) + resolve sky-light floor.
   - `302378e6` Phase C: sampler order + depth space fixes.
   - `60bd3e8b` Phase C (5/5): GL resolve runtime.
-- **UNCOMMITTED diagnostics in the working tree** (default-off, no rendering change; commit
-  them first thing): `dumpVxTransStats` water face + sky/block-light histograms
-  (`AbstractRenderPipeline.java`), trans-depth probe + `dumpDepthStats(label,fbo,…)` +
-  `fboTransId()` (`VxIrisSideChannel.java`), trans-depth dump call (`MetalVxResolvePass.java`).
-  (Bash tooling was flaky at end of session — compile + commit them.)
+  - `41412cbd` **trans-water diagnostics + this handoff doc** (default-off; compiles clean).
+- Working tree is clean as of the handoff. All diagnostics below are committed.
 
 ## 3. Current state — what WORKS
 
@@ -202,9 +199,14 @@ then grep `run/logs/latest.log`:
 
 - Build/run: `VOXY_FORCE_METAL=1 VOXY_VX_MATERIAL=1 VOXY_QUICKPLAY="New World (40)" ./gradlew runClient`.
   Gradle daemon is off; cold builds. Runtime shaders cache in `~/.voxy/shader-cache` (delete to force recompile).
-- **`New World (40)` is frozen at noon** (`level.dat` Data.DayTime=6000, game_rules
-  `minecraft:advance_time=0`, `minecraft:advance_weather=0`) for controlled testing. Restore the
-  cycle with in-game `/gamerule doDaylightCycle true` or revert `level.dat`.
+- **⚠ `New World (40)` IS STILL FROZEN AT NOON — this change is ACTIVE, not reverted.**
+  Set during diagnostics: `level.dat` `Data.DayTime=6000`, game_rules
+  `minecraft:advance_time=0` and `minecraft:advance_weather=0`. The world stays at midday with no
+  day/night or weather cycle. The user chose to leave it frozen for now (controlled testing). To
+  restore the normal cycle when desired: in-game `/gamerule advance_time true` and
+  `/gamerule advance_weather true` (NOTE: in this MC version the rule is `advance_time`, **not**
+  the classic `doDaylightCycle` — that name returns "incorrect argument"), or revert `level.dat`
+  with Minecraft fully quit.
 - BSL settings file: `run/shaderpacks/BSL_v10.1.3.zip.txt` (currently `FOG_DENSITY_LOD=0.25`).
   A pristine pack backup is at `/tmp/BSL_backup.zip` (may not persist across reboots — re-copy
   from `run/shaderpacks/` if needed). Earlier A/B testing edited `deferred1.glsl` inside the zip
