@@ -125,7 +125,17 @@ public final class MetalVxResolvePass {
         // non-zero daytime floor. This clamps the resolve's decoded sky light up to a
         // floor so BSL can light the LODs comparably. floor=15 is the confirm-the-cause
         // setting (everything should go bright); a moderate floor is the candidate fix.
-        float skyFloor = 0.0f;
+        // 2026-07-03: DEFAULT 12/15 (was 0/off). Mechanism located for the
+        // handoff's hypothesis A: Mipper's representative-voxel pick carries
+        // the underwater-attenuated sky light of whichever corner voxel
+        // survives the mip — per-cell variance shows up as chunk-aligned
+        // brightness squares once BSL scales its water sky reflection by
+        // skyLight^2, and the value trends to 0 at high LOD (flat dark far
+        // water). A moderate floor removes both without flattening block
+        // light. Water-scoped in the default trans-only material mode
+        // (resolveTranslucentOnly runs only the translucent program).
+        // VOXY_VX_SKY_FLOOR=0 disables; =0..15 overrides.
+        float skyFloor = 12.0f / 15.0f;
         String skyFloorEnv = System.getenv("VOXY_VX_SKY_FLOOR");
         if (skyFloorEnv != null) {
             try { skyFloor = Math.max(0, Math.min(15, Integer.parseInt(skyFloorEnv.trim()))) / 15.0f; }
