@@ -70,6 +70,53 @@ public class VoxyRenderSystem {
     /** Diagnostic frame counter for the Metal LOD-ring log in {@link #renderOpaque}. */
     private int metalRingDiagFrame;
 
+    // Bakery warmup burst (2026-07-03, Metal branch only). Root cause of the
+    // "gigantic untextured LOD blocks for minutes after world join": mesh
+    // builds throw IdNotYetComputedException for any unbaked block (the
+    // 2026-05-25 log showed >1M throws vs 54k sections), the mesh queue
+    // saturates past HierarchicalOcclusionTraverser's 4000-task request
+    // throttle, and the bakery drains the whole backlog at ~5 bakes/tick
+    // under the steady-state 0.9 ms budget. While the bake backlog is large
+    // the frame is startup-degraded anyway, so spend real frame time
+    // draining it: full burst above BAKE_BURST_HIGH pending bakes, half
+    // burst above BAKE_BURST_LOW, steady 0.9 ms once warm.
+    // VOXY_BAKE_WARMUP_MS tunes the burst budget in ms (default 8;
+    // 0 disables the burst entirely — the pre-2026-07 behaviour).
+    private static final long BAKE_BUDGET_STEADY_NS = 900_000L;
+    private static final long BAKE_WARMUP_NS = parseBakeWarmupNs();
+    private static final int BAKE_BURST_HIGH = 256;
+    private static final int BAKE_BURST_LOW = 32;
+    private boolean bakeWarmupActive;
+
+    private static long parseBakeWarmupNs() {
+        String v = System.getenv("VOXY_BAKE_WARMUP_MS");
+        if (v == null || v.isBlank()) return 8_000_000L;
+        try {
+            return (long) (Float.parseFloat(v.trim()) * 1_000_000L);
+        } catch (NumberFormatException e) {
+            return 8_000_000L;
+        }
+    }
+
+    private long computeBakeBudgetNs() {
+        if (BAKE_WARMUP_NS <= 0) return BAKE_BUDGET_STEADY_NS;
+        int backlog = this.modelService.getProcessingCount();
+        long budget = BAKE_BUDGET_STEADY_NS;
+        if (backlog > BAKE_BURST_HIGH) {
+            budget = Math.max(BAKE_BUDGET_STEADY_NS, BAKE_WARMUP_NS);
+        } else if (backlog > BAKE_BURST_LOW) {
+            budget = Math.max(BAKE_BUDGET_STEADY_NS, BAKE_WARMUP_NS / 2);
+        }
+        boolean active = budget > BAKE_BUDGET_STEADY_NS;
+        if (active != this.bakeWarmupActive) {
+            this.bakeWarmupActive = active;
+            me.cortex.voxy.common.Logger.info("[Metal-BAKE] warmup burst "
+                    + (active ? ("ENGAGED (backlog=" + backlog + ", budget=" + (budget / 1_000_000L) + "ms)")
+                              : ("released (backlog=" + backlog + ", back to 0.9ms)")));
+        }
+        return budget;
+    }
+
     /**
      * Iris pack-inject state the renderer (and its pipeline) was constructed
      * with. NormalRenderPipeline bakes {@code useEnvFog} from this at
@@ -445,7 +492,9 @@ public class VoxyRenderSystem {
                 processedThisFrame = this.renderDistanceTracker.setCenterAndProcess(
                         viewport.cameraX, viewport.cameraZ);
             }
-            do { this.modelService.tick(900_000); } while (VoxyClient.isFrexActive() && !this.modelService.areQueuesEmpty());
+            // 2026-07-03: adaptive budget — burst through the startup bake
+            // backlog instead of the flat 0.9 ms (see computeBakeBudgetNs).
+            do { this.modelService.tick(this.computeBakeBudgetNs()); } while (VoxyClient.isFrexActive() && !this.modelService.areQueuesEmpty());
             // Diagnostic: log every ~10s (600 frames) whether the LOD ring is
             // still adding/removing cells. After the ring converges this
             // should mostly read `processedThisFrame=false` until the player

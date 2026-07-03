@@ -214,6 +214,20 @@ public class HierarchicalOcclusionTraverser {
     private static final boolean CULL_DISABLED =
             "1".equals(System.getenv("VOXY_LOD_NO_CULL"));
     private static final float FRUSTUM_MARGIN = parseFrustumMargin();
+    /** Metal-only floor for the per-frame child-request budget (see
+     *  uploadUniform). VOXY_HOT_REQUEST_FLOOR tunes; 0 restores the old
+     *  "0 requests while the mesh queue is saturated" cliff. */
+    private static final int REQUEST_FLOOR = parseRequestFloor();
+
+    private static int parseRequestFloor() {
+        String v = System.getenv("VOXY_HOT_REQUEST_FLOOR");
+        if (v == null || v.isBlank()) return 8;
+        try {
+            return Math.max(0, Math.min(MAX_REQUEST_QUEUE_SIZE, Integer.parseInt(v.trim())));
+        } catch (NumberFormatException e) {
+            return 8;
+        }
+    }
     private static boolean frustumModeLogged = false;
     private static long frustumFrameCount = 0;
     private static long frustumNanCount = 0;
@@ -329,7 +343,25 @@ public class HierarchicalOcclusionTraverser {
             final double TARGET_COUNT = 4000;
             double iFillness = Math.max(0, (TARGET_COUNT - this.meshGen.getTaskCount()) / TARGET_COUNT);
             iFillness = Math.pow(iFillness, 2);
-            final int requestSize = (int) Math.ceil(iFillness * MAX_REQUEST_QUEUE_SIZE);
+            int requestSize = (int) Math.ceil(iFillness * MAX_REQUEST_QUEUE_SIZE);
+            // 2026-07-03 (Metal): FLOOR the per-frame child-request budget
+            // instead of letting it hit 0 while the mesh queue holds >4000
+            // tasks. At world join the queue saturates with tasks BLOCKED on
+            // model bakes (IdNotYetComputedException retries, not real
+            // meshing throughput), so the quadratic throttle shut off LOD
+            // refinement exactly while the giant coarse parents were on
+            // screen — and each new request is also what seeds the bakery
+            // with the block ids it still needs (RenderGenerationService
+            // computeAndRequestRequiredModels). A small floor keeps
+            // discovery trickling; the bakery warmup burst
+            // (VoxyRenderSystem.computeBakeBudgetNs) drains the resulting
+            // bake demand. VOXY_HOT_REQUEST_FLOOR tunes it (0 restores the
+            // old cliff). GL keeps upstream behaviour byte-identical.
+            boolean isGlBackend = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                    == me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+            if (!isGlBackend) {
+                requestSize = Math.max(REQUEST_FLOOR, requestSize);
+            }
             MemoryUtil.memPutInt(ptr, Math.max(0, Math.min(MAX_REQUEST_QUEUE_SIZE, requestSize))); ptr += 4;
         }
     }
