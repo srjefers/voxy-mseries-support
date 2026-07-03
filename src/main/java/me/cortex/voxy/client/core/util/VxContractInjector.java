@@ -45,7 +45,7 @@ public final class VxContractInjector {
 
     private static int program;
     private static int vao;
-    private static int uColour, uDepthTex, uInjectGamma, uInjectExposure, uInjectSqrt;
+    private static int uColour, uDepthTex, uInjectGamma, uInjectExposure, uInjectSqrt, uShadowMask;
     private static int colorFbo;
     private static int[] attachedTargets = new int[0];
     private static boolean warnedFailure;
@@ -56,6 +56,21 @@ public final class VxContractInjector {
     private static final int INJECT_SQRT = "0".equals(System.getenv("VOXY_IRIS_INJECT_SQRT")) ? 0 : 1;
     private static final boolean COMPILE_PROBE = "1".equals(System.getenv("VOXY_VX_RESOLVE_COMPILE_TEST"));
     private static boolean compileProbeRan;
+
+    /** 2026-07-03 gray-veil fix: the shadowMask seed written into the pack's
+     *  colortex6.r. The pack's own voxy_opaque computes
+     *  shadow.r * mix(NoL,1,ss) * (1-emission) * lightmap.y^2 * shadowFade —
+     *  usually well below 1 and ZERO on sun-averted faces. Seeding a constant
+     *  1.0 made BSL deferred1's GetLODShadows apply its maximum multiplicative
+     *  gray (shadowCol = ambientCol/lightCol) to every LOD pixel whose 16-step
+     *  sun-ward screen march stayed in bounds: a flat veil covering the screen
+     *  side OPPOSITE the sun, vanishing under spyglass zoom (vxProj scales the
+     *  step so every ray exits the screen immediately) and when facing away.
+     *  Default 0 makes GetLODShadows a provable no-op for injected LODs —
+     *  correct, since the injected colour (MC lightmap x face shade) contains
+     *  no lightCol-scaled NoL term for the pack to remove.
+     *  VOXY_VX_SHADOW_MASK=1 restores the old behaviour exactly for A/B. */
+    private static final float VX_SHADOW_MASK = parseEnvF("VOXY_VX_SHADOW_MASK", 0.0f);
 
     /** Phase D spike (issue #11): run BSL's voxy_translucent over the LOD water
      *  instead of the flat passthrough. A/B kill switch; default OFF. */
@@ -192,6 +207,7 @@ public final class VxContractInjector {
             glUniform1f(uInjectGamma, INJECT_GAMMA);
             glUniform1f(uInjectExposure, INJECT_EXPOSURE);
             glUniform1i(uInjectSqrt, INJECT_SQRT);
+            glUniform1f(uShadowMask, VX_SHADOW_MASK);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
             // Phase D (issue #11): translucent LOD layer. Decode the
@@ -541,6 +557,7 @@ public final class VxContractInjector {
                 uniform float uInjectGamma;
                 uniform float uInjectExposure;
                 uniform int uInjectSqrt;
+                uniform float uShadowMask;
                 in vec2 vUV;
                 out vec4 outColor0;
                 out vec4 outColor1;
@@ -561,10 +578,11 @@ public final class VxContractInjector {
                     // the pack's own LOD output — the "washed grey".)
                     vec3 lin = pow(c.rgb, vec3(uInjectGamma)) * uInjectExposure;
                     outColor0 = vec4((uInjectSqrt == 1) ? sqrt(max(lin, vec3(0.0))) : lin, 1.0);
-                    // colortex6 seed: r = shadowMask (fully lit; deferred1's
-                    // GetLODShadows refines), b = "LOD wrote here" mask the
-                    // pack's own voxy_opaque writes as float(z < 1).
-                    outColor1 = vec4(1.0, 0.0, 1.0, 1.0);
+                    // colortex6 seed: r = shadowMask (see VX_SHADOW_MASK note —
+                    // constant 1.0 was the left-of-sun gray-veil bug), b = "LOD
+                    // wrote here" mask the pack's own voxy_opaque writes as
+                    // float(z < 1).
+                    outColor1 = vec4(uShadowMask, 0.0, 1.0, 1.0);
                 }
                 """;
         program = VxIrisSideChannel.compile(vs, fs, "VxContractInjector");
@@ -574,6 +592,9 @@ public final class VxContractInjector {
         uInjectGamma = glGetUniformLocation(program, "uInjectGamma");
         uInjectExposure = glGetUniformLocation(program, "uInjectExposure");
         uInjectSqrt = glGetUniformLocation(program, "uInjectSqrt");
+        uShadowMask = glGetUniformLocation(program, "uShadowMask");
+        Logger.info("[Metal-LODTEST] vx colortex6 shadowMask seed = " + VX_SHADOW_MASK
+                + " (0 = pack LOD screen-space shadows no-op; VOXY_VX_SHADOW_MASK=1 restores the old constant-1 seed)");
         vao = glGenVertexArrays();
         return vao != 0;
     }
