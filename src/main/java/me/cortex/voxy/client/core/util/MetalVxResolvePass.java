@@ -149,6 +149,26 @@ public final class MetalVxResolvePass {
                     + " (" + skyFloorEnv + "/15)");
         }
 
+        // Water-scoped sky-light MAX (VOXY_VX_WATER_SKY_MAX=0 reverts). Mipper's
+        // representative-voxel mip carries one corner's underwater-attenuated sky nibble
+        // verbatim, measured live as BIMODAL {0,15} per water cell. BSL squares the value
+        // into waterSkyOcclusion (skyReflection *= lightmap.y^2), so even the 12/15 floor
+        // leaves a 0.672-vs-1.0 reflection-brightness STEP between neighbouring chunks —
+        // the chunk-aligned lighter/darker panels riding the water surface, strongest at
+        // grazing angles where the fresnel weight peaks. A distant LOD water TOP surface
+        // is by construction sky-exposed, so max — not the rep-voxel — is the correct mip
+        // semantics for water; scoping by customId keeps other translucents on the floor
+        // and leaves Mipper (common code, persisted LODs, GL byte-identity) untouched.
+        // 0.96875 = the sky-15 decode ((15*16+8)/256); BSL's lightmap remap turns it into
+        // exactly 1.0.
+        boolean waterSkyMax = !"0".equals(System.getenv("VOXY_VX_WATER_SKY_MAX"));
+        String waterSkyMaxLine = waterSkyMax
+                ? "if ((vxCustomId / 100u) == 200u || (vxCustomId / 100u) == 204u) vxLight.y = max(vxLight.y, 0.96875);\n"
+                : "";
+        Logger.info("[Metal-LODTEST] vx water sky-light max " + (waterSkyMax ? "ON" : "OFF")
+                + " (water customId -> sky=15 in the resolve, kills chunk-step reflection squares);"
+                + " VOXY_VX_WATER_SKY_MAX=0 reverts");
+
         sb.append("""
                 vec4 vx_fragCoord;
 
@@ -168,8 +188,8 @@ public final class MetalVxResolvePass {
                     vec2 vxLight = vec2(
                         (float(vxMr >> 4u) * 16.0 + 8.0) / 256.0,
                         (float(vxMg >> 4u) * 16.0 + 8.0) / 256.0);
-                    __SKY_FLOOR__uint vxCustomId = uint(vxMisc.b + 0.5) | (uint(vxMisc.a + 0.5) << 8u);
-                    float vxWz = (uVxDepthIsWindow == 1) ? vxD : vxD * 0.5 + 0.5;
+                    uint vxCustomId = uint(vxMisc.b + 0.5) | (uint(vxMisc.a + 0.5) << 8u);
+                    __SKY_FLOOR____WATER_SKY_MAX__float vxWz = (uVxDepthIsWindow == 1) ? vxD : vxD * 0.5 + 0.5;
                     gl_FragDepth = vxWz;
                     vx_fragCoord = vec4(gl_FragCoord.xy, vxWz, 1.0);
                     voxy_emitFragment(VoxyFragmentParameters(
@@ -177,7 +197,8 @@ public final class MetalVxResolvePass {
                 }
 
                 #define gl_FragCoord vx_fragCoord
-                """.replace("__SKY_FLOOR__", skyFloorLine));
+                """.replace("__SKY_FLOOR__", skyFloorLine)
+                   .replace("__WATER_SKY_MAX__", waterSkyMaxLine));
 
         sb.append('\n').append(appleStrictCompat(patchText)).append('\n');
         return sb.toString();
@@ -398,6 +419,34 @@ public final class MetalVxResolvePass {
         long uboScratch;
         int fbo;
         int[] attached = new int[0];
+        // Texture unit carrying the pack's `gaux2` sampler (colortex5), or -1.
+        // See SSR_ALT: the translucent program needs this unit re-pointed at
+        // colortex5's ALT side.
+        int gaux2Unit = -1;
+    }
+
+    // BSL's voxy_translucent reflects LOD water via SimpleReflection -> texture(gaux2).
+    // The ImageSet binds gaux2 with Iris's getFlippedAfterPrepare snapshot = colortex5
+    // MAIN — but under BSL defaults colortex5's ONLY writer is deferred1 writing the
+    // ALT side (and it runs AFTER our SOLID-head hook; colortex5Clear=false keeps ALT
+    // across frames). So the resolve's mirror sampled an undefined, never-written
+    // texture: grazing rays DO hit (the pack's voxy Raytrace patch falls back to
+    // vxDepthTexOpaque), the undefined alpha reads ~1 which skips the bright sky arm,
+    // and reflection.rgb = pow(garbage*2, 8) ~ black. A black mirror at fresnel
+    // weight ~0.8 = the flat dark opaque untextured LOD water. Re-pointing gaux2 at
+    // colortex5 ALT gives the pack exactly the one-frame-stale reflection data its
+    // own reprojection block expects. Metal-bridge-only code; GL path untouched.
+    // VOXY_VX_SSR_ALT=0 restores the old (MAIN) binding.
+    private static final boolean SSR_ALT = !"0".equals(System.getenv("VOXY_VX_SSR_ALT"));
+
+    private static int ct5AltTexture(net.irisshaders.iris.pipeline.IrisRenderingPipeline ipipe) {
+        if (!SSR_ALT) return 0;
+        try {
+            var rt = ((me.cortex.voxy.client.mixin.iris.IrisRenderingPipelineAccessor) ipipe).getRenderTargets();
+            return rt.getOrCreate(5).getAltTexture();
+        } catch (Throwable t) {
+            return 0;
+        }
     }
 
     private static boolean buildAttempted;
@@ -508,8 +557,14 @@ public final class MetalVxResolvePass {
             for (var name : data.getImageSet().orderedNames()) {
                 int loc = glGetUniformLocation(prog, name);
                 if (loc >= 0) glUniform1i(loc, unit);
+                if (translucent && "gaux2".equals(name)) p.gaux2Unit = unit;
                 unit++; p.samplerCount++;
             }
+        }
+        if (translucent) {
+            Logger.info("[Metal-LODTEST] vx SSR mirror rebind " + (SSR_ALT && p.gaux2Unit >= 0 ? "ON" : "OFF")
+                    + " (gaux2 unit=" + p.gaux2Unit + " -> colortex5 ALT, deferred1's last-frame reflection"
+                    + " output); VOXY_VX_SSR_ALT=0 reverts to the MAIN-side binding");
         }
         if (data.getUniforms() != null) {
             p.uboSize = data.getUniforms().size();
@@ -568,12 +623,13 @@ public final class MetalVxResolvePass {
             if (!sc.resolve(oP0, opaqueDepthRect, fbw, fbh, ndc)) return;
             if (DUMP_OUT && dumpFrame % 300 == 100) { sc.dumpDepthStats(fbw, fbh); dumpAoStats(ipipe, sc, fbw, fbh); }
             int[] opaqueTargets = data.resolveOpaqueTargetsNow(ipipe);
-            runOne(data, opaque, oP0, oP1, oP2, opaqueDepthRect, opaqueTargets, fbw, fbh, false);
+            runOne(data, opaque, oP0, oP1, oP2, opaqueDepthRect, opaqueTargets, fbw, fbh, false, 0);
 
             if (trans != null && tP0 != 0 && transDepthRect != 0) {
                 sc.resolveTrans(tP0, transDepthRect, fbw, fbh, ndc);
                 int[] transTargets = data.resolveTranslucentTargetsNow(ipipe);
-                runOne(data, trans, tP0, tP1, tP2, transDepthRect, transTargets, fbw, fbh, true);
+                runOne(data, trans, tP0, tP1, tP2, transDepthRect, transTargets, fbw, fbh, true,
+                        ct5AltTexture(ipipe));
             }
         } catch (Throwable t) {
             Logger.warn("MetalVxResolvePass.resolve failed: " + t.getMessage());
@@ -629,7 +685,12 @@ public final class MetalVxResolvePass {
                 sc.dumpDepthStats("trans", sc.fboTransId(), fbw, fbh);
             }
             int[] transTargets = data.resolveTranslucentTargetsNow(ipipe);
-            runOne(data, trans, tP0, tP1, tP2, transDepthRect, transTargets, fbw, fbh, true);
+            runOne(data, trans, tP0, tP1, tP2, transDepthRect, transTargets, fbw, fbh, true,
+                    ct5AltTexture(ipipe));
+            // Adjudicates the SSR mirror question empirically: which colortex5 side
+            // actually carries deferred1's reflection data (and what the undefined
+            // side reads), plus whether colortex16's alpha is the designed ~0.7-0.95.
+            if (DUMP_OUT && dumpFrame % 300 == 100) dumpCt5Stats(ipipe, fbw, fbh);
         } catch (Throwable t) {
             Logger.warn("MetalVxResolvePass.resolveTranslucentOnly failed: " + t.getMessage());
         } finally {
@@ -752,7 +813,7 @@ public final class MetalVxResolvePass {
 
     private static void runOne(IrisVoxyRenderPipelineData data, Prog p,
                                int plane0, int plane1, int plane2, int depthRect,
-                               int[] targets, int fbw, int fbh, boolean blend) {
+                               int[] targets, int fbw, int fbh, boolean blend, int ssrMirrorTex) {
         if (p == null || targets == null || targets.length == 0) return;
         if (plane0 == 0 || depthRect == 0) return;
         boolean dirty = p.attached.length != targets.length;
@@ -783,6 +844,13 @@ public final class MetalVxResolvePass {
         glActiveTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_RECTANGLE, depthRect);
         glActiveTexture(GL_TEXTURE0);
         if (data.getImageSet() != null) data.getImageSet().bindingFunction().accept(6);
+        if (ssrMirrorTex != 0 && p.gaux2Unit >= 0) {
+            // See SSR_ALT: keep the sampler object bindingFunction bound (filtering),
+            // replace only the texture on gaux2's unit.
+            glActiveTexture(GL_TEXTURE0 + p.gaux2Unit);
+            glBindTexture(GL_TEXTURE_2D, ssrMirrorTex);
+            glActiveTexture(GL_TEXTURE0);
+        }
         if (p.ubo != 0 && data.getUniforms() != null) {
             data.getUniforms().updater().accept(p.uboScratch);
             glBindBuffer(GL_UNIFORM_BUFFER, p.ubo);
@@ -793,7 +861,9 @@ public final class MetalVxResolvePass {
         if (blend && data.getBlender() != null) data.getBlender().run();
         else glDisable(GL_BLEND);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        if (DUMP_OUT && !blend) dumpResolveOutput(p, fbw, fbh);
+        // Both stages: the translucent program had never had a runtime readback
+        // (the old !blend gate), which left the water-resolve output unmeasured.
+        if (DUMP_OUT) dumpResolveOutput(p, blend ? "trans" : "opaque", fbw, fbh);
         for (int i = 0; i < p.samplerCount; i++) {
             glActiveTexture(GL_TEXTURE0 + 6 + i);
             glBindTexture(GL_TEXTURE_2D, 0);
@@ -802,37 +872,84 @@ public final class MetalVxResolvePass {
     }
 
     /**
-     * VOXY_VX_DUMP_OUT=1 objective ground truth: read back a center patch of the resolve's
-     * gbufferData0 (the LIT albedo BSL just wrote) and report mean RGB, plus the first UBO
-     * scratch floats (vxModelView etc.) so a zero/identity matrix or zero light uniforms are
-     * directly visible. Periodic + small patch to keep the readback off the per-frame hot path.
+     * VOXY_VX_DUMP_OUT=1 objective ground truth: read back the resolve's attachment 0
+     * (opaque: colortex0's LIT albedo; trans: colortex16's premultiplied water) and report
+     * the mean RGBA over the pixels the resolve actually wrote (alpha &gt; 0 — the target is
+     * frame-cleared to 0 before our SOLID-head hook), plus the first UBO scratch floats
+     * (vxModelView etc.; pair with the [VX-OUT] UBO layout head log) so zero/identity
+     * matrices or bad scalars (isEyeInWater and friends) are directly visible.
+     * Periodic to keep the readback off the per-frame hot path.
      */
-    private static void dumpResolveOutput(Prog p, int fbw, int fbh) {
+    private static void dumpResolveOutput(Prog p, String label, int fbw, int fbh) {
         if (dumpFrame % 300 != 100) return;
-        // UBO scratch: first 32 floats (matrices/scalars depend on layout order — pair with
-        // the [VX-OUT] UBO layout head log to map them).
-        if (p.uboScratch != 0 && p.uboSize >= 128) {
+        if (p.uboScratch != 0 && p.uboSize >= 192) {
             StringBuilder fl = new StringBuilder();
-            for (int i = 0; i < 32; i++) fl.append(String.format(" %.3f", org.lwjgl.system.MemoryUtil.memGetFloat(p.uboScratch + (long) i * 4)));
-            Logger.info("[VX-OUT] uboScratch[0..31]:" + fl);
+            for (int i = 0; i < 48; i++) fl.append(String.format(" %.3f", org.lwjgl.system.MemoryUtil.memGetFloat(p.uboScratch + (long) i * 4)));
+            Logger.info("[VX-OUT] " + label + " uboScratch[0..47]:" + fl);
         }
-        // Read back an 8x8 patch at the lower-third center (LOD terrain) from colortex0.
-        int rx = Math.max(0, fbw / 2 - 4), ry = Math.max(0, fbh / 3 - 4);
-        java.nio.ByteBuffer buf = org.lwjgl.system.MemoryUtil.memAlloc(8 * 8 * 4);
+        java.nio.ByteBuffer buf = org.lwjgl.system.MemoryUtil.memAlloc(fbw * fbh * 4);
         try {
             glReadBuffer(GL_COLOR_ATTACHMENT0);
-            org.lwjgl.opengl.GL11C.glReadPixels(rx, ry, 8, 8, GL_RGBA, org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE, buf);
-            long sr = 0, sg = 0, sb = 0, sa = 0;
-            for (int i = 0; i < 64; i++) {
+            org.lwjgl.opengl.GL11C.glReadPixels(0, 0, fbw, fbh, GL_RGBA, org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE, buf);
+            long sr = 0, sg = 0, sb = 0, sa = 0; int covered = 0;
+            int n = fbw * fbh;
+            for (int i = 0; i < n; i++) {
+                int a = buf.get(i * 4 + 3) & 0xFF;
+                if (a == 0) continue;
+                covered++;
                 sr += buf.get(i * 4) & 0xFF; sg += buf.get(i * 4 + 1) & 0xFF;
-                sb += buf.get(i * 4 + 2) & 0xFF; sa += buf.get(i * 4 + 3) & 0xFF;
+                sb += buf.get(i * 4 + 2) & 0xFF; sa += a;
             }
-            Logger.info(String.format("[VX-OUT] resolve out colortex0 meanRGBA=(%d,%d,%d,%d) at (%d,%d) 8x8",
-                    sr / 64, sg / 64, sb / 64, sa / 64, rx, ry));
+            int c = Math.max(1, covered);
+            Logger.info(String.format("[VX-OUT] %s resolve out meanRGBA=(%d,%d,%d,%d) over %d covered px (%.2f%% of %dx%d)",
+                    label, sr / c, sg / c, sb / c, sa / c, covered, 100.0 * covered / n, fbw, fbh));
         } catch (Throwable t) {
-            Logger.warn("[VX-OUT] readback failed: " + t.getMessage());
+            Logger.warn("[VX-OUT] " + label + " readback failed: " + t.getMessage());
         } finally {
             org.lwjgl.system.MemoryUtil.memFree(buf);
+        }
+    }
+
+    private static int ct5ReadFbo;
+
+    /**
+     * VOXY_VX_DUMP_OUT=1: mean RGBA of colortex5 MAIN and ALT. Decides the SSR mirror
+     * question with data instead of the inferred Iris flip convention: ALT should carry
+     * deferred1's bright reflection image (non-zero mean, alpha 1 over terrain / 0 over
+     * sky), MAIN should be the never-written side. If it comes back reversed, flip the
+     * SSR_ALT bind to the other side.
+     */
+    private static void dumpCt5Stats(net.irisshaders.iris.pipeline.IrisRenderingPipeline ipipe, int fbw, int fbh) {
+        try {
+            var rt = ((me.cortex.voxy.client.mixin.iris.IrisRenderingPipelineAccessor) ipipe).getRenderTargets();
+            var ct5 = rt.getOrCreate(5);
+            int prevRead = glGetInteger(GL_READ_FRAMEBUFFER_BINDING);
+            if (ct5ReadFbo == 0) ct5ReadFbo = glGenFramebuffers();
+            java.nio.ByteBuffer buf = org.lwjgl.system.MemoryUtil.memAlloc(fbw * fbh * 4);
+            try {
+                for (int side = 0; side < 2; side++) {
+                    int tex = side == 0 ? ct5.getMainTexture() : ct5.getAltTexture();
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, ct5ReadFbo);
+                    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+                    glReadBuffer(GL_COLOR_ATTACHMENT0);
+                    org.lwjgl.opengl.GL11C.glReadPixels(0, 0, fbw, fbh, GL_RGBA, org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE, buf);
+                    long sr = 0, sg = 0, sb = 0, sa = 0; int aHigh = 0;
+                    int n = fbw * fbh;
+                    for (int i = 0; i < n; i++) {
+                        sr += buf.get(i * 4) & 0xFF; sg += buf.get(i * 4 + 1) & 0xFF;
+                        sb += buf.get(i * 4 + 2) & 0xFF;
+                        int a = buf.get(i * 4 + 3) & 0xFF;
+                        sa += a; if (a > 128) aHigh++;
+                    }
+                    Logger.info(String.format("[VX-OUT] colortex5 (%s) tex=%d meanRGBA=(%d,%d,%d,%d) aOver0.5=%.1f%%",
+                            side == 0 ? "main" : "alt", tex, sr / n, sg / n, sb / n, sa / n, 100.0 * aHigh / n));
+                }
+            } finally {
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, prevRead);
+                org.lwjgl.system.MemoryUtil.memFree(buf);
+            }
+        } catch (Throwable t) {
+            Logger.warn("[VX-OUT] colortex5 readback failed: " + t.getMessage());
         }
     }
 }
