@@ -55,6 +55,12 @@ layout(location = 1) in vec2 uv;
 #ifdef VOXY_NEEDS_FOG_DIST
 layout(location = 2) in float voxyFogDist;
 #endif
+// Camera-relative horizontal offset for the near-cull's Chebyshev distance
+// (see quads3.vert — the slant-distance cull leaked LOD water inside the MC
+// square from high/diagonal viewpoints). Must mirror quads3.vert's guard.
+#if defined(VOXY_TRANS_NEAR_CULL) && defined(VOXY_TRANS_NEAR_CULL_XZ)
+layout(location = 3) in vec2 voxyCamRelXZ;
+#endif
 
 #ifdef DEBUG_RENDER
 layout(location = 7) in flat uint quadDebug;
@@ -190,7 +196,22 @@ void main() {
     // ring; voxyLodParams2.x = renderDistanceBlocks - margin (0 disables).
     // Injected only when the vx contract is active; VOXY_TRANS_NEAR_CULL=0
     // is the kill switch.
-    if (voxyLodParams2.x > 0.0 && voxyFogDist < voxyLodParams2.x) {
+    //
+    // 2026-07-03 round 3: compare in the metric MC actually renders in.
+    // voxyFogDist is a 3D slant distance, so from a high camera (or toward
+    // the render square's diagonals, up to RD*sqrt(2)) LOD water INSIDE the
+    // MC square passed the `< threshold` test's complement and survived,
+    // double-compositing with BSL/Sodium water wherever the chunk-bound
+    // mask misfired (its compare flips per frame -> the flickering pale
+    // 16-block squares). Horizontal Chebyshev distance max(|dx|,|dz|)
+    // mirrors the loaded-chunk square at every altitude and diagonal.
+    // VOXY_TRANS_NEAR_CULL_XZ=0 restores the slant metric.
+#ifdef VOXY_TRANS_NEAR_CULL_XZ
+    float voxyNearCullDist = max(abs(voxyCamRelXZ.x), abs(voxyCamRelXZ.y));
+#else
+    float voxyNearCullDist = voxyFogDist;
+#endif
+    if (voxyLodParams2.x > 0.0 && voxyNearCullDist < voxyLodParams2.x) {
         discard;
         return;
     }

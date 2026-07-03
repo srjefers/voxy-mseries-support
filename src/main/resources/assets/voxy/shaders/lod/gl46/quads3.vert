@@ -61,6 +61,19 @@ layout(location = 7) out flat uint quadDebug;
 #ifdef VOXY_NEEDS_FOG_DIST
 layout(location = 2) out float voxyFogDist;
 #endif
+// 2026-07-03 round 3: the near-cull compared voxyFogDist — a 3D SLANT
+// distance — against a horizontal threshold, while MC renders a horizontal
+// square of chunks. From a high camera (or toward the square's diagonals)
+// LOD water inside the MC ring survived the cull and double-composited with
+// BSL/Sodium water, gated only by the per-frame-flipping chunk-bound mask:
+// the flickering pale section-aligned squares. Pass the camera-relative
+// horizontal offset instead (linear in world space, so it interpolates
+// exactly across merged quads; a per-vertex max(|dx|,|dz|) would overestimate
+// mid-quad wherever a long quad crosses the camera axis) and let the
+// fragment shader take the Chebyshev distance that mirrors MC's square.
+#if defined(VOXY_TRANS_NEAR_CULL) && defined(VOXY_TRANS_NEAR_CULL_XZ)
+layout(location = 3) out vec2 voxyCamRelXZ;
+#endif
 
 vec2 taaShift();
 
@@ -110,6 +123,9 @@ void main() {
     vec2 cornerMask = vec2((cornerId>>1)&1u, cornerId&1u)*quad.lodScale;
     vec3 cornerPoint = quad.basePoint + swizzelDataAxis(quad.axis, vec3(quad.quadSizeAddin*cornerMask, 0));
     voxyFogDist = length(cornerPoint - cameraSubPos);
+    #if defined(VOXY_TRANS_NEAR_CULL) && defined(VOXY_TRANS_NEAR_CULL_XZ)
+    voxyCamRelXZ = cornerPoint.xz - cameraSubPos.xz;
+    #endif
     #endif
 
     #ifdef DEBUG_RENDER

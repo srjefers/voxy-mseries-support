@@ -222,6 +222,20 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
     private static final float WATER_FAR_ALPHA_START = parseEnvFloat("VOXY_WATER_FAR_ALPHA_START", 0.0f);
     private static final float WATER_FAR_ALPHA_END = parseEnvFloat("VOXY_WATER_FAR_ALPHA_END", 0.0f);
 
+    // Near-cull metric (2026-07-03 round 3). XZ mode compares the horizontal
+    // Chebyshev distance max(|dx|,|dz|) against the threshold — the metric MC
+    // renders chunks in — instead of the 3D slant distance, which from a high
+    // camera / toward the square's diagonals let LOD water survive INSIDE the
+    // MC ring and double-composite with BSL/Sodium water (the flickering pale
+    // squares). VOXY_TRANS_NEAR_CULL_XZ=0 restores the slant metric. The
+    // margin shrinks from 48 to 16 in XZ mode because Chebyshev matches the
+    // loaded-chunk square exactly (48 only papered over the slant mismatch);
+    // VOXY_TRANS_NEAR_CULL_MARGIN overrides in blocks.
+    private static final boolean TRANS_NEAR_CULL_XZ =
+            !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_XZ"));
+    private static final float TRANS_NEAR_CULL_MARGIN =
+            parseEnvFloat("VOXY_TRANS_NEAR_CULL_MARGIN", TRANS_NEAR_CULL_XZ ? 16f : 48f);
+
     private static float parseEnvFloat(String name, float def) {
         String v = System.getenv(name);
         if (v == null || v.isBlank()) return def;
@@ -474,8 +488,13 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                         && me.cortex.voxy.client.core.util.IrisUtil.vxContractActive();
                 if (transNearCull) {
                     translucentDefines.put("VOXY_TRANS_NEAR_CULL", "");
+                    if (TRANS_NEAR_CULL_XZ) {
+                        translucentDefines.put("VOXY_TRANS_NEAR_CULL_XZ", "");
+                    }
                     Logger.info("[Metal-LODTEST] translucent near-cull ON (vx contract: no LOD water "
-                            + "inside MC render distance); VOXY_TRANS_NEAR_CULL=0 disables");
+                            + "inside MC render distance; metric=" + (TRANS_NEAR_CULL_XZ ? "xz-chebyshev" : "3d-slant")
+                            + ", margin=" + TRANS_NEAR_CULL_MARGIN + "); VOXY_TRANS_NEAR_CULL=0 disables, "
+                            + "VOXY_TRANS_NEAR_CULL_XZ=0 restores the slant metric");
                 }
                 // Seam-ring brightness parity: GL runs SSAO between opaque and
                 // translucent; that pass is parked on Metal, so LOD terrain sits
@@ -681,11 +700,24 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                 var transDepthState = me.cortex.voxy.client.core.util.IrisUtil.vxContractActive()
                         ? me.cortex.voxy.client.core.gpu.PipelineState.DepthState.DEFAULT
                         : me.cortex.voxy.client.core.gpu.PipelineState.DepthState.TEST_NO_WRITE;
+                // Material mode: the 3 g-buffer planes carry DATA (straight-alpha
+                // albedo + nibble-packed light/face/id), not composited colour —
+                // the pack's blender does the real compositing at resolve time.
+                // Blending them is doubly wrong: MetalRenderBackend only wires
+                // blending onto attachment 0 (planes 1/2 were silently
+                // last-writer-wins anyway), and plane 0 would premultiplied-over-
+                // accumulate straight-alpha samples under any overlapping draws
+                // (RGB x1.294 / alpha 0.914 for water — "pale, more opaque").
+                // OPAQUE writes + depth LEQUAL+write make all 3 planes agree on
+                // nearest-fragment-wins. VOXY_VX_PLANE_BLEND=1 restores blending.
+                var transBlend = vxMaterial && !"1".equals(System.getenv("VOXY_VX_PLANE_BLEND"))
+                        ? me.cortex.voxy.client.core.gpu.PipelineState.BlendState.OPAQUE
+                        : me.cortex.voxy.client.core.gpu.PipelineState.BlendState.PREMULTIPLIED_ALPHA;
                 translucentState = new me.cortex.voxy.client.core.gpu.PipelineState(
                         waterDebugDepth
                                 ? me.cortex.voxy.client.core.gpu.PipelineState.DepthState.DISABLED
                                 : transDepthState,
-                        me.cortex.voxy.client.core.gpu.PipelineState.BlendState.PREMULTIPLIED_ALPHA,
+                        transBlend,
                         me.cortex.voxy.client.core.gpu.PipelineState.RasterState.NO_CULL);
             }
             // Material mode renders 3 BGRA8 planes (P0 albedo, P1 tint, P2 misc);
@@ -829,7 +861,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             // see VOXY_TRANS_NEAR_CULL). GL and no-pack sessions read 0.
             float nearCull = 0.0f;
             if (me.cortex.voxy.client.core.util.IrisUtil.vxContractActive()) {
-                nearCull = Math.max(rdBlocks - 48f, 64f);
+                nearCull = Math.max(rdBlocks - TRANS_NEAR_CULL_MARGIN, 64f);
             }
             MemoryUtil.memPutFloat(lodBase + 16, nearCull);
             MemoryUtil.memPutFloat(lodBase + 20, 0f);

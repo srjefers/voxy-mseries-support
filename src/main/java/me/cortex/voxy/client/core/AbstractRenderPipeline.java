@@ -347,6 +347,18 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
     private int metalFrame;
     /** VOXY_UNDERWATER_LOD=1 forces LOD draws even when submerged-fog saturates the far field. */
     private static final boolean UNDERWATER_LOD_FORCE = "1".equals(System.getenv("VOXY_UNDERWATER_LOD"));
+    /**
+     * 2026-07-03 round 3: submersionSkip used to skip the ENTIRE vx-contract
+     * translucent block — including the material-plane clears — so going
+     * underwater froze metalVxTrans0-2 (+ the trans depth bridge) at the last
+     * above-water frame while the GL resolve kept re-compositing the stale
+     * planes into the pack's colortex every frame: ghost water squares that
+     * toggle with the skip at the waterline. Keep the clear-only maintenance
+     * running every contract frame (cleared planes make the resolve discard
+     * everything) and gate only the DRAWS on the skip.
+     * VOXY_TRANS_SUBMERSION_CLEAR=0 restores the old skip-everything gating.
+     */
+    private static final boolean TRANS_SUBMERSION_CLEAR = !"0".equals(System.getenv("VOXY_TRANS_SUBMERSION_CLEAR"));
 
     // [Metal-FLICKER] diagnostic (2026-05-26): track whether the rendered
     // section set (renderList count) varies frame-to-frame. With a perfectly
@@ -872,7 +884,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             // depth through a second packed bridge. Encoder order keeps it
             // all in this frame's single submit.
             if (me.cortex.voxy.client.core.util.IrisUtil.vxContractActive()
-                    && !bridgeSolidTest && !submersionSkip
+                    && !bridgeSolidTest && (TRANS_SUBMERSION_CLEAR || !submersionSkip)
                     && this.sectionRenderer instanceof me.cortex.voxy.client.core.rendering.section.backend.mdic.MDICSectionRenderer mdicT
                     && viewport instanceof me.cortex.voxy.client.core.rendering.section.backend.mdic.MDICViewport mvT
                     && !this.deferTranslucency) {
@@ -924,7 +936,13 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                         .build();
                 try (var encT = backend.beginRenderPass(transPass)) {
                     encT.setViewport(0, 0, fbw, fbh, 0.0f, 1.0f);
-                    mdicT.renderTranslucentMetal(encT, mvT);
+                    // Submerged: run the pass for its clears only (see
+                    // TRANS_SUBMERSION_CLEAR) — the far field is fog-saturated,
+                    // so skipping the draws over freshly-cleared planes keeps
+                    // the resolve dark instead of compositing stale water.
+                    if (!submersionSkip) {
+                        mdicT.renderTranslucentMetal(encT, mvT);
+                    }
                 }
 
                 mrb.copyTextureToBuffer(this.metalDepthTransTex, this.metalTransReadBuffer, fbw, fbh);
