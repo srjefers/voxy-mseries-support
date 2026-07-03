@@ -45,9 +45,14 @@ layout(location = 0) in flat uvec4 interData;
 layout(location = 1) in vec2 uv;
 #endif
 
-// M13 chunk 5: per-vertex world distance to camera, interpolated. Only
-// produced by quads3.vert when USE_ENV_FOG is defined (Metal terrain path).
-#ifdef USE_ENV_FOG
+// M13 chunk 5: per-vertex world distance to camera, interpolated.
+// 2026-07-03: decoupled from USE_ENV_FOG — the vx contract forces env fog
+// off, which silently compiled out the distance-mip + far-water-alpha
+// features in every Iris/BSL session. Must mirror quads3.vert's guard.
+#if defined(USE_ENV_FOG) || defined(VOXY_LOD_DIST_MIP) || defined(VOXY_WATER_FAR_ALPHA) || defined(VOXY_TRANS_NEAR_CULL)
+#define VOXY_NEEDS_FOG_DIST
+#endif
+#ifdef VOXY_NEEDS_FOG_DIST
 layout(location = 2) in float voxyFogDist;
 #endif
 
@@ -173,6 +178,24 @@ void main() {
     return;
     #endif
 #endif
+
+#if defined(TRANSLUCENT) && defined(VOXY_TRANS_NEAR_CULL)
+    // vx contract (2026-07-03): BSL composites the injected LOD water
+    // (colortex16, via deferred1's nearer-than-scene gate) and ALSO draws
+    // MC's own water inside the render distance. LOD water surviving the
+    // chunk-bound depth mask there (the mask compare flips with camera
+    // pitch at grazing angles) double-blends with Sodium/BSL water into a
+    // pale higher-opacity veil — the section-aligned "white squares" on
+    // near/mid water. Hard-cull translucent LOD fragments inside the MC
+    // ring; voxyLodParams2.x = renderDistanceBlocks - margin (0 disables).
+    // Injected only when the vx contract is active; VOXY_TRANS_NEAR_CULL=0
+    // is the kill switch.
+    if (voxyLodParams2.x > 0.0 && voxyFogDist < voxyLodParams2.x) {
+        discard;
+        return;
+    }
+#endif
+
     //vec2 uv = vec2(0);
     //Tile is the tile we are in
     vec2 tile;
@@ -265,10 +288,8 @@ void main() {
         // screen pixel covers voxyFogDist * voxyLodParams.x world units
         // (2*tan(fovY/2)/viewportH, per frame — tracks spyglass zoom).
         // Clamp to VOXY_ATLAS_MAX_LOD: bakes upload mips 16/8/4/2 only.
-        // voxyFogDist only exists under USE_ENV_FOG; without it fall back to
-        // the fixed-mip-0 behaviour this replaces.
         float voxyAtlasLod = 0.0;
-        #ifdef USE_ENV_FOG
+        #ifdef VOXY_NEEDS_FOG_DIST
         if (voxyLodParams.x > 0.0) {
             float texelWorld = float(1u<<((interData.w>>16)&7u)) * (1.0/16.0);
             float pixelWorld = voxyFogDist * voxyLodParams.x;
@@ -428,7 +449,7 @@ void main() {
     // the seam, so ring parity is untouched) to voxyLodParams.w at the far
     // end. w == 0 disables (VOXY_WATER_FAR_ALPHA=0 kill switch, params from
     // MDICSectionRenderer.uploadUniform).
-    #if defined(TRANSLUCENT) && defined(VOXY_WATER_FAR_ALPHA) && defined(USE_ENV_FOG)
+    #if defined(TRANSLUCENT) && defined(VOXY_WATER_FAR_ALPHA)
     if (voxyLodParams.w > 0.0) {
         float farLerp = clamp((voxyFogDist - voxyLodParams.y) * voxyLodParams.z, 0.0, 1.0);
         farLerp = farLerp * farLerp * (3.0 - 2.0 * farLerp);

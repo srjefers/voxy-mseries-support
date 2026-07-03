@@ -39,6 +39,10 @@ layout(binding = 0, std140) readonly buffer SceneUniform {
     //   z = 1 / (ramp end - ramp start)
     //   w = far-water target alpha (0 = ramp off)
     vec4 voxyLodParams;
+    // 2026-07-03 (vx contract): x = translucent near-cull distance in blocks
+    // (MC render distance - margin; 0 disables — see VOXY_TRANS_NEAR_CULL in
+    // quads.frag). yzw reserved. Same GL-no-op contract as voxyLodParams.
+    vec4 voxyLodParams2;
 };
 
 //TODO: see if making the stride 2*4*4 bytes or something cause you get that 16 byte write

@@ -121,14 +121,18 @@ uvec3 makeRemainingAttributes(const in BlockModel model, const in Quad quad, uin
     attributes.x = packVec4(tinting);
     attributes.y = conditionalTinting;
     attributes.z = addin|(face<<8);
+    #endif
+
     #ifdef VOXY_LOD_DIST_MIP
     // Distance-mip (Metal): the fragment stage needs the quad's LOD scale to
     // turn view distance into an atlas mip level. `addin` only carries the
     // lod level for OPAQUE quads (translucent leaves it 0, and quads.frag
     // adds interData.w&0xFF to alpha, so the low byte is off-limits). Pack it
-    // in bits 16-18, which no reader touches on any backend.
+    // in bits 16-18, which no reader touches on any backend. Applies to BOTH
+    // the base and PATCHED (vx material) attribute layouts — PATCHED leaves
+    // attributes.z at 0, and without these bits its dist-mip would compute
+    // texel size with lodScale=1 and over-blur every far quad.
     attributes.z |= (lodLevel&7u)<<16;
-    #endif
     #endif
 
     return attributes;
@@ -157,6 +161,19 @@ void setupQuad(out QuadData quad, const in Quad rawQuad, uvec2 sPos, bool genera
     #endif
     vec3 quadStart = extractPos(rawQuad);
     float depthOffset = extractFaceIndentation(faceData);
+    #ifdef VOXY_LOD_ABS_INDENT
+    // Metal fix (2026-07-03): the model-space indent gets multiplied by
+    // lodScale below (basePoint = quadStart*lodScale), so an indented face —
+    // the water surface at 1-0.1094 being the critical one — sat 0.109*2^L
+    // blocks below its cell top at level L: parent water planes floated up
+    // to ~0.9 blocks ABOVE child planes. Consequences: stacked translucent
+    // planes double-blending into pale section-aligned veils, an exposed
+    // see-through gap band at every LOD ring transition, and mid/far water
+    // at the wrong world height. Divide by lodScale so the indent stays
+    // ABSOLUTE (in blocks) at every level. Metal-only define
+    // (VOXY_LOD_ABS_INDENT, kill switch =0); GL keeps upstream scaling.
+    depthOffset /= lodScale;
+    #endif
     quadStart += swizzelDataAxis(face>>1, vec3(faceSize.xz, mix(depthOffset, 1-depthOffset, float(face&1u))));
 
     quad.lodScale = lodScale;

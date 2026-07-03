@@ -444,6 +444,39 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                     Logger.info("[Metal-LODTEST] far-water alpha ramp ON (target=" + WATER_FAR_ALPHA
                             + "); VOXY_WATER_FAR_ALPHA=0 disables");
                 }
+                // VOXY_LOD_ABS_INDENT — lodScale-invariant face indentation
+                //   (2026-07-03), DEFAULT ON. quad_util scales the model-space
+                //   indent by lodScale, so a level-L water plane sat
+                //   0.109*2^L blocks below its cell top: parent planes floated
+                //   ~0.9 blocks above child planes → stacked translucent
+                //   blending (pale section-aligned veil squares), an exposed
+                //   gap band at LOD ring transitions, and wrong mid/far water
+                //   heights. VOXY_LOD_ABS_INDENT=0 restores upstream scaling.
+                String absIndentEnv = System.getenv("VOXY_LOD_ABS_INDENT");
+                boolean absIndent = absIndentEnv == null || !"0".equals(absIndentEnv.trim());
+                if (absIndent) {
+                    opaqueDefines.put("VOXY_LOD_ABS_INDENT", "");
+                    translucentDefines.put("VOXY_LOD_ABS_INDENT", "");
+                    Logger.info("[Metal-LODTEST] absolute face indent ON (water plane height "
+                            + "lodScale-invariant); VOXY_LOD_ABS_INDENT=0 reverts");
+                }
+                // VOXY_TRANS_NEAR_CULL — vx contract only (2026-07-03),
+                //   DEFAULT ON. BSL composites the injected LOD water AND
+                //   draws MC's own water inside render distance; LOD water
+                //   that survives the chunk-bound mask there (the depth
+                //   compare flips with camera pitch at grazing angles)
+                //   double-blends into pale veil squares on near/mid water.
+                //   Hard-cull translucent LOD fragments inside the MC ring;
+                //   the cull distance rides in voxyLodParams2.x per frame.
+                //   VOXY_TRANS_NEAR_CULL=0 disables.
+                String nearCullEnv = System.getenv("VOXY_TRANS_NEAR_CULL");
+                boolean transNearCull = (nearCullEnv == null || !"0".equals(nearCullEnv.trim()))
+                        && me.cortex.voxy.client.core.util.IrisUtil.vxContractActive();
+                if (transNearCull) {
+                    translucentDefines.put("VOXY_TRANS_NEAR_CULL", "");
+                    Logger.info("[Metal-LODTEST] translucent near-cull ON (vx contract: no LOD water "
+                            + "inside MC render distance); VOXY_TRANS_NEAR_CULL=0 disables");
+                }
                 // Seam-ring brightness parity: GL runs SSAO between opaque and
                 // translucent; that pass is parked on Metal, so LOD terrain sits
                 // ~10% brighter than AO-darkened Sodium terrain — the visible
@@ -792,6 +825,16 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             MemoryUtil.memPutFloat(lodBase +  4, rampStart);
             MemoryUtil.memPutFloat(lodBase +  8, 1.0f / (rampEnd - rampStart));
             MemoryUtil.memPutFloat(lodBase + 12, WATER_FAR_ALPHA);
+            // voxyLodParams2.x: translucent near-cull distance (vx contract —
+            // see VOXY_TRANS_NEAR_CULL). GL and no-pack sessions read 0.
+            float nearCull = 0.0f;
+            if (me.cortex.voxy.client.core.util.IrisUtil.vxContractActive()) {
+                nearCull = Math.max(rdBlocks - 48f, 64f);
+            }
+            MemoryUtil.memPutFloat(lodBase + 16, nearCull);
+            MemoryUtil.memPutFloat(lodBase + 20, 0f);
+            MemoryUtil.memPutFloat(lodBase + 24, 0f);
+            MemoryUtil.memPutFloat(lodBase + 28, 0f);
         }
 
         UploadStream.INSTANCE.commit();

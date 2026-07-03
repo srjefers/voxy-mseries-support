@@ -49,7 +49,16 @@ layout(location = 7) out flat uint quadDebug;
 // cameraSubPos (see setupQuad in quad_util.glsl — both are post
 // `- baseSectionPos<<5`), so `length(cornerPoint - cameraSubPos)` is the
 // real world-space distance without needing to round-trip through the MVP.
-#ifdef USE_ENV_FOG
+// 2026-07-03: voxyFogDist was gated on USE_ENV_FOG only, but the vx contract
+// forces useEnvFog() OFF (NormalRenderPipeline:66-68) and configs can turn
+// env fog off — which silently compiled OUT the distance-mip sampling and
+// the far-water alpha ramp in every Iris/BSL session (the [Metal-LODTEST]
+// "ON" logs only reflect define injection, not effective compilation). Any
+// consumer define now pulls the varying in.
+#if defined(USE_ENV_FOG) || defined(VOXY_LOD_DIST_MIP) || defined(VOXY_WATER_FAR_ALPHA) || defined(VOXY_TRANS_NEAR_CULL)
+#define VOXY_NEEDS_FOG_DIST
+#endif
+#ifdef VOXY_NEEDS_FOG_DIST
 layout(location = 2) out float voxyFogDist;
 #endif
 
@@ -92,7 +101,7 @@ void main() {
     //Note: other data is automatically discarded as it is undefiend and has not been generated
     interData = quad.attributeData;
 
-    #ifdef USE_ENV_FOG
+    #ifdef VOXY_NEEDS_FOG_DIST
     // Reconstruct the corner's world-relative point in the same way
     // getQuadCornerPos does (kept inline rather than refactoring quad_util
     // to avoid touching the GL path's hot vertex code). cameraSubPos comes
