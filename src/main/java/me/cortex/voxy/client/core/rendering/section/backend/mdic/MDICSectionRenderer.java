@@ -233,6 +233,16 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
     // VOXY_TRANS_NEAR_CULL_MARGIN overrides in blocks.
     private static final boolean TRANS_NEAR_CULL_XZ =
             !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_XZ"));
+    // 2026-07-03 round 5: Sodium renders sections in a Euclidean XZ CYLINDER
+    // (OcclusionCuller fx*fx+fz*fz <= r*r), so the Chebyshev SQUARE cull left
+    // a ring toward the render square's diagonals (Euclid RD..RD*sqrt(2))
+    // with NEITHER MC water NOR LOD water — the naked kelp/seafloor band the
+    // colortex16 clear fix exposed. Radial matches Sodium's real coverage and
+    // turns the diagonal gap into the same ~margin-wide overlap ring the axes
+    // already have (handled by the chunk-bound mask).
+    // VOXY_TRANS_NEAR_CULL_RADIAL=0 falls back to the Chebyshev square.
+    private static final boolean TRANS_NEAR_CULL_RADIAL =
+            TRANS_NEAR_CULL_XZ && !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_RADIAL"));
     private static final float TRANS_NEAR_CULL_MARGIN =
             parseEnvFloat("VOXY_TRANS_NEAR_CULL_MARGIN", TRANS_NEAR_CULL_XZ ? 16f : 48f);
 
@@ -490,10 +500,15 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                     translucentDefines.put("VOXY_TRANS_NEAR_CULL", "");
                     if (TRANS_NEAR_CULL_XZ) {
                         translucentDefines.put("VOXY_TRANS_NEAR_CULL_XZ", "");
+                        if (TRANS_NEAR_CULL_RADIAL) {
+                            translucentDefines.put("VOXY_TRANS_NEAR_CULL_RADIAL", "");
+                        }
                     }
                     Logger.info("[Metal-LODTEST] translucent near-cull ON (vx contract: no LOD water "
-                            + "inside MC render distance; metric=" + (TRANS_NEAR_CULL_XZ ? "xz-chebyshev" : "3d-slant")
+                            + "inside MC render distance; metric="
+                            + (TRANS_NEAR_CULL_RADIAL ? "xz-radial" : TRANS_NEAR_CULL_XZ ? "xz-chebyshev" : "3d-slant")
                             + ", margin=" + TRANS_NEAR_CULL_MARGIN + "); VOXY_TRANS_NEAR_CULL=0 disables, "
+                            + "VOXY_TRANS_NEAR_CULL_RADIAL=0 restores the Chebyshev square, "
                             + "VOXY_TRANS_NEAR_CULL_XZ=0 restores the slant metric");
                 }
                 // Seam-ring brightness parity: GL runs SSAO between opaque and

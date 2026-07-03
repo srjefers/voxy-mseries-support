@@ -206,7 +206,17 @@ void main() {
     // 16-block squares). Horizontal Chebyshev distance max(|dx|,|dz|)
     // mirrors the loaded-chunk square at every altitude and diagonal.
     // VOXY_TRANS_NEAR_CULL_XZ=0 restores the slant metric.
-#ifdef VOXY_TRANS_NEAR_CULL_XZ
+    //
+    // 2026-07-03 round 5: Sodium 0.8.1 section culling is a Euclidean XZ
+    // CYLINDER (fx*fx+fz*fz <= r*r, OcclusionCuller), NOT a square — the
+    // Chebyshev cull left a no-water ring toward the render square's
+    // diagonals (Euclid RD .. RD*sqrt(2)): MC water already absent there,
+    // LOD water still discarded -> the naked kelp/seafloor band above a
+    // sawtooth waterline. Cull in the metric Sodium actually renders in.
+    // VOXY_TRANS_NEAR_CULL_RADIAL=0 falls back to the Chebyshev square.
+#if defined(VOXY_TRANS_NEAR_CULL_XZ) && defined(VOXY_TRANS_NEAR_CULL_RADIAL)
+    float voxyNearCullDist = length(voxyCamRelXZ);
+#elif defined(VOXY_TRANS_NEAR_CULL_XZ)
     float voxyNearCullDist = max(abs(voxyCamRelXZ.x), abs(voxyCamRelXZ.y));
 #else
     float voxyNearCullDist = voxyFogDist;
