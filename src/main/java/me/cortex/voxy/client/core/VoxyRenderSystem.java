@@ -84,9 +84,15 @@ public class VoxyRenderSystem {
     // 0 disables the burst entirely — the pre-2026-07 behaviour).
     private static final long BAKE_BUDGET_STEADY_NS = 900_000L;
     private static final long BAKE_WARMUP_NS = parseBakeWarmupNs();
-    private static final int BAKE_BURST_HIGH = 256;
-    private static final int BAKE_BURST_LOW = 32;
+    // 2026-07-03 tier retune from the first BSL session: backlog peaked at 68
+    // (full tier at 256 never engaged) and then hovered at 29-31 — just under
+    // the old LOW=32 release — leaving a ~30-bake tail draining at 0.9 ms for
+    // the whole session. Full burst from 128, and hold the burst until the
+    // backlog is basically empty (8).
+    private static final int BAKE_BURST_HIGH = 128;
+    private static final int BAKE_BURST_LOW = 8;
     private boolean bakeWarmupActive;
+    private int bakeWarmupTransitions;
 
     private static long parseBakeWarmupNs() {
         String v = System.getenv("VOXY_BAKE_WARMUP_MS");
@@ -110,9 +116,16 @@ public class VoxyRenderSystem {
         boolean active = budget > BAKE_BUDGET_STEADY_NS;
         if (active != this.bakeWarmupActive) {
             this.bakeWarmupActive = active;
-            me.cortex.voxy.common.Logger.info("[Metal-BAKE] warmup burst "
-                    + (active ? ("ENGAGED (backlog=" + backlog + ", budget=" + (budget / 1_000_000L) + "ms)")
-                              : ("released (backlog=" + backlog + ", back to 0.9ms)")));
+            // The low release threshold makes engage/release flap frame-to-
+            // frame while bakes trickle in; log the first few transitions
+            // (the interesting ones at world join) then sample.
+            this.bakeWarmupTransitions++;
+            if (this.bakeWarmupTransitions <= 4 || (this.bakeWarmupTransitions % 200) == 0) {
+                me.cortex.voxy.common.Logger.info("[Metal-BAKE] warmup burst "
+                        + (active ? ("ENGAGED (backlog=" + backlog + ", budget=" + (budget / 1_000_000L) + "ms)")
+                                  : ("released (backlog=" + backlog + ", back to 0.9ms)"))
+                        + " [transition " + this.bakeWarmupTransitions + "]");
+            }
         }
         return budget;
     }
@@ -151,6 +164,25 @@ public class VoxyRenderSystem {
         }
 
         this.constructedIrisGbufferInject = IrisUtil.irisGbufferInjectMode();
+
+        // 2026-07-03 (Metal): migrate sub_division_size drift. The FPS-based
+        // autoBalanceSubDivSize loop (call site commented out below in
+        // renderOpaque) used to RAISE this value up to 256 whenever FPS<55
+        // and persist it via VoxyConfig.save() — but nothing ever lowers it
+        // again. A drifted value (user config had 229.18) makes LOD leaves
+        // stop subdividing at a huge screen footprint: 16-block voxels at
+        // only ~2000 blocks = the "gigantic shapeless distant blocks"
+        // report. Values above 128 can only come from that disabled loop
+        // (the config UI stays well below it), so reset them to the
+        // default 64. Metal-only guard keeps GL behaviour untouched.
+        if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                != me.cortex.voxy.client.core.gpu.BackendType.OPENGL
+                && VoxyConfig.CONFIG.subDivisionSize > 128f) {
+            Logger.warn("[Metal] sub_division_size drifted to " + VoxyConfig.CONFIG.subDivisionSize
+                    + " (residue of the disabled FPS auto-balancer) — resetting to 64 for full LOD detail");
+            VoxyConfig.CONFIG.subDivisionSize = 64f;
+            VoxyConfig.CONFIG.save();
+        }
 
         //Fking HATE EVERYTHING AAAAAAAAAAAAAAAA
         int[] oldBufferBindings = new int[10];
