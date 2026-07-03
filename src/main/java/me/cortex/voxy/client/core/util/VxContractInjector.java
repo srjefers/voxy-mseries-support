@@ -46,6 +46,7 @@ public final class VxContractInjector {
     private static int program;
     private static int vao;
     private static int uColour, uDepthTex, uInjectGamma, uInjectExposure, uInjectSqrt, uShadowMask;
+    private static int uProjInv, uLightVec, uMaskAuto, uMaskScale, uDepthIsWindow;
     private static int colorFbo;
     private static int[] attachedTargets = new int[0];
     private static boolean warnedFailure;
@@ -71,6 +72,30 @@ public final class VxContractInjector {
      *  no lightCol-scaled NoL term for the pack to remove.
      *  VOXY_VX_SHADOW_MASK=1 restores the old behaviour exactly for A/B. */
     private static final float VX_SHADOW_MASK = parseEnvF("VOXY_VX_SHADOW_MASK", 0.0f);
+
+    /** 2026-07-03 round 5: per-pixel shadowMask seed (user: "las sombras no se
+     *  cargan al 100% en todos los lods"). The constant-0 veil fix above made
+     *  GetLODShadows a no-op, which removed ALL directional shadows from LOD
+     *  terrain — the pack's real shadowmap only covers shadowDistance, so
+     *  GetLODShadows IS BSL's intended LOD shadow mechanism and it needs a
+     *  shaped per-pixel mask (the pack's own voxy_opaque writes
+     *  shadow.r * mix(NoL,1,ss) * (1-emission) * lightmap.y^2 * shadowFade).
+     *  AUTO mode reconstructs the dominant NoL term in the injector: view-space
+     *  position from vxProjInv-equivalent (the viewport projection inverse) x
+     *  the decoded bridge depth, face normal from dFdx/dFdy, dotted with
+     *  Iris's view-space shadow-light vector. shadow.r/lightmap.y^2/shadowFade
+     *  approximate to 1 at LOD range. Sun-averted faces get mask~0 (no veil
+     *  revival: the veil needed mask=1 on EVERY pixel).
+     *  VOXY_VX_SHADOW_MASK_AUTO=0 reverts to the constant seed (default 0 =
+     *  shadows off); an explicit VOXY_VX_SHADOW_MASK=<v> also disables auto;
+     *  VOXY_VX_SHADOW_MASK_SCALE (default 1.0) tames march blotchiness. */
+    private static final boolean VX_SHADOW_MASK_AUTO =
+            System.getenv("VOXY_VX_SHADOW_MASK") == null
+                    && !"0".equals(System.getenv("VOXY_VX_SHADOW_MASK_AUTO"));
+    private static final float VX_SHADOW_MASK_SCALE = parseEnvF("VOXY_VX_SHADOW_MASK_SCALE", 1.0f);
+    /** Cleared if the Iris celestial API throws — degrades to constant mode. */
+    private static boolean shadowMaskAutoOk = true;
+    private static boolean warnedShadowAuto;
 
     /** Phase D spike (issue #11): run BSL's voxy_translucent over the LOD water
      *  instead of the flat passthrough. A/B kill switch; default OFF. */
@@ -98,7 +123,7 @@ public final class VxContractInjector {
             return false;
         }
         try {
-            return inject0(colorBridge, depthBridge, transBridge, transDepthBridge);
+            return inject0(viewport, colorBridge, depthBridge, transBridge, transDepthBridge);
         } catch (Throwable t) {
             if (!warnedFailure) {
                 warnedFailure = true;
@@ -108,7 +133,8 @@ public final class VxContractInjector {
         }
     }
 
-    private static boolean inject0(IOSurfaceBridge colorBridge, IOSurfaceBridge depthBridge,
+    private static boolean inject0(Viewport<?> viewport,
+                                   IOSurfaceBridge colorBridge, IOSurfaceBridge depthBridge,
                                    IOSurfaceBridge transBridge, IOSurfaceBridge transDepthBridge) {
         var pipeline = net.irisshaders.iris.Iris.getPipelineManager().getPipelineNullable();
         if (!(pipeline instanceof IGetIrisVoxyPipelineData dataGetter)) {
@@ -208,6 +234,37 @@ public final class VxContractInjector {
             glUniform1f(uInjectExposure, INJECT_EXPOSURE);
             glUniform1i(uInjectSqrt, INJECT_SQRT);
             glUniform1f(uShadowMask, VX_SHADOW_MASK);
+            boolean maskAuto = VX_SHADOW_MASK_AUTO && shadowMaskAutoOk;
+            if (maskAuto) {
+                try {
+                    // Same projection the pack receives as vxProj (VoxyUniforms),
+                    // so the reconstruction matches deferred1's vxProjInv math.
+                    org.joml.Matrix4f projInv = new org.joml.Matrix4f(viewport.projection).invert();
+                    glUniformMatrix4fv(uProjInv, false, projInv.get(new float[16]));
+                    // Iris's view-space shadow-light vector — the source of BSL's
+                    // lightVec. Public API on 1.10.7; any drift degrades to the
+                    // constant seed instead of crashing the inject.
+                    float spr = ((net.irisshaders.iris.pipeline.IrisRenderingPipeline) pipeline)
+                            .getSunPathRotation();
+                    var slp = new net.irisshaders.iris.uniforms.CelestialUniforms(spr)
+                            .getShadowLightPosition();
+                    org.joml.Vector3f lv = new org.joml.Vector3f(slp.x(), slp.y(), slp.z());
+                    if (lv.lengthSquared() > 1e-6f) lv.normalize(); else maskAuto = false;
+                    glUniform3f(uLightVec, lv.x, lv.y, lv.z);
+                } catch (Throwable t) {
+                    shadowMaskAutoOk = false;
+                    maskAuto = false;
+                    if (!warnedShadowAuto) {
+                        warnedShadowAuto = true;
+                        Logger.warn("[Metal-LODTEST] vx shadowMask auto DEGRADED to constant "
+                                + VX_SHADOW_MASK + " (Iris celestial API failed)", t);
+                    }
+                }
+            }
+            glUniform1i(uMaskAuto, maskAuto ? 1 : 0);
+            glUniform1f(uMaskScale, VX_SHADOW_MASK_SCALE);
+            glUniform1i(uDepthIsWindow,
+                    me.cortex.voxy.client.core.rendering.util.MetalMvpUtil.METAL_NDC_REMAP ? 1 : 0);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
             // Phase D (issue #11): translucent LOD layer. Decode the
@@ -558,6 +615,11 @@ public final class VxContractInjector {
                 uniform float uInjectExposure;
                 uniform int uInjectSqrt;
                 uniform float uShadowMask;
+                uniform mat4 uProjInv;
+                uniform vec3 uLightVec;
+                uniform float uMaskScale;
+                uniform int uMaskAuto;
+                uniform int uDepthIsWindow;
                 in vec2 vUV;
                 out vec4 outColor0;
                 out vec4 outColor1;
@@ -582,7 +644,30 @@ public final class VxContractInjector {
                     // constant 1.0 was the left-of-sun gray-veil bug), b = "LOD
                     // wrote here" mask the pack's own voxy_opaque writes as
                     // float(z < 1).
-                    outColor1 = vec4(uShadowMask, 0.0, 1.0, 1.0);
+                    float vxMask = uShadowMask;
+                    if (uMaskAuto == 1) {
+                        // Per-pixel NoL: view-space position from the decoded
+                        // bridge depth (mirror MetalVxResolvePass's vxWz
+                        // convention, inverted to NDC), face normal from
+                        // screen derivatives, dotted with Iris's view-space
+                        // shadow-light vector. Silhouette guard: a large depth
+                        // derivative means the 2x2 quad straddles a depth edge
+                        // and the derived normal is garbage -> mask 0.
+                        float zNdc = (uDepthIsWindow == 1) ? d * 2.0 - 1.0 : d;
+                        vec4 vpH = uProjInv * vec4(vUV * 2.0 - 1.0, zNdc, 1.0);
+                        vec3 vpos = vpH.xyz / vpH.w;
+                        vec3 nrm = cross(dFdx(vpos), dFdy(vpos));
+                        float n2 = dot(nrm, nrm);
+                        float dEdge = abs(dFdx(d)) + abs(dFdy(d));
+                        if (n2 > 1e-12 && dEdge < 0.05) {
+                            nrm *= inversesqrt(n2);
+                            nrm *= -sign(dot(nrm, vpos));
+                            vxMask = clamp(dot(nrm, uLightVec), 0.0, 1.0) * uMaskScale;
+                        } else {
+                            vxMask = 0.0;
+                        }
+                    }
+                    outColor1 = vec4(vxMask, 0.0, 1.0, 1.0);
                 }
                 """;
         program = VxIrisSideChannel.compile(vs, fs, "VxContractInjector");
@@ -593,8 +678,16 @@ public final class VxContractInjector {
         uInjectExposure = glGetUniformLocation(program, "uInjectExposure");
         uInjectSqrt = glGetUniformLocation(program, "uInjectSqrt");
         uShadowMask = glGetUniformLocation(program, "uShadowMask");
-        Logger.info("[Metal-LODTEST] vx colortex6 shadowMask seed = " + VX_SHADOW_MASK
-                + " (0 = pack LOD screen-space shadows no-op; VOXY_VX_SHADOW_MASK=1 restores the old constant-1 seed)");
+        uProjInv = glGetUniformLocation(program, "uProjInv");
+        uLightVec = glGetUniformLocation(program, "uLightVec");
+        uMaskAuto = glGetUniformLocation(program, "uMaskAuto");
+        uMaskScale = glGetUniformLocation(program, "uMaskScale");
+        uDepthIsWindow = glGetUniformLocation(program, "uDepthIsWindow");
+        Logger.info("[Metal-LODTEST] vx colortex6 shadowMask mode="
+                + (VX_SHADOW_MASK_AUTO ? "auto (per-pixel NoL, scale=" + VX_SHADOW_MASK_SCALE + ")"
+                                       : "constant " + VX_SHADOW_MASK)
+                + "; VOXY_VX_SHADOW_MASK_AUTO=0 -> constant mode (default 0 = LOD shadows off), "
+                + "VOXY_VX_SHADOW_MASK=<v> sets the constant, VOXY_VX_SHADOW_MASK_SCALE tunes auto");
         vao = glGenVertexArrays();
         return vao != 0;
     }
