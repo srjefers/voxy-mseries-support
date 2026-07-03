@@ -200,6 +200,35 @@ public final class MetalVxResolvePass {
                 """.replace("__SKY_FLOOR__", skyFloorLine)
                    .replace("__WATER_SKY_MAX__", waterSkyMaxLine));
 
+        // Disable the pack's screen-space reflection inside the RESOLVE only
+        // (VOXY_VX_NO_SSR=0 restores). At our SOLID-head hook SSR is a binary
+        // artifact generator over LOD water: deferred1's voxy z-patch makes
+        // colortex5.a=1 over every LOD pixel (incl. the seafloor UNDER the
+        // water), and the raytrace's voxy vxDepthTexOpaque fallback lets
+        // upward reflection rays "hit" geometry behind/below the reflector —
+        // so grazing rays almost always register a sloppy hit and decode
+        // pow(ct5*2, 8) of the dark LOD scene (~0.03-0.12 linear = the flat
+        // dark far-water strip), while rays that exit the screen flip per
+        // LOD quad per frame (dithered march) to the bright analytic sky arm
+        // (the strobing light-cyan parallelogram panels). Genuine BSL far
+        // water always takes the analytic sky arm (no voxy fallback => rays
+        // beyond real depth never hit), so forcing the miss path converges
+        // LOD water to the pack's own far-water convention. reflectionMask=0
+        // also makes the specular factor identical to the pack's miss path.
+        boolean noSsr = !"0".equals(System.getenv("VOXY_VX_NO_SSR"));
+        if (translucent && noSsr) {
+            String needle = "reflection = SimpleReflection(viewPos, newNormal, dither, reflectionMask);";
+            boolean found = patchText.contains(needle);
+            if (found) {
+                patchText = patchText.replace(needle,
+                        "reflectionMask = 0.0; // voxy resolve: SSR disabled -> analytic sky arm (VOXY_VX_NO_SSR=0 restores)");
+            }
+            Logger.info("[Metal-LODTEST] vx resolve SSR " + (found
+                    ? "DISABLED (SimpleReflection call replaced, water mirror = analytic sky+clouds)"
+                    : "rewrite FAILED (SimpleReflection needle not found — pack text drifted, SSR still live)")
+                    + "; VOXY_VX_NO_SSR=0 restores the pack's SSR");
+        }
+
         sb.append('\n').append(appleStrictCompat(patchText)).append('\n');
         return sb.toString();
     }
