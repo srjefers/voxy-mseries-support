@@ -213,6 +213,25 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
 
     private final IGpuBuffer uniform = RenderBackendFactory.get().createBuffer(1024).zero();//TODO move to viewport?
 
+    // Far-water alpha ramp (2026-07-03, Metal translucent shader only —
+    // see the VOXY_WATER_FAR_ALPHA injection + quads.frag). Target alpha at
+    // the far end of the ramp; 0 disables. Ramp distances default to a
+    // render-distance-relative window (uploadUniformBuffer) unless the
+    // START/END envs pin them in blocks.
+    private static final float WATER_FAR_ALPHA = parseEnvFloat("VOXY_WATER_FAR_ALPHA", 0.95f);
+    private static final float WATER_FAR_ALPHA_START = parseEnvFloat("VOXY_WATER_FAR_ALPHA_START", 0.0f);
+    private static final float WATER_FAR_ALPHA_END = parseEnvFloat("VOXY_WATER_FAR_ALPHA_END", 0.0f);
+
+    private static float parseEnvFloat(String name, float def) {
+        String v = System.getenv(name);
+        if (v == null || v.isBlank()) return def;
+        try {
+            return Float.parseFloat(v.trim());
+        } catch (NumberFormatException e) {
+            return def;
+        }
+    }
+
     //TODO: needs to be in the viewport, since it contains the compute indirect call/values
     private final IGpuBuffer distanceCountBuffer = RenderBackendFactory.get().createBuffer(1024*4+100_000*4).zero();//TODO move to viewport?
 
@@ -368,6 +387,62 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                 }
                 if (lodFixedMip || lodNoDiscard) {
                     Logger.info("[Metal-LODTEST] fixedMip=" + lodFixedMip + " noDiscard=" + lodNoDiscard);
+                }
+                // VOXY_LOD_DIST_MIP — analytic distance-based atlas mip
+                //   (2026-07-03), DEFAULT ON, takes precedence over the
+                //   fixed-mip-0 diagnostic above (#ifdef order in quads.frag).
+                //   Fixed mip 0 means NO minification: every distant pixel
+                //   picks one arbitrary texel of its 16x16 face cell — the
+                //   spyglass moire on LOD water and the pixel shimmer on
+                //   distant terrain. Screen-space derivatives stay unusable
+                //   (1-2 px quads -> noisy dFdx, the original "paper" collapse),
+                //   so quads.frag computes the mip analytically from view
+                //   distance, quad lodScale and the per-frame projection scale
+                //   (voxyLodParams.x — tracks spyglass FOV). The mip chain has
+                //   been in the atlas all along (MipGen bakes + uploads levels
+                //   0..LAYERS-1 per cell; cell origins stay 2^lvl-aligned so
+                //   NEAREST never crosses cells).
+                //   VOXY_LOD_DIST_MIP=0 reverts to fixed mip 0.
+                //   VOXY_LOD_MIP_BIAS=<f> biases the level (+0.5 = blurrier).
+                String distMipEnv = System.getenv("VOXY_LOD_DIST_MIP");
+                boolean lodDistMip = distMipEnv == null || !"0".equals(distMipEnv.trim());
+                if (lodDistMip) {
+                    float mipBias = 0.0f;
+                    String mb = System.getenv("VOXY_LOD_MIP_BIAS");
+                    if (mb != null && !mb.isBlank()) {
+                        try {
+                            mipBias = Float.parseFloat(mb.trim());
+                        } catch (NumberFormatException e) {
+                            mipBias = 0.0f;
+                        }
+                    }
+                    String maxLod = String.format(java.util.Locale.ROOT, "%.1f",
+                            (float) (me.cortex.voxy.client.core.model.ModelFactory.LAYERS - 1));
+                    String biasStr = String.format(java.util.Locale.ROOT, "%.4f", mipBias);
+                    opaqueDefines.put("VOXY_LOD_DIST_MIP", "");
+                    opaqueDefines.put("VOXY_ATLAS_MAX_LOD", maxLod);
+                    opaqueDefines.put("VOXY_LOD_DIST_MIP_BIAS", biasStr);
+                    translucentDefines.put("VOXY_LOD_DIST_MIP", "");
+                    translucentDefines.put("VOXY_ATLAS_MAX_LOD", maxLod);
+                    translucentDefines.put("VOXY_LOD_DIST_MIP_BIAS", biasStr);
+                    Logger.info("[Metal-LODTEST] distance-based atlas mip ON (maxLod=" + maxLod
+                            + ", bias=" + biasStr + "); VOXY_LOD_DIST_MIP=0 reverts to fixed mip 0");
+                }
+                // VOXY_WATER_FAR_ALPHA — far-water opacity ramp (2026-07-03),
+                //   DEFAULT ON, translucent only. Constant vanilla alpha 0.706
+                //   out to the horizon lets seafloor/kelp ghost through LOD
+                //   water and the fog-coloured bridge clear bleed up through
+                //   it (the washed-out flat-blue sheet). Ramp start sits past
+                //   the LOD<->MC seam so ring parity (alpha 0.706 exactly at
+                //   neutral knobs) is untouched; params ride per frame in
+                //   voxyLodParams.yzw (see uploadUniformBuffer).
+                //   VOXY_WATER_FAR_ALPHA=0 kills it; =<f> sets the far target
+                //   (default 0.95). VOXY_WATER_FAR_ALPHA_START/_END override
+                //   the ramp distances in blocks.
+                if (WATER_FAR_ALPHA > 0.0f) {
+                    translucentDefines.put("VOXY_WATER_FAR_ALPHA", "");
+                    Logger.info("[Metal-LODTEST] far-water alpha ramp ON (target=" + WATER_FAR_ALPHA
+                            + "); VOXY_WATER_FAR_ALPHA=0 disables");
                 }
                 // Seam-ring brightness parity: GL runs SSAO between opaque and
                 // translucent; that pass is parked on Metal, so LOD terrain sits
@@ -684,6 +759,39 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             }
         } else {
             MemoryUtil.memSet(fogBase, 0, 32);
+        }
+
+        // voxyLodParams (2026-07-03): distance-mip projection scale + the
+        // far-water alpha ramp. Offset 128 = right after voxyFogColour in
+        // SceneUniform's std140 layout (the buffer is 1024 B, so no growth).
+        // Written on every backend — GL shaders declare the field but no GL
+        // code path reads it (VOXY_LOD_DIST_MIP / VOXY_WATER_FAR_ALPHA are
+        // Metal-only injections), so this is provably no-op on GL.
+        {
+            long lodBase = base + 128;
+            // World units per pixel per unit view distance, from THIS frame's
+            // projection: 2*tan(fovY/2)/viewportH == 2/(m11*viewportH). Tracks
+            // spyglass zoom + window resizes. NaN/degenerate projection (the
+            // known first-frames state, see HierarchicalOcclusionTraverser's
+            // NaN guard) uploads 0, which quads.frag treats as "mip 0".
+            float projK = 0.0f;
+            float m11 = viewport.projection.m11();
+            if (!Float.isNaN(m11) && m11 > 1e-6f && viewport.height > 0) {
+                projK = 2.0f / (m11 * viewport.height);
+            }
+            // Ramp window: start past the LOD<->MC seam (seam parity keeps MC's
+            // exact 0.706), reach the target alpha a few render distances out.
+            float rdBlocks = Math.max(Minecraft.getInstance().gameRenderer.getRenderDistance(), 32f);
+            float rampStart = WATER_FAR_ALPHA_START > 0f
+                    ? WATER_FAR_ALPHA_START
+                    : Math.max(rdBlocks * 1.5f, 384f);
+            float rampEnd = WATER_FAR_ALPHA_END > rampStart
+                    ? WATER_FAR_ALPHA_END
+                    : Math.max(rdBlocks * 4f, rampStart + 768f);
+            MemoryUtil.memPutFloat(lodBase,      projK);
+            MemoryUtil.memPutFloat(lodBase +  4, rampStart);
+            MemoryUtil.memPutFloat(lodBase +  8, 1.0f / (rampEnd - rampStart));
+            MemoryUtil.memPutFloat(lodBase + 12, WATER_FAR_ALPHA);
         }
 
         UploadStream.INSTANCE.commit();

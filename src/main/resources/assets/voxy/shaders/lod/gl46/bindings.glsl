@@ -28,6 +28,17 @@ layout(binding = 0, std140) readonly buffer SceneUniform {
     // when the define is on (matches the GL post-pass behaviour).
     vec4 voxyFogEndParams;
     vec4 voxyFogColour;
+    // Distance-based LOD sampling + far-water opacity (Metal, 2026-07-03).
+    // Uploaded every frame by MDICSectionRenderer.uploadUniform at offset 128
+    // (the uniform buffer is 1024 B, so no allocation change). GL never reads
+    // these — the consumers are gated behind VOXY_LOD_DIST_MIP /
+    // VOXY_WATER_FAR_ALPHA, which only the Metal pipeline injects.
+    //   x = world-units-per-pixel per unit distance: 2 / (proj.m11 * viewportH)
+    //       (0 when the projection is NaN/degenerate -> shader falls back to mip 0)
+    //   y = far-water alpha ramp start distance, blocks
+    //   z = 1 / (ramp end - ramp start)
+    //   w = far-water target alpha (0 = ramp off)
+    vec4 voxyLodParams;
 };
 
 //TODO: see if making the stride 2*4*4 bytes or something cause you get that 16 byte write

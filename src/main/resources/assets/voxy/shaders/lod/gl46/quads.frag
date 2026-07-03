@@ -254,7 +254,30 @@ void main() {
 //This is deprecated, TODO: remove the non mip code path
     //if (useMipmaps())
     {
-#ifdef VOXY_LOD_FIXED_MIP
+#ifdef VOXY_LOD_DIST_MIP
+        // Distance-based mip selection (Metal, 2026-07-03). Fixed mip 0 made
+        // every distant pixel pick one arbitrary texel of its 16x16 face cell
+        // (NEAREST + no minification) — the spyglass moire/shimmer on LOD
+        // water and the pixel noise on distant terrain. Screen-space
+        // derivatives are NOT trustworthy here (1-2 px quads gave the noisy
+        // dFdx that forced fixed-mip in the first place), so compute the mip
+        // ANALYTICALLY: one atlas texel covers lodScale/16 world units; one
+        // screen pixel covers voxyFogDist * voxyLodParams.x world units
+        // (2*tan(fovY/2)/viewportH, per frame — tracks spyglass zoom).
+        // Clamp to VOXY_ATLAS_MAX_LOD: bakes upload mips 16/8/4/2 only.
+        // voxyFogDist only exists under USE_ENV_FOG; without it fall back to
+        // the fixed-mip-0 behaviour this replaces.
+        float voxyAtlasLod = 0.0;
+        #ifdef USE_ENV_FOG
+        if (voxyLodParams.x > 0.0) {
+            float texelWorld = float(1u<<((interData.w>>16)&7u)) * (1.0/16.0);
+            float pixelWorld = voxyFogDist * voxyLodParams.x;
+            voxyAtlasLod = clamp(log2(max(pixelWorld, 1e-6) / texelWorld) + VOXY_LOD_DIST_MIP_BIAS,
+                                 0.0, VOXY_ATLAS_MAX_LOD);
+        }
+        #endif
+        colour = textureLod(blockModelAtlas, texPos, voxyAtlasLod);
+#elif defined(VOXY_LOD_FIXED_MIP)
         // DIAGNOSTIC (2026-05-25): sample the atlas at a fixed LOD 0 instead of
         // the derivative-based mip. Tests whether the LOD flicker is unstable
         // mip selection on small/distant quads (noisy dFdx/dFdy) — the "small
@@ -393,6 +416,24 @@ void main() {
     #endif
     #ifdef VOXY_WATER_MIN_ALPHA
     outColour.a = max(outColour.a, VOXY_WATER_MIN_ALPHA);
+    #endif
+
+    // Far-water opacity ramp (Metal, translucent only, 2026-07-03). MC water
+    // is alpha 0.706 and that parity MUST hold at the LOD<->MC seam — but a
+    // constant 0.706 out to the horizon lets kilometre-deep seafloor/kelp
+    // ghost through the surface and lets the fog-coloured bridge clear bleed
+    // up through it (the washed-out flat-blue sheet). Physically, the view
+    // path through water at those grazing distances is opaque. Smoothstep
+    // the alpha from the vanilla texel value at voxyLodParams.y blocks (past
+    // the seam, so ring parity is untouched) to voxyLodParams.w at the far
+    // end. w == 0 disables (VOXY_WATER_FAR_ALPHA=0 kill switch, params from
+    // MDICSectionRenderer.uploadUniform).
+    #if defined(TRANSLUCENT) && defined(VOXY_WATER_FAR_ALPHA) && defined(USE_ENV_FOG)
+    if (voxyLodParams.w > 0.0) {
+        float farLerp = clamp((voxyFogDist - voxyLodParams.y) * voxyLodParams.z, 0.0, 1.0);
+        farLerp = farLerp * farLerp * (3.0 - 2.0 * farLerp);
+        outColour.a = mix(outColour.a, max(outColour.a, voxyLodParams.w), farLerp);
+    }
     #endif
 
     #ifdef USE_ENV_FOG

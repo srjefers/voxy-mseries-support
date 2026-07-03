@@ -121,6 +121,14 @@ uvec3 makeRemainingAttributes(const in BlockModel model, const in Quad quad, uin
     attributes.x = packVec4(tinting);
     attributes.y = conditionalTinting;
     attributes.z = addin|(face<<8);
+    #ifdef VOXY_LOD_DIST_MIP
+    // Distance-mip (Metal): the fragment stage needs the quad's LOD scale to
+    // turn view distance into an atlas mip level. `addin` only carries the
+    // lod level for OPAQUE quads (translucent leaves it 0, and quads.frag
+    // adds interData.w&0xFF to alpha, so the low byte is off-limits). Pack it
+    // in bits 16-18, which no reader touches on any backend.
+    attributes.z |= (lodLevel&7u)<<16;
+    #endif
     #endif
 
     return attributes;
