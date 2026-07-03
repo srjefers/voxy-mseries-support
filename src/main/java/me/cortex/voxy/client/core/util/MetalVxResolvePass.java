@@ -439,6 +439,18 @@ public final class MetalVxResolvePass {
     // VOXY_VX_SSR_ALT=0 restores the old (MAIN) binding.
     private static final boolean SSR_ALT = !"0".equals(System.getenv("VOXY_VX_SSR_ALT"));
 
+    // Clear colortex16 before the blended translucent resolve (VOXY_VX_TRANS_CLEAR=0
+    // reverts). Iris never clears the pack's voxy channel (measured: covered-pixel
+    // alpha pinned at 255 while BSL's designed water alpha is mix(0.70,1,fresnel)
+    // ~0.85; stale coverage persisting across camera moves). The pack's alpha
+    // blend func (ONE, ONE_MINUS_SRC_ALPHA) over a never-cleared target converges
+    // to 1.0 within ~4 frames, so deferred1's `mix(color, rgb, a)` composited the
+    // water FULLY OPAQUE and smeared each frame's waves into a temporal average.
+    // Only draw buffer 0 (colortex16) is cleared — attachment 1 is colortex1,
+    // which carries the frame's real gbuffer data.
+    private static final boolean TRANS_CLEAR = !"0".equals(System.getenv("VOXY_VX_TRANS_CLEAR"));
+    private static final float[] TRANS_CLEAR_ZERO = new float[4];
+
     private static int ct5AltTexture(net.irisshaders.iris.pipeline.IrisRenderingPipeline ipipe) {
         if (!SSR_ALT) return 0;
         try {
@@ -565,6 +577,9 @@ public final class MetalVxResolvePass {
             Logger.info("[Metal-LODTEST] vx SSR mirror rebind " + (SSR_ALT && p.gaux2Unit >= 0 ? "ON" : "OFF")
                     + " (gaux2 unit=" + p.gaux2Unit + " -> colortex5 ALT, deferred1's last-frame reflection"
                     + " output); VOXY_VX_SSR_ALT=0 reverts to the MAIN-side binding");
+            Logger.info("[Metal-LODTEST] vx colortex16 per-frame clear " + (TRANS_CLEAR ? "ON" : "OFF")
+                    + " (Iris never clears the voxy channel -> blended alpha accumulated to 1.0 = opaque water);"
+                    + " VOXY_VX_TRANS_CLEAR=0 reverts");
         }
         if (data.getUniforms() != null) {
             p.uboSize = data.getUniforms().size();
@@ -836,6 +851,11 @@ public final class MetalVxResolvePass {
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
         glDisable(GL_SCISSOR_TEST);
+        if (blend && TRANS_CLEAR) {
+            // See TRANS_CLEAR: Iris does not clear colortex16; without this the
+            // blended alpha accumulates to 1.0 -> opaque LOD water.
+            glClearBufferfv(GL_COLOR, 0, TRANS_CLEAR_ZERO);
+        }
         glUseProgram(p.prog);
         glBindVertexArray(resolveVao);
         glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_RECTANGLE, plane0);
