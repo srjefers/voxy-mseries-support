@@ -16,9 +16,11 @@ import java.util.function.BooleanSupplier;
  * pipelines) which a GL-side resolve ({@code MetalVxResolvePass}, increment 5)
  * shades with the pack's real {@code voxy_opaque}/{@code voxy_translucent}.
  *
- * Selected by {@link RenderPipelineFactory} only when Metal + Iris + a voxy.json
- * pack + the {@code VOXY_VX_MATERIAL=1} kill switch are all active; otherwise the
- * default {@link NormalRenderPipeline} (flat Phase D-lite water) runs unchanged.
+ * Selected by {@link RenderPipelineFactory} when Metal + Iris + a voxy.json
+ * pack are all active (default ON since 2026-07-03 — the flat passthrough left
+ * LOD water vanilla-blue under packs); {@code VOXY_VX_MATERIAL=0} is the kill
+ * switch that falls back to {@link NormalRenderPipeline} (flat Phase D-lite
+ * water) unchanged.
  *
  * Extends NormalRenderPipeline so it inherits the Metal render path
  * ({@code runPipelineMetal}) and the pack-aware {@code useEnvFog()=false}; it only

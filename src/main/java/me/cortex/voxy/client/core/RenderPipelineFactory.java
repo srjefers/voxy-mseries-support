@@ -26,13 +26,16 @@ public class RenderPipelineFactory {
         if (glBackend && IrisUtil.IRIS_INSTALLED && IrisUtil.SHADER_SUPPORT) {
             pipeline = createIrisPipeline(nodeManager, nodeCleaner, traversal, frexSupplier);
         } else if (!glBackend && IrisUtil.IRIS_INSTALLED
-                && "1".equals(System.getenv("VOXY_VX_MATERIAL"))
+                && !"0".equals(System.getenv("VOXY_VX_MATERIAL"))
                 && IrisUtil.vxContractActive()) {
             // Phase C (issue #11): Metal native vx contract — the LOD pass renders
             // a material g-buffer the pack's voxy_opaque/voxy_translucent shades
-            // GL-side. Default OFF (only VOXY_VX_MATERIAL=1); falls through to
-            // NormalRenderPipeline (flat Phase D-lite water) when unset or if the
-            // pack contract data isn't available.
+            // GL-side. Default ON when the pack ships the contract (2026-07-03):
+            // without it the translucent inject is a flat passthrough, so the
+            // pack's voxy_translucent never runs and LOD water stays vanilla
+            // blue next to the pack-shaded near water. VOXY_VX_MATERIAL=0 is the
+            // kill switch; falls through to NormalRenderPipeline (flat Phase
+            // D-lite water) when disabled or if the contract data isn't available.
             pipeline = createMetalVxPipeline(nodeManager, nodeCleaner, traversal, frexSupplier);
             if (pipeline == null) {
                 Logger.warn("VOXY_VX_MATERIAL=1 but the Metal vx material pipeline could not be created; "
