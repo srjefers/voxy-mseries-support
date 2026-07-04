@@ -345,6 +345,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
     private me.cortex.voxy.client.core.rendering.util.DepthMirror metalDepthMirror;
     /** Animation counter for the placeholder Metal render — replaced by real Voxy output incrementally. */
     private int metalFrame;
+    private long fpsWindowStartNs;
     /** VOXY_UNDERWATER_LOD=1 forces LOD draws even when submerged-fog saturates the far field. */
     private static final boolean UNDERWATER_LOD_FORCE = "1".equals(System.getenv("VOXY_UNDERWATER_LOD"));
     /**
@@ -695,9 +696,16 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             }
             int topNodeCount = this.traversal.getTopNodeCount();
             int firstDispatchSize = (topNodeCount + 127) >> 7;
+            // fps over the 600-frame window between these logs — the perf A/B
+            // matrix reads it straight from the log (paused-time windows show
+            // up as implausibly low fps and are skipped by the reader).
+            long nowNs = System.nanoTime();
+            double windowFps = this.fpsWindowStartNs != 0
+                    ? 600.0 / ((nowNs - this.fpsWindowStartNs) / 1e9) : -1;
+            this.fpsWindowStartNs = nowNs;
             Logger.info(String.format(
-                    "[Metal-LayerB f=%d] topNodeCount=%d firstDispatchSize=%d renderList.sectionCount=%d cmdGenDispatch=(%d,%d,%d) draws opaque=%d translucent=%d temporal=%d",
-                    this.metalFrame, topNodeCount, firstDispatchSize,
+                    "[Metal-LayerB f=%d] fps=%.1f topNodeCount=%d firstDispatchSize=%d renderList.sectionCount=%d cmdGenDispatch=(%d,%d,%d) draws opaque=%d translucent=%d temporal=%d",
+                    this.metalFrame, windowFps, topNodeCount, firstDispatchSize,
                     renderListSectionCount,
                     cmdGenDispatchX, cmdGenDispatchY, cmdGenDispatchZ,
                     opaqueDrawCount, translucentDrawCount, temporalOpaqueDrawCount));
