@@ -70,6 +70,79 @@ public class VoxyRenderSystem {
     /** Diagnostic frame counter for the Metal LOD-ring log in {@link #renderOpaque}. */
     private int metalRingDiagFrame;
 
+    // Bakery warmup burst (2026-07-03, Metal branch only). Root cause of the
+    // "gigantic untextured LOD blocks for minutes after world join": mesh
+    // builds throw IdNotYetComputedException for any unbaked block (the
+    // 2026-05-25 log showed >1M throws vs 54k sections), the mesh queue
+    // saturates past HierarchicalOcclusionTraverser's 4000-task request
+    // throttle, and the bakery drains the whole backlog at ~5 bakes/tick
+    // under the steady-state 0.9 ms budget. While the bake backlog is large
+    // the frame is startup-degraded anyway, so spend real frame time
+    // draining it: full burst above BAKE_BURST_HIGH pending bakes, half
+    // burst above BAKE_BURST_LOW, steady 0.9 ms once warm.
+    // VOXY_BAKE_WARMUP_MS tunes the burst budget in ms (default 8;
+    // 0 disables the burst entirely — the pre-2026-07 behaviour).
+    private static final long BAKE_BUDGET_STEADY_NS = 900_000L;
+    private static final long BAKE_WARMUP_NS = parseBakeWarmupNs();
+    // 2026-07-03 tier retune from the first BSL session: backlog peaked at 68
+    // (full tier at 256 never engaged) and then hovered at 29-31 — just under
+    // the old LOW=32 release — leaving a ~30-bake tail draining at 0.9 ms for
+    // the whole session. Full burst from 128, and hold the burst until the
+    // backlog is basically empty (8).
+    private static final int BAKE_BURST_HIGH = 128;
+    private static final int BAKE_BURST_LOW = 8;
+    private boolean bakeWarmupActive;
+    private int bakeWarmupTransitions;
+
+    private static long parseBakeWarmupNs() {
+        String v = System.getenv("VOXY_BAKE_WARMUP_MS");
+        if (v == null || v.isBlank()) return 8_000_000L;
+        try {
+            return (long) (Float.parseFloat(v.trim()) * 1_000_000L);
+        } catch (NumberFormatException e) {
+            return 8_000_000L;
+        }
+    }
+
+    private long computeBakeBudgetNs() {
+        if (BAKE_WARMUP_NS <= 0) return BAKE_BUDGET_STEADY_NS;
+        int backlog = this.modelService.getProcessingCount();
+        long budget = BAKE_BUDGET_STEADY_NS;
+        if (backlog > BAKE_BURST_HIGH) {
+            budget = Math.max(BAKE_BUDGET_STEADY_NS, BAKE_WARMUP_NS);
+        } else if (backlog > BAKE_BURST_LOW) {
+            budget = Math.max(BAKE_BUDGET_STEADY_NS, BAKE_WARMUP_NS / 2);
+        }
+        boolean active = budget > BAKE_BUDGET_STEADY_NS;
+        if (active != this.bakeWarmupActive) {
+            this.bakeWarmupActive = active;
+            // The low release threshold makes engage/release flap frame-to-
+            // frame while bakes trickle in; log the first few transitions
+            // (the interesting ones at world join) then sample.
+            this.bakeWarmupTransitions++;
+            if (this.bakeWarmupTransitions <= 4 || (this.bakeWarmupTransitions % 200) == 0) {
+                me.cortex.voxy.common.Logger.info("[Metal-BAKE] warmup burst "
+                        + (active ? ("ENGAGED (backlog=" + backlog + ", budget=" + (budget / 1_000_000L) + "ms)")
+                                  : ("released (backlog=" + backlog + ", back to 0.9ms)"))
+                        + " [transition " + this.bakeWarmupTransitions + "]");
+            }
+        }
+        return budget;
+    }
+
+    /**
+     * Iris pack-inject state the renderer (and its pipeline) was constructed
+     * with. NormalRenderPipeline bakes {@code useEnvFog} from this at
+     * construction (it's a compile-time shader define), so a pack
+     * enable/disable at runtime needs a full renderer recreation — the same
+     * shutdownRenderer()/createRenderer() path Sodium's
+     * REQUIRES_RENDERER_RELOAD config flag (e.g. the env-fog toggle) drives.
+     * {@link #renderOpaque} watches for the flip on Metal.
+     */
+    private final boolean constructedIrisGbufferInject;
+    /** One-shot guard so the reload is scheduled exactly once per flip. */
+    private boolean irisReloadScheduled;
+
     /** Accessor exposed for the Metal compositing mixin so it can read the IOSurface bridge. */
     public AbstractRenderPipeline getPipeline() {
         return this.pipeline;
@@ -88,6 +161,27 @@ public class VoxyRenderSystem {
 
         if (Minecraft.getInstance().options.getEffectiveRenderDistance()<3) {
             Logger.warn("Having a vanilla render distance of 2 can cause rare culling near the edge of your screen issues, please use 3 or more");
+        }
+
+        this.constructedIrisGbufferInject = IrisUtil.irisGbufferInjectMode();
+
+        // 2026-07-03 (Metal): migrate sub_division_size drift. The FPS-based
+        // autoBalanceSubDivSize loop (call site commented out below in
+        // renderOpaque) used to RAISE this value up to 256 whenever FPS<55
+        // and persist it via VoxyConfig.save() — but nothing ever lowers it
+        // again. A drifted value (user config had 229.18) makes LOD leaves
+        // stop subdividing at a huge screen footprint: 16-block voxels at
+        // only ~2000 blocks = the "gigantic shapeless distant blocks"
+        // report. Values above 128 can only come from that disabled loop
+        // (the config UI stays well below it), so reset them to the
+        // default 64. Metal-only guard keeps GL behaviour untouched.
+        if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                != me.cortex.voxy.client.core.gpu.BackendType.OPENGL
+                && VoxyConfig.CONFIG.subDivisionSize > 128f) {
+            Logger.warn("[Metal] sub_division_size drifted to " + VoxyConfig.CONFIG.subDivisionSize
+                    + " (residue of the disabled FPS auto-balancer) — resetting to 64 for full LOD detail");
+            VoxyConfig.CONFIG.subDivisionSize = 64f;
+            VoxyConfig.CONFIG.save();
         }
 
         //Fking HATE EVERYTHING AAAAAAAAAAAAAAAA
@@ -194,6 +288,8 @@ public class VoxyRenderSystem {
     private long lastFogSmoothNs;
     private boolean fogClassWater;
     private int fogClassStreak;
+    private long fogClassStreakStartNs;
+    private static boolean loggedViewportLeak;
 
     /**
      * Submersion-type fog records (water/lava/powder-snow/blindness) carry a
@@ -215,28 +311,48 @@ public class VoxyRenderSystem {
             this.fogClassStreak = 0;
             return target;
         }
-        // DEBOUNCED SNAP on fog-class change. MC's eye-in-fluid verdict is
-        // binary per frame and can OSCILLATE while swimming (flowing-water
-        // blocks have fractional fluid heights; the swim animation bobs the
-        // eye), and Voxy paints the whole far field from this one record. A
-        // hard per-flip snap (first attempt) made the far field strobe with
-        // the oscillation ("terrain turns transparent every millisecond");
-        // pure smoothing (earlier attempt) diluted underwater fog to the
-        // air/water average and revealed flooded caverns vanilla hides. So:
-        // adopt a class change only after ~4 consecutive frames agree (clean
-        // dives snap within ~40 ms), and while the verdict oscillates HOLD
-        // the last stable record — the far field stays rock-steady.
+        // ASYMMETRIC DEBOUNCED SNAP on fog-class change. MC's eye-in-fluid
+        // verdict is binary per frame and OSCILLATES while swimming at the
+        // surface (flowing-water fractional fluid heights + swim bob), with
+        // run lengths of 100-300 ms — long enough to defeat a symmetric
+        // 4-frame filter (each bob produced two full-screen snaps). The
+        // failure modes are asymmetric, so the filter is too:
+        //  - AIR→WATER (densify) adopts after 2 agreeing frames — murk hides
+        //    everything, divers get instant response, and a spurious densify
+        //    is visually harmless.
+        //  - WATER→AIR (thin/REVEAL) adopts only after 400 ms of consecutive
+        //    air verdicts — bobbing never thins the fog, so the far field
+        //    stays murky and stable through any splash pattern; a real
+        //    surfacing pays 0.4 s of lingering haze.
+        // While a flip is pending, hold the DISTANCE fields stable and keep
+        // lerping the colour toward the target (no colour strobe either).
         boolean targetClass = isSubmersionClassFog(target);
         if (targetClass != this.fogClassWater) {
+            if (this.fogClassStreak == 0) {
+                this.fogClassStreakStartNs = now;
+            }
             this.fogClassStreak++;
-            if (this.fogClassStreak >= 4) {
+            boolean adopt = targetClass
+                    ? this.fogClassStreak >= 2
+                    : (now - this.fogClassStreakStartNs) >= 400_000_000L;
+            if (adopt) {
                 this.fogClassWater = targetClass;
                 this.fogClassStreak = 0;
                 this.smoothedFog = target;
                 this.lastFogSmoothNs = now;
                 return target;
             }
+            float dtHold = (now - this.lastFogSmoothNs) / 1.0e9f;
             this.lastFogSmoothNs = now;
+            float kHold = 1.0f - (float) Math.exp(-dtHold / (FOG_SMOOTH_MS / 1000.0f));
+            FogParameters h = this.smoothedFog;
+            this.smoothedFog = new FogParameters(
+                    h.red()   + (target.red()   - h.red())   * kHold,
+                    h.green() + (target.green() - h.green()) * kHold,
+                    h.blue()  + (target.blue()  - h.blue())  * kHold,
+                    h.alpha() + (target.alpha() - h.alpha()) * kHold,
+                    h.environmentalStart(), h.environmentalEnd(),
+                    h.renderStart(), h.renderEnd());
             return this.smoothedFog;
         }
         this.fogClassStreak = 0;
@@ -286,6 +402,30 @@ public class VoxyRenderSystem {
 
         int width = dims[2];
         int height = dims[3];
+        if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+            // GL_VIEWPORT is NOT trustworthy here: MC re-renders the 16x16
+            // lightmap every game tick and blaze3d's createRenderPass sets the
+            // GL viewport eagerly without restoring; above water the fullscreen
+            // sky pass resets it before Sodium's terrain hook, but UNDERWATER
+            // Sodium skips the sky pass — so GL_VIEWPORT reads 16x16 on every
+            // tick frame (~20 Hz). That inflated minSSS 6400x (the octree walk
+            // stopped at the top level: renderList collapsed to ~16) and
+            // reallocated the IOSurface bridge to 16x16 (broken blit) — the
+            // underwater strobe. MC's main RT is the authoritative frame size
+            // (same source the compositor uses).
+            var rt = Minecraft.getInstance().getMainRenderTarget();
+            if (rt != null && rt.width > 0 && rt.height > 0) {
+                if ((width != rt.width || height != rt.height) && !loggedViewportLeak) {
+                    loggedViewportLeak = true;
+                    Logger.warn("[Metal-VIEWPORT] GL_VIEWPORT " + width + "x" + height
+                            + " != mainRT " + rt.width + "x" + rt.height
+                            + " (leaked pass viewport; using mainRT size)");
+                }
+                width = rt.width;
+                height = rt.height;
+            }
+        }
 
         {//Apply render scaling factor
             var factor = this.pipeline.getRenderScalingFactor();
@@ -318,11 +458,45 @@ public class VoxyRenderSystem {
 
         if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
                 != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
-            // Metal path — skip all the GL state save/restore and the
-            // chunkBoundRenderer overlay (which is raw GL). Just drive
-            // the pipeline's Metal stub which clears the IOSurface bridge.
-            // The compositing mixin runs separately at renderLevel RETURN.
+            // Iris pack toggled since construction? The pipeline's env-fog
+            // define (and the inject mode it pairs with) is baked at
+            // construction, so recreate the renderer through the same
+            // shutdown/create path the config screen's renderer-reload flag
+            // uses. Deferred via execute(): the task runs on the render
+            // thread BETWEEN frames — tearing this renderer down from inside
+            // its own renderOpaque would free GPU objects mid-render.
+            if (!this.irisReloadScheduled
+                    && IrisUtil.irisGbufferInjectMode() != this.constructedIrisGbufferInject) {
+                this.irisReloadScheduled = true;
+                Logger.info("Iris pack state changed (gbufferInject "
+                        + this.constructedIrisGbufferInject + " -> "
+                        + IrisUtil.irisGbufferInjectMode()
+                        + ") — scheduling Voxy renderer reload to rebake fog/inject mode");
+                Minecraft.getInstance().execute(() -> {
+                    if (Minecraft.getInstance().levelRenderer instanceof IGetVoxyRenderSystem holder
+                            && holder.getVoxyRenderSystem() == this) {
+                        holder.shutdownRenderer();
+                        holder.createRenderer();
+                    }
+                });
+            }
+            // Metal path — skip all the GL state save/restore. Drive the
+            // chunk-bound depth mask + the pipeline's Metal render. The
+            // compositing mixin runs separately at renderLevel RETURN.
             this.pipeline.preSetup(viewport);
+            // M13 chunk 3 — mirror the GL chunk-bound gate below (~:430):
+            // rasterize the loaded-chunk AABB depth mask into
+            // viewport.depthBoundingBuffer so quads.frag's depth-bound test
+            // discards LOD fragments inside MC's loaded-chunk volume (the
+            // LOD↔terrain ring fix + second line of defense for underwater
+            // X-ray). Must run BEFORE runPipeline so the LOD pass samples
+            // this frame's mask.
+            if ((!VoxyClient.disableSodiumChunkRender()) && !IrisUtil.irisShadowActive()) {
+                this.chunkBoundRenderer.renderMetal(viewport,
+                        me.cortex.voxy.client.core.gpu.RenderBackendFactory.get());
+            } else {
+                this.chunkBoundRenderer.clearMetal(viewport);
+            }
             this.pipeline.runPipeline(viewport, 0, viewport.width, viewport.height);
 
             // M13 chunk 2 follow-up: drive the per-frame dynamic-runtime
@@ -350,7 +524,9 @@ public class VoxyRenderSystem {
                 processedThisFrame = this.renderDistanceTracker.setCenterAndProcess(
                         viewport.cameraX, viewport.cameraZ);
             }
-            do { this.modelService.tick(900_000); } while (VoxyClient.isFrexActive() && !this.modelService.areQueuesEmpty());
+            // 2026-07-03: adaptive budget — burst through the startup bake
+            // backlog instead of the flat 0.9 ms (see computeBakeBudgetNs).
+            do { this.modelService.tick(this.computeBakeBudgetNs()); } while (VoxyClient.isFrexActive() && !this.modelService.areQueuesEmpty());
             // Diagnostic: log every ~10s (600 frames) whether the LOD ring is
             // still adding/removing cells. After the ring converges this
             // should mostly read `processedThisFrame=false` until the player

@@ -98,6 +98,12 @@ public class VoxyClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        // Iris-pack + Metal coexistence now happens at the SOLID-pass head:
+        // IrisGbufferInjector draws the LOD bridge into the pack's terrain
+        // gbuffer (MixinDefaultChunkRenderer). The former HUD-time late
+        // composite that lived here is gone — it ran after Iris finalized but
+        // painted over the pack's post chain and skipped entirely with the
+        // HUD hidden (F1).
         DebugScreenEntries.register(Identifier.fromNamespaceAndPath("voxy", "version"), new DebugScreenEntry() {
             @Override
             public void display(DebugScreenDisplayer lines, @Nullable Level level, @Nullable LevelChunk levelChunk, @Nullable LevelChunk levelChunk2) {
@@ -125,6 +131,32 @@ public class VoxyClient implements ClientModInitializer {
                 dispatcher.register(VoxyCommands.register());
             }
         });
+
+        // VOXY_AUTO_SCREENSHOT=<seconds>: periodically save an in-game
+        // screenshot via MC's own Screenshot API (lands in run/screenshots).
+        // Debug-loop aid — headless verification can capture frames without
+        // desktop screencapture (which fails when other windows are
+        // frontmost on the test machine).
+        String autoShot = System.getenv("VOXY_AUTO_SCREENSHOT");
+        if (autoShot != null && !autoShot.isBlank()) {
+            int parsedInterval;
+            try {
+                parsedInterval = Math.max(2, Integer.parseInt(autoShot.trim()));
+            } catch (NumberFormatException e) {
+                parsedInterval = 10;
+            }
+            final long intervalNanos = parsedInterval * 1_000_000_000L;
+            final long[] last = {System.nanoTime()};
+            net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(client -> {
+                if (client.level == null || client.getMainRenderTarget() == null) return;
+                long now = System.nanoTime();
+                if (now - last[0] < intervalNanos) return;
+                last[0] = now;
+                net.minecraft.client.Screenshot.grab(client.gameDirectory,
+                        client.getMainRenderTarget(), component -> {});
+            });
+            Logger.info("VOXY_AUTO_SCREENSHOT active: every " + parsedInterval + "s");
+        }
 
         FabricLoader.getInstance()
                 .getEntrypoints("frex_flawless_frames", Consumer.class)

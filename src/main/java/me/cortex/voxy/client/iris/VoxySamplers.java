@@ -23,7 +23,12 @@ public class VoxySamplers {
                     return 0;
                 }
                 if (pipeData.thePipeline == null) {
-                    return 0;
+                    // Metal vx contract (issue #9): no GL host pipeline —
+                    // the side channel decodes the Metal depth bridge into
+                    // the D32F texture served here. Dynamic samplers deref
+                    // per bind, so this goes live the frame it's created.
+                    var sc = me.cortex.voxy.client.core.util.VxIrisSideChannel.get();
+                    return sc != null ? sc.opaqueDepthTexId() : 0;
                 }
 
                 //In theory the first frame could be null
@@ -40,7 +45,8 @@ public class VoxySamplers {
                     return 0;
                 }
                 if (pipeData.thePipeline == null) {
-                    return 0;
+                    var sc = me.cortex.voxy.client.core.util.VxIrisSideChannel.get();
+                    return sc != null ? sc.transDepthTexId() : 0;
                 }
                 //In theory the first frame could be null
                 var dt = pipeData.thePipeline.fbTranslucent.getDepthTex();

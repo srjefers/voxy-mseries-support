@@ -6,6 +6,7 @@ import me.cortex.voxy.client.core.IGetVoxyRenderSystem;
 import me.cortex.voxy.client.core.gpu.BackendType;
 import me.cortex.voxy.client.core.gpu.RenderBackendFactory;
 import me.cortex.voxy.client.core.rendering.Viewport;
+import me.cortex.voxy.client.core.util.IrisGbufferInjector;
 import me.cortex.voxy.client.core.util.IrisUtil;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.commonImpl.VoxyCommon;
@@ -84,20 +85,95 @@ public abstract class MixinDefaultChunkRenderer extends ShaderChunkRenderer {
         if (renderPass == DefaultTerrainRenderPasses.SOLID) {
             var renderer = ((IGetVoxyRenderSystem) Minecraft.getInstance().levelRenderer).getVoxyRenderSystem();
             if (renderer != null) {
+                boolean metal = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                        != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+                boolean gbufferInject = metal && IrisUtil.irisGbufferInjectMode();
+                // render(SOLID) RE-ENTERS during Iris's shadow-map pass. In
+                // gbuffer-inject mode skip BOTH the Voxy render and the
+                // inject outright: the Metal pipeline must run exactly once
+                // per frame, and nothing may draw into the shadow FB. (The
+                // GL-path equivalent guard is getViewport() returning null
+                // while irisShadowActive.)
+                if (gbufferInject && IrisUtil.shadowsBeingRendered()) {
+                    return;
+                }
                 Viewport<?> viewport = null;
-                if (IrisUtil.irisShaderPackEnabled()) {
+                // The stale-viewport reuse is for the GL Iris pipeline only
+                // (Iris captures matrices through its own hooks there). On
+                // Metal the NormalRenderPipeline runs regardless of packs, so
+                // the full per-frame setupViewport must always happen.
+                if (IrisUtil.irisShaderPackEnabled() && !metal) {
                     viewport = renderer.getViewport();
                 } else {
                     viewport = renderer.setupViewport(matrices, fogParameters, camera.x, camera.y, camera.z);
                 }
                 renderer.renderOpaque(viewport);
 
-                // Composite the Metal IOSurface into MC's main RT now; the
-                // compositor alpha-blends only pixels Voxy actually drew.
                 var pipeline = renderer.getPipeline();
                 if (pipeline != null && pipeline.metalBridge() != null) {
-                    me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor
-                            .composite(pipeline.metalBridge());
+                    if (pipeline.vxOpaqueMaterialMode()
+                            && pipeline instanceof me.cortex.voxy.client.core.MetalVxRenderPipeline mvp
+                            && pipeline.metalVxOpaque0() != null
+                            && pipeline.metalDepthBridge() != null) {
+                        // FULL material path (A/B only, VOXY_VX_MATERIAL_OPAQUE=1): run the
+                        // pack's voxy_opaque AND voxy_translucent over the material g-buffer.
+                        // Darkens far opaque (BSL deferred shading of grazing LOD) — not the
+                        // mergeable shape; kept for comparison.
+                        var irisPipe = net.irisshaders.iris.Iris.getPipelineManager().getPipelineNullable();
+                        if (irisPipe instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline irp) {
+                            int oP0 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxOpaque0());
+                            int oP1 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxOpaque1());
+                            int oP2 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxOpaque2());
+                            int oD  = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalDepthBridge());
+                            int tP0 = pipeline.metalVxTrans0() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans0()) : 0;
+                            int tP1 = pipeline.metalVxTrans1() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans1()) : 0;
+                            int tP2 = pipeline.metalVxTrans2() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans2()) : 0;
+                            int tD  = pipeline.metalDepthTransBridge() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalDepthTransBridge()) : 0;
+                            me.cortex.voxy.client.core.util.MetalVxResolvePass.resolve(
+                                    mvp.getPipelineData(), irp,
+                                    oP0, oP1, oP2, oD, tP0, tP1, tP2, tD,
+                                    viewport.width, viewport.height);
+                        }
+                    } else if (pipeline.vxMaterialMode()
+                            && pipeline instanceof me.cortex.voxy.client.core.MetalVxRenderPipeline mvp2
+                            && pipeline.metalVxTrans0() != null
+                            && pipeline.metalDepthTransBridge() != null) {
+                        // TRANS-ONLY (issue #11, the mergeable shape): opaque LODs go through
+                        // the proven Phase-B inject (bridge colour + vxDepthTexOpaque, untouched
+                        // vs dev); ONLY the translucent (water) layer runs voxy_translucent over
+                        // its material g-buffer → colortex16, so water gets real BSL shading.
+                        me.cortex.voxy.client.core.util.VxContractInjector.inject(viewport,
+                                pipeline.metalBridge(), pipeline.metalDepthBridge(), null, null);
+                        var irisPipe = net.irisshaders.iris.Iris.getPipelineManager().getPipelineNullable();
+                        if (irisPipe instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline irp) {
+                            int tP0 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans0());
+                            int tP1 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans1());
+                            int tP2 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans2());
+                            int tD  = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalDepthTransBridge());
+                            me.cortex.voxy.client.core.util.MetalVxResolvePass.resolveTranslucentOnly(
+                                    mvp2.getPipelineData(), irp, tP0, tP1, tP2, tD,
+                                    viewport.width, viewport.height);
+                        }
+                    } else if (IrisUtil.vxContractActive()) {
+                        // Native vx contract (milestone issue #9): hand the
+                        // LOD depth to the pack's vxDepthTexOpaque/Trans
+                        // side-channel and the pre-lit colour to the pack's
+                        // voxy.json draw targets — the pack's own #ifdef
+                        // VOXY branches do fog/shadows/AO/clouds. LOD depth
+                        // never enters depthtex0 (excludeLodsFromVanillaDepth)
+                        // so terrain stomping is impossible by construction.
+                        me.cortex.voxy.client.core.util.VxContractInjector.inject(viewport,
+                                pipeline.metalBridge(), pipeline.metalDepthBridge(),
+                                pipeline.metalTransBridge(), pipeline.metalDepthTransBridge());
+                    } else if (gbufferInject) {
+                        // Fallback for packs WITHOUT voxy.json: single-phase
+                        // inject at SOLID-head, pre-deferred (round 23).
+                        IrisGbufferInjector.inject(viewport,
+                                pipeline.metalBridge(), pipeline.metalDepthBridge());
+                    } else {
+                        me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor
+                                .composite(pipeline.metalBridge());
+                    }
                 }
             }
         }

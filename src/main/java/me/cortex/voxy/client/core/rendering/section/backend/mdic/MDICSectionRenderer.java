@@ -17,6 +17,7 @@ import me.cortex.voxy.client.core.rendering.section.backend.AbstractSectionRende
 import me.cortex.voxy.client.core.rendering.section.geometry.BasicSectionGeometryData;
 import me.cortex.voxy.client.core.rendering.util.DownloadStream;
 import me.cortex.voxy.client.core.rendering.util.LightMapHelper;
+import me.cortex.voxy.client.core.rendering.util.MetalMvpUtil;
 import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
 import me.cortex.voxy.client.core.rendering.util.UploadStream;
 import me.cortex.voxy.common.Logger;
@@ -70,6 +71,13 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
     private final me.cortex.voxy.client.core.gpu.IGpuPipeline translucentTerrainPipeline;
     private final int terrainProgram;
     private final int translucentTerrainProgram;
+    /**
+     * NEAREST/CLAMP sampler for the chunk-bound depth mask at texture
+     * binding 2 (quads.frag's {@code depthTex}; pattern: HiZBuffer's blit
+     * sampler). Metal-only — the GL path binds the raw texture unit in
+     * {@link #bindRenderingBuffers}; null on OpenGL.
+     */
+    private final me.cortex.voxy.client.core.gpu.IGpuSampler boundDepthSampler;
 
     // M9 migration: MDIC's 5 non-Iris-patched shaders (4 compute + 1 graphics)
     // now flow through RenderBackend.create*Pipeline so they compile cleanly on
@@ -205,6 +213,49 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
 
     private final IGpuBuffer uniform = RenderBackendFactory.get().createBuffer(1024).zero();//TODO move to viewport?
 
+    // Far-water alpha ramp (2026-07-03, Metal translucent shader only —
+    // see the VOXY_WATER_FAR_ALPHA injection + quads.frag). Target alpha at
+    // the far end of the ramp; 0 disables. Ramp distances default to a
+    // render-distance-relative window (uploadUniformBuffer) unless the
+    // START/END envs pin them in blocks.
+    private static final float WATER_FAR_ALPHA = parseEnvFloat("VOXY_WATER_FAR_ALPHA", 0.95f);
+    private static final float WATER_FAR_ALPHA_START = parseEnvFloat("VOXY_WATER_FAR_ALPHA_START", 0.0f);
+    private static final float WATER_FAR_ALPHA_END = parseEnvFloat("VOXY_WATER_FAR_ALPHA_END", 0.0f);
+
+    // Near-cull metric (2026-07-03 round 3). XZ mode compares the horizontal
+    // Chebyshev distance max(|dx|,|dz|) against the threshold — the metric MC
+    // renders chunks in — instead of the 3D slant distance, which from a high
+    // camera / toward the square's diagonals let LOD water survive INSIDE the
+    // MC ring and double-composite with BSL/Sodium water (the flickering pale
+    // squares). VOXY_TRANS_NEAR_CULL_XZ=0 restores the slant metric. The
+    // margin shrinks from 48 to 16 in XZ mode because Chebyshev matches the
+    // loaded-chunk square exactly (48 only papered over the slant mismatch);
+    // VOXY_TRANS_NEAR_CULL_MARGIN overrides in blocks.
+    private static final boolean TRANS_NEAR_CULL_XZ =
+            !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_XZ"));
+    // 2026-07-03 round 5: Sodium renders sections in a Euclidean XZ CYLINDER
+    // (OcclusionCuller fx*fx+fz*fz <= r*r), so the Chebyshev SQUARE cull left
+    // a ring toward the render square's diagonals (Euclid RD..RD*sqrt(2))
+    // with NEITHER MC water NOR LOD water — the naked kelp/seafloor band the
+    // colortex16 clear fix exposed. Radial matches Sodium's real coverage and
+    // turns the diagonal gap into the same ~margin-wide overlap ring the axes
+    // already have (handled by the chunk-bound mask).
+    // VOXY_TRANS_NEAR_CULL_RADIAL=0 falls back to the Chebyshev square.
+    private static final boolean TRANS_NEAR_CULL_RADIAL =
+            TRANS_NEAR_CULL_XZ && !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_RADIAL"));
+    private static final float TRANS_NEAR_CULL_MARGIN =
+            parseEnvFloat("VOXY_TRANS_NEAR_CULL_MARGIN", TRANS_NEAR_CULL_XZ ? 16f : 48f);
+
+    private static float parseEnvFloat(String name, float def) {
+        String v = System.getenv(name);
+        if (v == null || v.isBlank()) return def;
+        try {
+            return Float.parseFloat(v.trim());
+        } catch (NumberFormatException e) {
+            return def;
+        }
+    }
+
     //TODO: needs to be in the viewport, since it contains the compute indirect call/values
     private final IGpuBuffer distanceCountBuffer = RenderBackendFactory.get().createBuffer(1024*4+100_000*4).zero();//TODO move to viewport?
 
@@ -216,6 +267,20 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         super(modelStore, geometryData);
         this.pipeline = pipeline;
         //The pipeline can be used to transform the renderer in abstract ways
+
+        // M13 chunk 3: sampler for the bound-depth texture at binding 2 —
+        // quads.frag only texelFetches it, but the MSL signature still wants
+        // a sampler bound alongside the texture.
+        this.boundDepthSampler = this.backend.getType() != BackendType.OPENGL
+                ? this.backend.createSampler(me.cortex.voxy.client.core.gpu.SamplerDesc.builder()
+                        .filter(me.cortex.voxy.client.core.gpu.SamplerDesc.Filter.NEAREST,
+                                me.cortex.voxy.client.core.gpu.SamplerDesc.Filter.NEAREST)
+                        .mipFilter(me.cortex.voxy.client.core.gpu.SamplerDesc.MipFilter.NEAREST)
+                        .wrap(me.cortex.voxy.client.core.gpu.SamplerDesc.Wrap.CLAMP_TO_EDGE,
+                                me.cortex.voxy.client.core.gpu.SamplerDesc.Wrap.CLAMP_TO_EDGE)
+                        .label("MDIC.boundDepthSampler")
+                        .build())
+                : null;
 
         String vertex = ShaderLoader.parse("voxy:lod/gl46/quads3.vert");
         String taa = pipeline.taaFunction("taaShift");
@@ -265,12 +330,63 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             java.util.Map<String, String> opaqueDefines = new java.util.LinkedHashMap<>(commonDefines);
             java.util.Map<String, String> translucentDefines = new java.util.LinkedHashMap<>(commonDefines);
             translucentDefines.put("TRANSLUCENT", "");
-            // M13 chunk 3 isn't wired yet on Metal — `VOXY_NO_DEPTH_BOUND`
-            // gates out the per-fragment depth-bounding sample that requires
-            // MC's depth as a Metal-side texture.
+
+            // Phase C material g-buffer mode (Metal + Iris vx-contract). Compile
+            // quads.frag's PATCHED_SHADER path with the MRT emitter appended so it
+            // writes the 3 material planes (albedo/tint/misc) instead of a final
+            // colour; the pack's real voxy_opaque/voxy_translucent runs later GL-side
+            // in MetalVxResolvePass. quads.frag's water/flat early-outs are guarded by
+            // !defined(PATCHED_SHADER), so they are bypassed automatically here.
+            boolean vxMaterial = pipeline.vxMaterialMode();
+            // Opaque uses the material emitter (3 planes for the GL resolve) ONLY when
+            // opaque-material is explicitly opted in. Default trans-only: opaque keeps the
+            // proven base shader (single lit colour → bridge → normal composite, untouched
+            // on dev); only the TRANSLUCENT (water) layer goes through the material g-buffer
+            // + voxy_translucent resolve (issue #11). This is the mergeable shape.
+            boolean vxOpaqueMat = pipeline.vxOpaqueMaterialMode();
+            String emitter = me.cortex.voxy.client.core.util.MetalVxGbufferEmitter.SOURCE;
+            String vxOpaqueFrag = vxOpaqueMat ? frag + emitter : frag;
+            String vxTransFrag = vxMaterial ? frag + emitter : frag;
+            boolean gbufferDebug = "1".equals(System.getenv("VOXY_VX_GBUFFER_DEBUG"));
+            if (vxOpaqueMat) {
+                opaqueDefines.put("PATCHED_SHADER", "");
+                opaqueDefines.put("VOXY_VX_GBUFFER", "");
+                if (gbufferDebug) opaqueDefines.put("VOXY_VX_GBUFFER_DEBUG", "");
+            }
+            if (vxMaterial) {
+                translucentDefines.put("PATCHED_SHADER", "");
+                translucentDefines.put("VOXY_VX_GBUFFER", "");
+                if (gbufferDebug) translucentDefines.put("VOXY_VX_GBUFFER_DEBUG", "");
+            }
             if (this.backend.getType() != BackendType.OPENGL) {
-                opaqueDefines.put("VOXY_NO_DEPTH_BOUND", "");
-                translucentDefines.put("VOXY_NO_DEPTH_BOUND", "");
+                // M13 chunk 3: the chunk-bound depth mask now renders on Metal
+                // (ChunkBoundRenderer.renderMetal → viewport.depthBoundingBuffer,
+                // bound at texture slot 2 in renderTerrainMetal), so the
+                // per-fragment depth-bound test is ON by default.
+                // VOXY_NO_DEPTH_BOUND=1 is the kill switch restoring the old
+                // skip-the-sample behaviour; VOXY_BOUND_DEBUG=1 tints
+                // bound-discarded fragments red instead of discarding
+                // (mask-verification aid, opaque + translucent).
+                boolean noDepthBound = "1".equals(System.getenv("VOXY_NO_DEPTH_BOUND"));
+                boolean boundDebug = !noDepthBound && "1".equals(System.getenv("VOXY_BOUND_DEBUG"));
+                if (noDepthBound) {
+                    opaqueDefines.put("VOXY_NO_DEPTH_BOUND", "");
+                    translucentDefines.put("VOXY_NO_DEPTH_BOUND", "");
+                } else {
+                    // Round 20: the bound test reads the mask from a plain
+                    // buffer (binding 6), not from the depthTex sampler —
+                    // depth-format textures sampled via texture2d<float>
+                    // silently read zeros on Metal, which left the mask
+                    // INERT since M13 chunk 3 (exposed by the Iris gbuffer
+                    // inject writing real depth: LODs stomped pack terrain).
+                    // ChunkBoundRenderer.exportBoundMaskMetal feeds it.
+                    opaqueDefines.put("VOXY_METAL_BOUND_SSBO", "");
+                    translucentDefines.put("VOXY_METAL_BOUND_SSBO", "");
+                }
+                if (boundDebug) {
+                    opaqueDefines.put("VOXY_BOUND_DEBUG", "");
+                    translucentDefines.put("VOXY_BOUND_DEBUG", "");
+                }
                 opaqueDefines.put("VOXY_FORCE_OPAQUE_ALPHA", "");
 
                 // VOXY_LOD_FIXED_MIP — sample atlas at LOD 0 instead of the
@@ -296,13 +412,116 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                 if (lodFixedMip || lodNoDiscard) {
                     Logger.info("[Metal-LODTEST] fixedMip=" + lodFixedMip + " noDiscard=" + lodNoDiscard);
                 }
+                // VOXY_LOD_DIST_MIP — analytic distance-based atlas mip
+                //   (2026-07-03), DEFAULT ON, takes precedence over the
+                //   fixed-mip-0 diagnostic above (#ifdef order in quads.frag).
+                //   Fixed mip 0 means NO minification: every distant pixel
+                //   picks one arbitrary texel of its 16x16 face cell — the
+                //   spyglass moire on LOD water and the pixel shimmer on
+                //   distant terrain. Screen-space derivatives stay unusable
+                //   (1-2 px quads -> noisy dFdx, the original "paper" collapse),
+                //   so quads.frag computes the mip analytically from view
+                //   distance, quad lodScale and the per-frame projection scale
+                //   (voxyLodParams.x — tracks spyglass FOV). The mip chain has
+                //   been in the atlas all along (MipGen bakes + uploads levels
+                //   0..LAYERS-1 per cell; cell origins stay 2^lvl-aligned so
+                //   NEAREST never crosses cells).
+                //   VOXY_LOD_DIST_MIP=0 reverts to fixed mip 0.
+                //   VOXY_LOD_MIP_BIAS=<f> biases the level (+0.5 = blurrier).
+                String distMipEnv = System.getenv("VOXY_LOD_DIST_MIP");
+                boolean lodDistMip = distMipEnv == null || !"0".equals(distMipEnv.trim());
+                if (lodDistMip) {
+                    float mipBias = 0.0f;
+                    String mb = System.getenv("VOXY_LOD_MIP_BIAS");
+                    if (mb != null && !mb.isBlank()) {
+                        try {
+                            mipBias = Float.parseFloat(mb.trim());
+                        } catch (NumberFormatException e) {
+                            mipBias = 0.0f;
+                        }
+                    }
+                    String maxLod = String.format(java.util.Locale.ROOT, "%.1f",
+                            (float) (me.cortex.voxy.client.core.model.ModelFactory.LAYERS - 1));
+                    String biasStr = String.format(java.util.Locale.ROOT, "%.4f", mipBias);
+                    opaqueDefines.put("VOXY_LOD_DIST_MIP", "");
+                    opaqueDefines.put("VOXY_ATLAS_MAX_LOD", maxLod);
+                    opaqueDefines.put("VOXY_LOD_DIST_MIP_BIAS", biasStr);
+                    translucentDefines.put("VOXY_LOD_DIST_MIP", "");
+                    translucentDefines.put("VOXY_ATLAS_MAX_LOD", maxLod);
+                    translucentDefines.put("VOXY_LOD_DIST_MIP_BIAS", biasStr);
+                    Logger.info("[Metal-LODTEST] distance-based atlas mip ON (maxLod=" + maxLod
+                            + ", bias=" + biasStr + "); VOXY_LOD_DIST_MIP=0 reverts to fixed mip 0");
+                }
+                // VOXY_WATER_FAR_ALPHA — far-water opacity ramp (2026-07-03),
+                //   DEFAULT ON, translucent only. Constant vanilla alpha 0.706
+                //   out to the horizon lets seafloor/kelp ghost through LOD
+                //   water and the fog-coloured bridge clear bleed up through
+                //   it (the washed-out flat-blue sheet). Ramp start sits past
+                //   the LOD<->MC seam so ring parity (alpha 0.706 exactly at
+                //   neutral knobs) is untouched; params ride per frame in
+                //   voxyLodParams.yzw (see uploadUniformBuffer).
+                //   VOXY_WATER_FAR_ALPHA=0 kills it; =<f> sets the far target
+                //   (default 0.95). VOXY_WATER_FAR_ALPHA_START/_END override
+                //   the ramp distances in blocks.
+                if (WATER_FAR_ALPHA > 0.0f) {
+                    translucentDefines.put("VOXY_WATER_FAR_ALPHA", "");
+                    Logger.info("[Metal-LODTEST] far-water alpha ramp ON (target=" + WATER_FAR_ALPHA
+                            + "); VOXY_WATER_FAR_ALPHA=0 disables");
+                }
+                // VOXY_LOD_ABS_INDENT — lodScale-invariant face indentation
+                //   (2026-07-03), DEFAULT ON. quad_util scales the model-space
+                //   indent by lodScale, so a level-L water plane sat
+                //   0.109*2^L blocks below its cell top: parent planes floated
+                //   ~0.9 blocks above child planes → stacked translucent
+                //   blending (pale section-aligned veil squares), an exposed
+                //   gap band at LOD ring transitions, and wrong mid/far water
+                //   heights. VOXY_LOD_ABS_INDENT=0 restores upstream scaling.
+                String absIndentEnv = System.getenv("VOXY_LOD_ABS_INDENT");
+                boolean absIndent = absIndentEnv == null || !"0".equals(absIndentEnv.trim());
+                if (absIndent) {
+                    opaqueDefines.put("VOXY_LOD_ABS_INDENT", "");
+                    translucentDefines.put("VOXY_LOD_ABS_INDENT", "");
+                    Logger.info("[Metal-LODTEST] absolute face indent ON (water plane height "
+                            + "lodScale-invariant); VOXY_LOD_ABS_INDENT=0 reverts");
+                }
+                // VOXY_TRANS_NEAR_CULL — vx contract only (2026-07-03),
+                //   DEFAULT ON. BSL composites the injected LOD water AND
+                //   draws MC's own water inside render distance; LOD water
+                //   that survives the chunk-bound mask there (the depth
+                //   compare flips with camera pitch at grazing angles)
+                //   double-blends into pale veil squares on near/mid water.
+                //   Hard-cull translucent LOD fragments inside the MC ring;
+                //   the cull distance rides in voxyLodParams2.x per frame.
+                //   VOXY_TRANS_NEAR_CULL=0 disables.
+                String nearCullEnv = System.getenv("VOXY_TRANS_NEAR_CULL");
+                boolean transNearCull = (nearCullEnv == null || !"0".equals(nearCullEnv.trim()))
+                        && me.cortex.voxy.client.core.util.IrisUtil.vxContractActive();
+                if (transNearCull) {
+                    translucentDefines.put("VOXY_TRANS_NEAR_CULL", "");
+                    if (TRANS_NEAR_CULL_XZ) {
+                        translucentDefines.put("VOXY_TRANS_NEAR_CULL_XZ", "");
+                        if (TRANS_NEAR_CULL_RADIAL) {
+                            translucentDefines.put("VOXY_TRANS_NEAR_CULL_RADIAL", "");
+                        }
+                    }
+                    Logger.info("[Metal-LODTEST] translucent near-cull ON (vx contract: no LOD water "
+                            + "inside MC render distance; metric="
+                            + (TRANS_NEAR_CULL_RADIAL ? "xz-radial" : TRANS_NEAR_CULL_XZ ? "xz-chebyshev" : "3d-slant")
+                            + ", margin=" + TRANS_NEAR_CULL_MARGIN + "); VOXY_TRANS_NEAR_CULL=0 disables, "
+                            + "VOXY_TRANS_NEAR_CULL_RADIAL=0 restores the Chebyshev square, "
+                            + "VOXY_TRANS_NEAR_CULL_XZ=0 restores the slant metric");
+                }
                 // Seam-ring brightness parity: GL runs SSAO between opaque and
                 // translucent; that pass is parked on Metal, so LOD terrain sits
                 // ~10% brighter than AO-darkened Sodium terrain — the visible
                 // brightness step at the render-distance boundary. Interim
                 // compensation until the SSAO port: darken opaque LOD slightly.
                 // VOXY_LOD_BRIGHTNESS=<f> tunes it; 1.0 disables.
-                {
+                // vx contract mode: the pack's deferred applies ITS OWN AO
+                // to LOD pixels (BSL deferred.glsl reads vxDepthTexOpaque),
+                // so the interim darkening would double-darken — neutral.
+                boolean vxContract = me.cortex.voxy.client.core.util.IrisUtil.vxContractActive();
+                if (!vxContract) {
                     float brightness = 0.92f;
                     String b = System.getenv("VOXY_LOD_BRIGHTNESS");
                     if (b != null && !b.isBlank()) {
@@ -317,21 +536,23 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                         Logger.info("[Metal-LODTEST] LOD brightness compensation = " + brightness + " (SSAO parity interim)");
                     }
                 }
-                // Water-ring parity: darken LOD water and floor its opacity so
-                // the LOD<->MC water boundary reads as continuous deep water
-                // (MC water darkens with depth; LOD water blends a light
-                // texture over the bright fog-coloured clear). Tunables:
-                // VOXY_WATER_SHADE (default 0.90, 1.0 disables),
-                // VOXY_WATER_MIN_ALPHA (default 0.85, 0 disables).
+                // Water parity knobs — NEUTRAL by default since the chunk-bound
+                // depth mask landed. The 0.90/0.85 interim defaults were tuned
+                // for blending against the bright fog clear; with the bound the
+                // seam background is real LOD seafloor and any non-neutral
+                // value CREATES a tone step at the LOD<->MC water line (MC
+                // water is alpha 0.706 exactly; LOD matches term-for-term at
+                // neutral). Tunables kept for experiments:
+                // VOXY_WATER_SHADE (1.0 = off), VOXY_WATER_MIN_ALPHA (0 = off).
                 {
-                    float waterShade = 0.90f;
-                    float waterMinAlpha = 0.85f;
+                    float waterShade = 1.0f;
+                    float waterMinAlpha = 0.0f;
                     String ws = System.getenv("VOXY_WATER_SHADE");
                     if (ws != null && !ws.isBlank()) {
                         try {
                             waterShade = Float.parseFloat(ws.trim());
                         } catch (NumberFormatException e) {
-                            waterShade = 0.90f;
+                            waterShade = 1.0f;
                         }
                     }
                     String wa = System.getenv("VOXY_WATER_MIN_ALPHA");
@@ -339,7 +560,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                         try {
                             waterMinAlpha = Float.parseFloat(wa.trim());
                         } catch (NumberFormatException e) {
-                            waterMinAlpha = 0.85f;
+                            waterMinAlpha = 0.0f;
                         }
                     }
                     if (waterShade != 1.0f) {
@@ -397,7 +618,11 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                 // grep can't.
                 boolean bakeryOff = "1".equals(System.getenv("VOXY_BAKERY_OFF"));
                 boolean debugMissing = "1".equals(System.getenv("VOXY_BAKERY_DEBUG_MISSING"));
-                Logger.info("[Metal-DEFINES] terrain shader injections: VOXY_NO_DEPTH_BOUND + VOXY_FORCE_OPAQUE_ALPHA" +
+                Logger.info("[Metal-DEFINES] terrain shader injections: " +
+                        (noDepthBound
+                                ? "VOXY_NO_DEPTH_BOUND (depth-bound kill switch)"
+                                : "depth-bound ON" + (boundDebug ? " + VOXY_BOUND_DEBUG (red tint)" : "")) +
+                        " + VOXY_FORCE_OPAQUE_ALPHA" +
                         (bakeryOff
                                 ? " + VOXY_NO_ATLAS (bakery disabled hash-colour fallback)"
                                 : (debugMissing ? " + VOXY_DEBUG_MAGENTA_MISSING" : " + atlas bakery")) +
@@ -482,26 +707,55 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                 // regardless of depth — distinguishing "water missing" (coverage
                 // / meshing) from "water depth-rejected" (z-fight vs seafloor).
                 boolean waterDebugDepth = "1".equals(System.getenv("VOXY_LOD_WATER_DEBUG"));
+                // Phase D (issue #11): in vx-contract mode the translucent
+                // pass renders into its OWN depth attachment (seeded with
+                // opaque depth) and must WRITE depth — the water surface
+                // depth becomes vxDepthTexTrans, which the pack's deferred
+                // uses to composite LOD water as water.
+                var transDepthState = me.cortex.voxy.client.core.util.IrisUtil.vxContractActive()
+                        ? me.cortex.voxy.client.core.gpu.PipelineState.DepthState.DEFAULT
+                        : me.cortex.voxy.client.core.gpu.PipelineState.DepthState.TEST_NO_WRITE;
+                // Material mode: the 3 g-buffer planes carry DATA (straight-alpha
+                // albedo + nibble-packed light/face/id), not composited colour —
+                // the pack's blender does the real compositing at resolve time.
+                // Blending them is doubly wrong: MetalRenderBackend only wires
+                // blending onto attachment 0 (planes 1/2 were silently
+                // last-writer-wins anyway), and plane 0 would premultiplied-over-
+                // accumulate straight-alpha samples under any overlapping draws
+                // (RGB x1.294 / alpha 0.914 for water — "pale, more opaque").
+                // OPAQUE writes + depth LEQUAL+write make all 3 planes agree on
+                // nearest-fragment-wins. VOXY_VX_PLANE_BLEND=1 restores blending.
+                var transBlend = vxMaterial && !"1".equals(System.getenv("VOXY_VX_PLANE_BLEND"))
+                        ? me.cortex.voxy.client.core.gpu.PipelineState.BlendState.OPAQUE
+                        : me.cortex.voxy.client.core.gpu.PipelineState.BlendState.PREMULTIPLIED_ALPHA;
                 translucentState = new me.cortex.voxy.client.core.gpu.PipelineState(
                         waterDebugDepth
                                 ? me.cortex.voxy.client.core.gpu.PipelineState.DepthState.DISABLED
-                                : me.cortex.voxy.client.core.gpu.PipelineState.DepthState.TEST_NO_WRITE,
-                        me.cortex.voxy.client.core.gpu.PipelineState.BlendState.PREMULTIPLIED_ALPHA,
+                                : transDepthState,
+                        transBlend,
                         me.cortex.voxy.client.core.gpu.PipelineState.RasterState.NO_CULL);
             }
+            // Material mode renders 3 BGRA8 planes (P0 albedo, P1 tint, P2 misc);
+            // otherwise the single colour attachment as before.
+            // 3-plane material g-buffer only for the layer(s) that go through the resolve:
+            // opaque only when opted in, translucent under vxMaterial; else single bridge colour.
+            int[] threePlane = new int[]{GL_RGBA8, GL_RGBA8, GL_RGBA8};
+            int[] onePlane = new int[]{GL_RGBA8};
+            int[] opaqueFormats = vxOpaqueMat ? threePlane : onePlane;
+            int[] translucentFormats = vxMaterial ? threePlane : onePlane;
             this.terrainPipeline = this.backend.createGraphicsPipeline(
                     new me.cortex.voxy.client.core.gpu.GraphicsPipelineDesc(
-                            vertex, frag, opaqueDefines,
+                            vertex, vxOpaqueFrag, opaqueDefines,
                             null, null, null, null,
-                            GL_RGBA8,
+                            opaqueFormats,
                             me.cortex.voxy.client.core.gpu.VertexLayout.EMPTY,
                             opaqueState,
                             "MDIC.terrain"));
             this.translucentTerrainPipeline = this.backend.createGraphicsPipeline(
                     new me.cortex.voxy.client.core.gpu.GraphicsPipelineDesc(
-                            vertex, frag, translucentDefines,
+                            vertex, vxTransFrag, translucentDefines,
                             null, null, null, null,
-                            GL_RGBA8,
+                            translucentFormats,
                             me.cortex.voxy.client.core.gpu.VertexLayout.EMPTY,
                             translucentState,
                             "MDIC.translucentTerrain"));
@@ -525,44 +779,19 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         return m;
     }
 
-    /**
-     * Experiment (2026-05-26, {@code VOXY_LOD_METAL_NDC=1}): apply the standard
-     * GL→Metal clip-space depth remap (NDC z [-1,1] → [0,1]) to the render MVP
-     * on non-GL backends. The MVP quads3.vert consumes is built from a
-     * GL-convention projection ({@code setPerspective} without {@code zZeroToOne}
-     * in VoxyRenderSystem.makeProjectionMatrix), so on Metal — whose visible
-     * clip volume is z ∈ [0, w] — the near half of every LOD's depth range lands
-     * at NDC z &lt; 0 and is clipped by the rasterizer. That can drop near LOD
-     * geometry, including water surfaces (a candidate cause of the "no colour"
-     * water). The remap maps the whole GL clip range into Metal's [0,1] so
-     * nothing in the GL frustum is clipped, and depth ordering is preserved
-     * (the remap is monotonic). OFF by default because it shifts every depth
-     * value and needs visual confirmation — same class as the bakery m22 fix.
-     */
-    private static final boolean METAL_NDC_REMAP =
-            "1".equals(System.getenv("VOXY_LOD_METAL_NDC"));
-    private static boolean metalNdcLogged = false;
-
     private void uploadUniformBuffer(MDICViewport viewport) {
         long ptr = UploadStream.INSTANCE.upload(this.uniform, 0, 1024);
         long base = ptr;
 
         var mat = new Matrix4f(viewport.MVP);
         mat.translate(-viewport.innerTranslation.x, -viewport.innerTranslation.y, -viewport.innerTranslation.z);
-        if (METAL_NDC_REMAP && this.backend.getType() != BackendType.OPENGL) {
-            // metalMVP = Zremap · mat, where Zremap maps NDC z [-1,1] → [0,1].
-            // Column-major args (mColRow): m22 = 0.5, m32 = 0.5 give the row
-            // form  z' = 0.5·z + 0.5·w,  w' = w. X/Y are untouched so on-screen
-            // position is identical; only the clipped/written depth changes.
-            new Matrix4f(
-                    1, 0, 0,    0,
-                    0, 1, 0,    0,
-                    0, 0, 0.5f, 0,
-                    0, 0, 0.5f, 1).mul(mat, mat);
-            if (!metalNdcLogged) {
-                metalNdcLogged = true;
-                Logger.info("[Metal] VOXY_LOD_METAL_NDC active: render MVP remapped to [0,1] NDC-z");
-            }
+        // Experiment (2026-05-26, VOXY_LOD_METAL_NDC=1): GL→Metal NDC-z remap.
+        // Extracted to MetalMvpUtil so the chunk-bound depth-mask pass
+        // (ChunkBoundRenderer.renderMetal) shares the exact same depth
+        // convention — quads.frag compares its gl_FragCoord.z against the
+        // mask's depths, so the two MVPs must remap identically.
+        if (MetalMvpUtil.METAL_NDC_REMAP && this.backend.getType() != BackendType.OPENGL) {
+            MetalMvpUtil.applyNdcRemap(mat);
         }
         mat.getToAddress(ptr); ptr += 4*4*4;
 
@@ -610,6 +839,49 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             }
         } else {
             MemoryUtil.memSet(fogBase, 0, 32);
+        }
+
+        // voxyLodParams (2026-07-03): distance-mip projection scale + the
+        // far-water alpha ramp. Offset 128 = right after voxyFogColour in
+        // SceneUniform's std140 layout (the buffer is 1024 B, so no growth).
+        // Written on every backend — GL shaders declare the field but no GL
+        // code path reads it (VOXY_LOD_DIST_MIP / VOXY_WATER_FAR_ALPHA are
+        // Metal-only injections), so this is provably no-op on GL.
+        {
+            long lodBase = base + 128;
+            // World units per pixel per unit view distance, from THIS frame's
+            // projection: 2*tan(fovY/2)/viewportH == 2/(m11*viewportH). Tracks
+            // spyglass zoom + window resizes. NaN/degenerate projection (the
+            // known first-frames state, see HierarchicalOcclusionTraverser's
+            // NaN guard) uploads 0, which quads.frag treats as "mip 0".
+            float projK = 0.0f;
+            float m11 = viewport.projection.m11();
+            if (!Float.isNaN(m11) && m11 > 1e-6f && viewport.height > 0) {
+                projK = 2.0f / (m11 * viewport.height);
+            }
+            // Ramp window: start past the LOD<->MC seam (seam parity keeps MC's
+            // exact 0.706), reach the target alpha a few render distances out.
+            float rdBlocks = Math.max(Minecraft.getInstance().gameRenderer.getRenderDistance(), 32f);
+            float rampStart = WATER_FAR_ALPHA_START > 0f
+                    ? WATER_FAR_ALPHA_START
+                    : Math.max(rdBlocks * 1.5f, 384f);
+            float rampEnd = WATER_FAR_ALPHA_END > rampStart
+                    ? WATER_FAR_ALPHA_END
+                    : Math.max(rdBlocks * 4f, rampStart + 768f);
+            MemoryUtil.memPutFloat(lodBase,      projK);
+            MemoryUtil.memPutFloat(lodBase +  4, rampStart);
+            MemoryUtil.memPutFloat(lodBase +  8, 1.0f / (rampEnd - rampStart));
+            MemoryUtil.memPutFloat(lodBase + 12, WATER_FAR_ALPHA);
+            // voxyLodParams2.x: translucent near-cull distance (vx contract —
+            // see VOXY_TRANS_NEAR_CULL). GL and no-pack sessions read 0.
+            float nearCull = 0.0f;
+            if (me.cortex.voxy.client.core.util.IrisUtil.vxContractActive()) {
+                nearCull = Math.max(rdBlocks - TRANS_NEAR_CULL_MARGIN, 64f);
+            }
+            MemoryUtil.memPutFloat(lodBase + 16, nearCull);
+            MemoryUtil.memPutFloat(lodBase + 20, 0f);
+            MemoryUtil.memPutFloat(lodBase + 24, 0f);
+            MemoryUtil.memPutFloat(lodBase + 28, 0f);
         }
 
         UploadStream.INSTANCE.commit();
@@ -816,9 +1088,27 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         encoder.setBuffer(5, viewport.positionScratchBuffer, 0);
         // Texture / sampler binding 1 — MC's 16×16 RGBA8 lightmap, mirrored
         // into a Shared-storage Metal texture each frame (M13 chunk 2).
-        // Texture/sampler binding 2 (depthBoundingBuffer) remains unbound —
-        // the shader skips that sample via VOXY_NO_DEPTH_BOUND (M13 chunk 3).
         LightMapHelper.bindMetal(encoder, 1, viewport.frameId);
+        // Texture / sampler binding 2 — the chunk-bound depth mask
+        // (ChunkBoundRenderer.renderMetal rasterized it into
+        // viewport.depthBoundingBuffer earlier this frame; same command
+        // queue, so ordering is guaranteed). quads.frag's depth-bound test
+        // texelFetches it to discard LOD fragments inside MC's loaded-chunk
+        // volume (M13 chunk 3). Bound for all three Metal draws (opaque /
+        // temporal / translucent share this method). Harmlessly unused when
+        // the VOXY_NO_DEPTH_BOUND kill switch removed the sample.
+        if (this.boundDepthSampler != null) {
+            encoder.setTexture(2, viewport.depthBoundingBuffer.getDepthTex());
+            encoder.setSampler(2, this.boundDepthSampler);
+        }
+        // Buffer binding 9 — the bound mask as raw floats (round 20,
+        // VOXY_METAL_BOUND_SSBO; 6 is quads3.vert's per-draw UBO slot, 7/8
+        // are cmdgen compute bindings). The texture binding above is kept
+        // for compatibility but the shader no longer samples it (depth-
+        // format textures read zeros through texture2d<float> declarations).
+        if (viewport.metalBoundReadBuffer != null) {
+            encoder.setBuffer(9, viewport.metalBoundReadBuffer, 0);
+        }
 
         encoder.bindIndexBuffer(me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer.INSTANCE.getBuffer(),
                 me.cortex.voxy.client.core.gpu.RenderEncoder.INDEX_TYPE_UINT16, 0);
@@ -1105,5 +1395,6 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         this.translucentGenPipeline.close();
         this.prefixSumPipeline.close();
         this.statisticsBuffer.free();
+        if (this.boundDepthSampler != null) this.boundDepthSampler.close();
     }
 }

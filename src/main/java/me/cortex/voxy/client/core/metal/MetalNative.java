@@ -651,6 +651,16 @@ public final class MetalNative {
     public static native int iosurfaceGetBytesPerRow(long handle);
 
     /**
+     * CPU read access for diagnostics: lock the surface read-only
+     * (synchronizes GPU writes into the CPU view), get the base address,
+     * read via MemoryUtil, then unlock. Returns 0 on lock failure.
+     * NOT for hot paths — lock/unlock forces a GPU/CPU sync.
+     */
+    public static native int iosurfaceLockReadOnly(long handle);
+    public static native void iosurfaceUnlockReadOnly(long handle);
+    public static native long iosurfaceGetBaseAddress(long handle);
+
+    /**
      * Wrap an IOSurface as an MTLTexture. The texture's storage mode is
      * forced to Private (IOSurface owns the memory). {@code usage} is the
      * {@code MTLTextureUsage} bitmask — typically RenderTarget|ShaderRead
@@ -696,6 +706,16 @@ public final class MetalNative {
     public static final int IOSurfacePixelFormat_D32   = 0x4C303038; // 'L008' — placeholder; see IOSurfaceTypes.h
     /** 32-bit BGRA with sRGB. */
     public static final int IOSurfacePixelFormat_BGRA8_sRGB = 0x73424752; // 'sBGR' — illustrative; verify per-use
+    /** 32-bit single-channel float ('L00f') — used by the LOD depth-export bridge. */
+    public static final int IOSurfacePixelFormat_R32F = 0x4C303066;
+
+    /**
+     * MTLPixelFormatR32Float. Mirrors
+     * {@link me.cortex.voxy.client.core.metal.MetalFormatUtil#MTLPixelFormatR32Float}
+     * so IOSurface bridge call sites (which avoid the GL-constant-importing
+     * MetalFormatUtil) can reference it next to the IOSurface four-char codes.
+     */
+    public static final int MTLPixelFormatR32Float = 55;
 
     // MTLTextureUsage bits live alongside other MTL constants further down in
     // this class — see MTLTextureUsageRenderTarget / MTLTextureUsageShaderRead.

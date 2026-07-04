@@ -35,7 +35,14 @@ public final class IOSurfaceBridge implements AutoCloseable {
          * 32-bit BGRA, one byte per channel. The format MC's framebuffer
          * (and most CoreVideo paths) use natively; matches MTLPixelFormatBGRA8Unorm.
          */
-        BGRA8(MetalNative.IOSurfacePixelFormat_BGRA8, 4, /*MTLPixelFormatBGRA8Unorm*/ 80);
+        BGRA8(MetalNative.IOSurfacePixelFormat_BGRA8, 4, /*MTLPixelFormatBGRA8Unorm*/ 80),
+        /**
+         * 32-bit single-channel float. Carries the Metal LOD depth across to
+         * GL for the Iris gbuffer injection — GL cannot sample a Metal depth
+         * texture, but an R32F color image crosses the IOSurface boundary as
+         * a plain float rectangle texture.
+         */
+        R32F(MetalNative.IOSurfacePixelFormat_R32F, 4, MetalNative.MTLPixelFormatR32Float);
 
         final int ioSurfacePixelFormat;
         final int bytesPerElement;
@@ -125,17 +132,22 @@ public final class IOSurfaceBridge implements AutoCloseable {
         private final int id;
         private final int width;
         private final int height;
+        private final int glFormat;
 
         BridgedGpuTexture(IOSurfaceBridge bridge) {
             this.id = me.cortex.voxy.client.core.metal.MetalHandleMap.register(bridge.metalTextureHandle);
             this.width  = bridge.width;
             this.height = bridge.height;
+            this.glFormat = switch (bridge.format) {
+                case BGRA8 -> 0x8058; /* GL_RGBA8 — Metal sees BGRA8Unorm */
+                case R32F  -> GL_R32F;
+            };
         }
         @Override public int id() { return this.id; }
         @Override public int getWidth() { return this.width; }
         @Override public int getHeight() { return this.height; }
         @Override public int getLevels() { return 1; }
-        @Override public int getFormat() { return 0x8058 /* GL_RGBA8 — Metal sees BGRA8Unorm */; }
+        @Override public int getFormat() { return this.glFormat; }
         @Override public int getType() { return 0x0DE1 /* GL_TEXTURE_2D */; }
         @Override public me.cortex.voxy.client.core.gpu.IGpuTexture store(int format, int levels, int width, int height) { return this; }
         @Override public me.cortex.voxy.client.core.gpu.IGpuTexture createView() { return this; }
@@ -153,6 +165,9 @@ public final class IOSurfaceBridge implements AutoCloseable {
     private static final int GL_RGBA                   = 0x1908;
     private static final int GL_BGRA                   = 0x80E1;
     private static final int GL_UNSIGNED_INT_8_8_8_8_REV = 0x8367;
+    private static final int GL_R32F                   = 0x822E;
+    private static final int GL_RED                    = 0x1903;
+    private static final int GL_FLOAT                  = 0x1406;
 
     /**
      * Bind this IOSurface to an existing GL texture name so MC's GL context
@@ -162,22 +177,32 @@ public final class IOSurfaceBridge implements AutoCloseable {
      *  - The GL texture was created via {@code glGenTextures} and is currently
      *    unbound (the JNI rebinds to {@link #GL_TEXTURE_RECTANGLE}).
      *
-     * Returns true on success. For BGRA8 IOSurfaces, internalFormat=GL_RGBA,
-     * format=GL_BGRA, type=GL_UNSIGNED_INT_8_8_8_8_REV — the spec-mandated
-     * tuple for {@code CGLTexImageIOSurface2D}.
+     * Returns true on success. The (internalFormat, format, type) tuple is
+     * per-format — {@code CGLTexImageIOSurface2D} rejects mismatched tuples:
+     *  - BGRA8: GL_RGBA / GL_BGRA / GL_UNSIGNED_INT_8_8_8_8_REV (the
+     *    spec-mandated tuple; unchanged from the original BGRA8-only path).
+     *  - R32F:  GL_R32F / GL_RED / GL_FLOAT.
      */
     public boolean bindToGlTexture(int glTextureName) {
         if (this.ioSurfaceHandle == 0) {
             throw new IllegalStateException("IOSurfaceBridge closed");
         }
-        if (this.format != IOSurfaceFormat.BGRA8) {
-            throw new UnsupportedOperationException(
-                    "bindToGlTexture: only BGRA8 wired up; got " + this.format);
-        }
+        int internalFormat = switch (this.format) {
+            case BGRA8 -> GL_RGBA;
+            case R32F  -> GL_R32F;
+        };
+        int dataFormat = switch (this.format) {
+            case BGRA8 -> GL_BGRA;
+            case R32F  -> GL_RED;
+        };
+        int dataType = switch (this.format) {
+            case BGRA8 -> GL_UNSIGNED_INT_8_8_8_8_REV;
+            case R32F  -> GL_FLOAT;
+        };
         return MetalNative.cglTexImageIOSurface2D(
                 glTextureName, GL_TEXTURE_RECTANGLE,
-                GL_RGBA, this.width, this.height,
-                GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV,
+                internalFormat, this.width, this.height,
+                dataFormat, dataType,
                 this.ioSurfaceHandle, 0);
     }
 

@@ -15,6 +15,26 @@
 layout(binding = 0) uniform sampler2D blockModelAtlas;
 layout(binding = 2) uniform sampler2D depthTex;
 
+#ifdef VOXY_METAL_BOUND_SSBO
+// Metal-only (round 20): the chunk-bound mask arrives as raw floats in a
+// plain buffer, NOT via depthTex — sampling a depth-format texture through
+// the texture2d<float> declaration SPIRV-Cross emits for sampler2D silently
+// reads ZEROS on Metal (same bug class as the round-18 Iris depth export),
+// which left this mask inert since M13 chunk 3. ChunkBoundRenderer blits
+// the bound depth into this buffer after the bound pass; width rides in
+// the header so no pipeline rebuild is needed on resize.
+// Binding 9: 0-5 are the terrain draw's buffer table, 6 is quads3.vert's
+// per-draw UBO (Metal setVertexBytes slot — setBuffer would clobber it),
+// 7/8 belong to the cmdgen compute defines.
+layout(binding = 9, std430) readonly restrict buffer BoundDepthBuffer {
+    uint boundWidth;
+    uint _boundPad1;
+    uint _boundPad2;
+    uint _boundPad3;
+    float boundDepths[];
+};
+#endif
+
 //#define DEBUG_RENDER
 
 //TODO: need to fix when merged quads have discardAlpha set to false but they span multiple tiles
@@ -25,10 +45,21 @@ layout(location = 0) in flat uvec4 interData;
 layout(location = 1) in vec2 uv;
 #endif
 
-// M13 chunk 5: per-vertex world distance to camera, interpolated. Only
-// produced by quads3.vert when USE_ENV_FOG is defined (Metal terrain path).
-#ifdef USE_ENV_FOG
+// M13 chunk 5: per-vertex world distance to camera, interpolated.
+// 2026-07-03: decoupled from USE_ENV_FOG — the vx contract forces env fog
+// off, which silently compiled out the distance-mip + far-water-alpha
+// features in every Iris/BSL session. Must mirror quads3.vert's guard.
+#if defined(USE_ENV_FOG) || defined(VOXY_LOD_DIST_MIP) || defined(VOXY_WATER_FAR_ALPHA) || defined(VOXY_TRANS_NEAR_CULL)
+#define VOXY_NEEDS_FOG_DIST
+#endif
+#ifdef VOXY_NEEDS_FOG_DIST
 layout(location = 2) in float voxyFogDist;
+#endif
+// Camera-relative horizontal offset for the near-cull's Chebyshev distance
+// (see quads3.vert — the slant-distance cull leaked LOD water inside the MC
+// square from high/diagonal viewpoints). Must mirror quads3.vert's guard.
+#if defined(VOXY_TRANS_NEAR_CULL) && defined(VOXY_TRANS_NEAR_CULL_XZ)
+layout(location = 3) in vec2 voxyCamRelXZ;
 #endif
 
 #ifdef DEBUG_RENDER
@@ -153,6 +184,49 @@ void main() {
     return;
     #endif
 #endif
+
+#if defined(TRANSLUCENT) && defined(VOXY_TRANS_NEAR_CULL)
+    // vx contract (2026-07-03): BSL composites the injected LOD water
+    // (colortex16, via deferred1's nearer-than-scene gate) and ALSO draws
+    // MC's own water inside the render distance. LOD water surviving the
+    // chunk-bound depth mask there (the mask compare flips with camera
+    // pitch at grazing angles) double-blends with Sodium/BSL water into a
+    // pale higher-opacity veil — the section-aligned "white squares" on
+    // near/mid water. Hard-cull translucent LOD fragments inside the MC
+    // ring; voxyLodParams2.x = renderDistanceBlocks - margin (0 disables).
+    // Injected only when the vx contract is active; VOXY_TRANS_NEAR_CULL=0
+    // is the kill switch.
+    //
+    // 2026-07-03 round 3: compare in the metric MC actually renders in.
+    // voxyFogDist is a 3D slant distance, so from a high camera (or toward
+    // the render square's diagonals, up to RD*sqrt(2)) LOD water INSIDE the
+    // MC square passed the `< threshold` test's complement and survived,
+    // double-compositing with BSL/Sodium water wherever the chunk-bound
+    // mask misfired (its compare flips per frame -> the flickering pale
+    // 16-block squares). Horizontal Chebyshev distance max(|dx|,|dz|)
+    // mirrors the loaded-chunk square at every altitude and diagonal.
+    // VOXY_TRANS_NEAR_CULL_XZ=0 restores the slant metric.
+    //
+    // 2026-07-03 round 5: Sodium 0.8.1 section culling is a Euclidean XZ
+    // CYLINDER (fx*fx+fz*fz <= r*r, OcclusionCuller), NOT a square — the
+    // Chebyshev cull left a no-water ring toward the render square's
+    // diagonals (Euclid RD .. RD*sqrt(2)): MC water already absent there,
+    // LOD water still discarded -> the naked kelp/seafloor band above a
+    // sawtooth waterline. Cull in the metric Sodium actually renders in.
+    // VOXY_TRANS_NEAR_CULL_RADIAL=0 falls back to the Chebyshev square.
+#if defined(VOXY_TRANS_NEAR_CULL_XZ) && defined(VOXY_TRANS_NEAR_CULL_RADIAL)
+    float voxyNearCullDist = length(voxyCamRelXZ);
+#elif defined(VOXY_TRANS_NEAR_CULL_XZ)
+    float voxyNearCullDist = max(abs(voxyCamRelXZ.x), abs(voxyCamRelXZ.y));
+#else
+    float voxyNearCullDist = voxyFogDist;
+#endif
+    if (voxyLodParams2.x > 0.0 && voxyNearCullDist < voxyLodParams2.x) {
+        discard;
+        return;
+    }
+#endif
+
     //vec2 uv = vec2(0);
     //Tile is the tile we are in
     vec2 tile;
@@ -234,7 +308,28 @@ void main() {
 //This is deprecated, TODO: remove the non mip code path
     //if (useMipmaps())
     {
-#ifdef VOXY_LOD_FIXED_MIP
+#ifdef VOXY_LOD_DIST_MIP
+        // Distance-based mip selection (Metal, 2026-07-03). Fixed mip 0 made
+        // every distant pixel pick one arbitrary texel of its 16x16 face cell
+        // (NEAREST + no minification) — the spyglass moire/shimmer on LOD
+        // water and the pixel noise on distant terrain. Screen-space
+        // derivatives are NOT trustworthy here (1-2 px quads gave the noisy
+        // dFdx that forced fixed-mip in the first place), so compute the mip
+        // ANALYTICALLY: one atlas texel covers lodScale/16 world units; one
+        // screen pixel covers voxyFogDist * voxyLodParams.x world units
+        // (2*tan(fovY/2)/viewportH, per frame — tracks spyglass zoom).
+        // Clamp to VOXY_ATLAS_MAX_LOD: bakes upload mips 16/8/4/2 only.
+        float voxyAtlasLod = 0.0;
+        #ifdef VOXY_NEEDS_FOG_DIST
+        if (voxyLodParams.x > 0.0) {
+            float texelWorld = float(1u<<((interData.w>>16)&7u)) * (1.0/16.0);
+            float pixelWorld = voxyFogDist * voxyLodParams.x;
+            voxyAtlasLod = clamp(log2(max(pixelWorld, 1e-6) / texelWorld) + VOXY_LOD_DIST_MIP_BIAS,
+                                 0.0, VOXY_ATLAS_MAX_LOD);
+        }
+        #endif
+        colour = textureLod(blockModelAtlas, texPos, voxyAtlasLod);
+#elif defined(VOXY_LOD_FIXED_MIP)
         // DIAGNOSTIC (2026-05-25): sample the atlas at a fixed LOD 0 instead of
         // the derivative-based mip. Tests whether the LOD flicker is unstable
         // mip selection on small/distant quads (noisy dFdx/dFdy) — the "small
@@ -281,13 +376,26 @@ void main() {
     //Check the minimum bounding texture and ensure we are greater than it.
     // M13 chunk 1 split: this used to live under `#ifndef VOXY_NO_ATLAS` so
     // the atlas-disabled debug path also skipped the depth-bounding check.
-    // Splitting them lets Metal sample the real atlas while still skipping
-    // the depth-bounding check (depthTex is M13 chunk 3 — MC depth import
-    // hasn't landed yet, so the texture would be unbound and the check
-    // would discard everything).
-    if (gl_FragCoord.z < texelFetch(depthTex, ivec2(gl_FragCoord.xy), 0).r) {
+    // M13 chunk 3: the chunk-bound depth mask now renders on Metal too
+    // (ChunkBoundRenderer.renderMetal → depthBoundingBuffer, bound at
+    // texture slot 2), so this check is ON by default on every backend;
+    // VOXY_NO_DEPTH_BOUND=1 is the Metal kill switch that removes it.
+#ifdef VOXY_METAL_BOUND_SSBO
+    float voxyBoundDepth = boundDepths[uint(gl_FragCoord.y) * boundWidth + uint(gl_FragCoord.x)];
+#else
+    float voxyBoundDepth = texelFetch(depthTex, ivec2(gl_FragCoord.xy), 0).r;
+#endif
+    if (gl_FragCoord.z < voxyBoundDepth) {
+        #ifdef VOXY_BOUND_DEBUG
+        // VOXY_BOUND_DEBUG=1 (Metal mask-verification aid): paint the
+        // bound-discarded fragments solid red instead of discarding so a
+        // screenshot shows exactly where the chunk-bound depth mask bites.
+        outColour = vec4(1.0, 0.0, 0.0, 1.0);
+        return;
+        #else
         discard;
         return;
+        #endif
     }
 #endif // VOXY_NO_DEPTH_BOUND
 
@@ -360,6 +468,24 @@ void main() {
     #endif
     #ifdef VOXY_WATER_MIN_ALPHA
     outColour.a = max(outColour.a, VOXY_WATER_MIN_ALPHA);
+    #endif
+
+    // Far-water opacity ramp (Metal, translucent only, 2026-07-03). MC water
+    // is alpha 0.706 and that parity MUST hold at the LOD<->MC seam — but a
+    // constant 0.706 out to the horizon lets kilometre-deep seafloor/kelp
+    // ghost through the surface and lets the fog-coloured bridge clear bleed
+    // up through it (the washed-out flat-blue sheet). Physically, the view
+    // path through water at those grazing distances is opaque. Smoothstep
+    // the alpha from the vanilla texel value at voxyLodParams.y blocks (past
+    // the seam, so ring parity is untouched) to voxyLodParams.w at the far
+    // end. w == 0 disables (VOXY_WATER_FAR_ALPHA=0 kill switch, params from
+    // MDICSectionRenderer.uploadUniform).
+    #if defined(TRANSLUCENT) && defined(VOXY_WATER_FAR_ALPHA)
+    if (voxyLodParams.w > 0.0) {
+        float farLerp = clamp((voxyFogDist - voxyLodParams.y) * voxyLodParams.z, 0.0, 1.0);
+        farLerp = farLerp * farLerp * (3.0 - 2.0 * farLerp);
+        outColour.a = mix(outColour.a, max(outColour.a, voxyLodParams.w), farLerp);
+    }
     #endif
 
     #ifdef USE_ENV_FOG

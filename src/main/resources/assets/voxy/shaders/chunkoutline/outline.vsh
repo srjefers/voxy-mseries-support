@@ -33,6 +33,17 @@ vec2 getTAA();
 void main() {
     uint id = (gl_InstanceID<<5)+gl_BaseInstance+(gl_VertexID>>3);
 
+    // section.w carries the live chunk count (ChunkBoundRenderer's uniform
+    // upload). The Metal path issues ONE instanced draw of ceil(count/32)
+    // batches — over-draw slots in the last batch collapse to a degenerate
+    // position here instead of a separate baseInstance tail draw (Metal's
+    // base_instance propagation is unreliable, see VOXY_METAL_BI_FIX). On GL
+    // the split draws never produce id >= count, so this guard is a no-op.
+    if (id >= uint(section.w)) {
+        gl_Position = vec4(-100.0f, -100.0f, -100.0f, 0.0f);
+        return;
+    }
+
     ivec3 origin = unpackPos(chunkPos[id])*16;
     origin -= section.xyz;
 

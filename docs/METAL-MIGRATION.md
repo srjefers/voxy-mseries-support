@@ -90,16 +90,10 @@ Key components (all under `me.cortex.voxy.client.core`):
 | All LOD faces flat single-colour ("paper") | Derivative-based atlas mip selection collapses to the smallest mip through the Metal transpile | Fixed-mip sampling (`textureLod(..,0)`) is the Metal default (`VOXY_LOD_FIXED_MIP=0` re-enables derivative mips) | `36a8ced6` |
 | Visible brightness ring at the LOD boundary | GL runs an SSAO pass that darkens LOD ≈10 % to match Sodium's baked vertex AO; the pass is parked on Metal | Interim parity multiplier on opaque LOD (`VOXY_LOD_BRIGHTNESS`, default 0.92) until the SSAO port | `0c2c1a0c` |
 | 18–20 FPS collapse | 150k–450k CPU-encoded no-op draws per frame (upper-bound loops), a 12 MB/frame buffer clear, ~8–12 throwaway command buffers per frame, duplicate uniform uploads | Draw encode clamps to the GPU-written counts; per-frame zero skipped (slices are compactly written); stream copies/fences batched into the frame buffer | `abcf14b3` |
-| Persistent underwater flashing (survived all fog fixes) | Inside a single Metal compute encoder, memory barriers don't fence the command processor's **indirect-argument fetch** — the octree walk's next `dispatchIndirect` could read its group count before the previous iteration wrote it, truncating the walk at a random depth | One compute encoder per traversal iteration (encoder boundaries are full hazard-tracked barriers); `VOXY_HOT_SERIALIZE=1` diagnostic | `fc747ada` |
-| Seafloor "turns transparent" ~3 s after submerging | Sodium's fog-occlusion culling de-renders real seafloor beyond the underwater fog wall; the culled pixels fall through the opaque blit to the LOD field behind | Submersion far-field skip: when the fog is submersion-class and render distance ≫ fog end, the LOD draws are skipped — the fog clear is identical murk by construction (`VOXY_UNDERWATER_LOD=1` forces draws) | `fc747ada` |
-| Hard ring between LOD and real terrain | LOD rasterized inside MC's loaded-chunk volume; pixel ownership decided by blit overdraw | **Chunk-bound depth mask ported to Metal**: loaded-chunk AABBs rendered into a depth mask each frame; `quads.frag` discards LOD inside it. Also fixed a latent upstream std140 bug (uninitialized cull radius). `VOXY_NO_DEPTH_BOUND=1` kill switch, `VOXY_BOUND_DEBUG=1` red-tint visualization | `3d4f995b` |
-| Bimodal render-list collapse / two-tone underwater strobe (~20 Hz) | **Leaked 16×16 GL viewport**: MC re-renders its lightmap every tick, blaze3d never restores the viewport, and Sodium skips the sky pass underwater (the only pass that restored it) — Voxy read 16×16 as the screen size on every tick frame | Frame size taken from MC's main render target, never `GL_VIEWPORT` (warn-once `[Metal-VIEWPORT]` diagnostic) | `7cde05c6` |
-| Visible texture line at the LOD↔MC water boundary | The interim water darkening/opacity knobs (tuned pre-depth-bound) made LOD water darker and more opaque than MC's (alpha is exactly 0.706); the LOD water plane also sat at full block height vs MC's 8/9 | Knobs neutral by default; fluid UP-face indentation set from the fluid's real height (plane 0.8906 vs MC 0.8889) | `7cde05c6` |
-| LOD water frozen while MC water animates | The LOD atlas held one `water_still` frame from bake time | `WaterAnimator`: CPU-resident sprite frames re-uploaded into the water model's atlas cells as the animation advances (~10 Hz, 2.7 KB; no GL readbacks). `VOXY_WATER_ANIMATE=0` kill switch | `236313a9` |
+| Visible LOD↔terrain ring; LOD bleeding under near terrain (underwater X-ray contributor) | The chunk-bound depth mask (`ChunkBoundRenderer`) was GL-only, so Metal shaders compiled with `VOXY_NO_DEPTH_BOUND` and never discarded LOD inside MC's loaded-chunk volume | `ChunkBoundRenderer.renderMetal` rasterizes the loaded-chunk AABBs depth-only into `depthBoundingBuffer` (uint16 cube indices + a shader-side `section.w` count guard instead of a baseInstance tail draw); quads.frag's depth-bound test is now ON by default on Metal, sharing the LOD pass's NDC convention via `MetalMvpUtil`. Also fixes a latent upstream std140 bug (the outline cull radius read stale memory). Kill switch `VOXY_NO_DEPTH_BOUND=1`; verify with `VOXY_BOUND_DEBUG=1` (red tint) | — |
 
 Verified on-device after the fixes: stationary flicker gone, spyglass works,
-real translucent biome-tinted animated water, stable underwater rendering,
-full texture detail, ~111 FPS.
+real translucent biome-tinted water, full texture detail, ~111 FPS.
 
 ## Environment variables
 
@@ -118,12 +112,10 @@ full texture detail, ~111 FPS.
 | `VOXY_LOD_WATER_DEBUG=1` | off | Magenta water + depth-off (geometry coverage debug) |
 | `VOXY_BAKERY_OFF=1` | off | Hash-colour fallback instead of the bakery |
 | `VOXY_BRIDGE_SOLID_TEST=1` | off | Solid green bridge (bridge/sync isolation test) |
-| `VOXY_NO_DEPTH_BOUND=1` | off | Kill switch: disable the chunk-bound depth mask |
-| `VOXY_BOUND_DEBUG=1` | off | Tint chunk-bound-discarded fragments red (mask visualization) |
-| `VOXY_UNDERWATER_LOD=1` | off | Force LOD draws even when submersion fog saturates the far field |
-| `VOXY_WATER_ANIMATE` | `1` on Metal | `0` freezes LOD water at the baked frame |
-| `VOXY_WATER_SHADE` / `VOXY_WATER_MIN_ALPHA` | `1.0` / `0.0` (neutral) | LOD water appearance tuning (experiments) |
-| `VOXY_HOT_SERIALIZE=1` | off | Submit+wait per traversal iteration (race diagnostic, slow) |
+| `VOXY_NO_DEPTH_BOUND=1` | off | Kill switch: skip the chunk-bound depth test (restores the pre-mask Metal behaviour) |
+| `VOXY_BOUND_DEBUG=1` | off | Tint bound-discarded LOD fragments red instead of discarding (mask verification) |
+| `VOXY_WATER_ANIMATE=0` | off | Kill switch: freeze LOD water (disables the `water_still` model-atlas cell re-upload that animates LOD water in step with MC) |
+| `VOXY_IRIS_GBUFFER_INJECT=0` | off | Kill switch: disable the Iris gbuffer injection (LODs stay hidden while a pack is active, the pre-injection behaviour) |
 
 ## Running
 
@@ -137,21 +129,35 @@ Useful log markers: `[Metal-DEFINES]` (shader variant), `[Metal-WATERBAKE]`
 
 ## Known limitations / backlog
 
-- **Water animation residuals (accepted open issue)**: the LOD water
-  animation phase can be slightly offset from MC's ticker, and
-  flowing-water states / `water_flow` side faces stay frozen at their baked
-  frame (visible only side-on, up close).
-- **SSAO** is not ported (interim brightness multiplier instead) — the last
-  contributor to the land-side boundary look.
+- **SSAO** is not ported (interim brightness multiplier instead).
 - **Sky-aware composite**: MC 1.21.11 does not have the sky in the main RT
   when Voxy composites, so the bridge's fog-coloured clear acts as the far
-  sky (white clouds can be low-contrast against it at day). Fixing this
+  sky and the alpha-discard composite cannot be enabled yet. Fixing this
   requires hooking the composite after MC's sky pass.
 - **Synchronous GPU model**: 3 × `waitUntilCompleted` per frame. The fence
   machinery added in `abcf14b3` is the building block for going async
-  (estimated to push well past the current ~111 FPS). "FPS phase 2."
-- Iris shader packs are GL-only by design — LOD terrain is not shaded by
-  packs; Iris-alongside-Voxy on macOS is being compatibility-tested.
-
-Note: rounds 6–8 of the fix table (`fc747ada`…`236313a9`) live on
-`feature/voxy-water-issues` (PR #4) until it merges into `dev`.
+  (estimated to push well past the current ~111 FPS).
+- **Visible LOD↔terrain transition on water** and residual underwater
+  artifacts — under active investigation.
+- **LOD water animation** (`WaterAnimator`) covers the still-water sprite
+  only: the source-water model's UP/DOWN atlas cells re-upload the current
+  `block/water_still` frame every frametime ticks. The `water_flow` side
+  faces and flowing-water states stay frozen at their baked frame, and the
+  animation phase matches MC's cadence but not its exact start offset —
+  both are follow-ups.
+- **Iris shader packs** render the Metal LODs via **gbuffer injection**
+  (`IrisGbufferInjector`, default ON, kill switch
+  `VOXY_IRIS_GBUFFER_INJECT=0`): at the head of Sodium's SOLID pass the LOD
+  bridge color + an R32F depth export of the LOD pass are drawn into the
+  pack's SOLID terrain framebuffer (colortex0 attachment only; the FBO's
+  DRAWBUFFERS list is saved/restored) with `gl_FragDepth` unprojected from
+  Voxy's MVP and reprojected through MC's vanilla MVP — i.e. the pack's
+  depthtex0 convention. Because the pack sky sits at depth 1.0 before SOLID,
+  LOD pixels (depth < 1.0) survive the pack's deferred/composite/final
+  chain, and Iris's near terrain depth-tests over them. Voxy's own env fog
+  is disabled in this mode (the pack shades the injected pixels). Expected
+  pack-variability caveats: LODs receive **no per-pixel shadows** (they
+  never render into the shadow map); deferred-lighting packs may shade LODs
+  flat (gbuffer normals/material IDs aren't written, only color + depth);
+  and pack fog saturates at MC's far plane, so very distant LODs take the
+  pack's maximum fog rather than a Voxy-specific curve.

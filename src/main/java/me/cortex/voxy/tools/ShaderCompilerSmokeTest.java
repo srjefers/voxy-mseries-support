@@ -21,7 +21,11 @@ public final class ShaderCompilerSmokeTest {
 
     private ShaderCompilerSmokeTest() {}
 
-    private record ShaderCase(String relPath, RuntimeShaderCompiler.Stage stage, Map<String, String> defines, String label) {}
+    private record ShaderCase(String relPath, RuntimeShaderCompiler.Stage stage, Map<String, String> defines, String label, String append) {
+        ShaderCase(String relPath, RuntimeShaderCompiler.Stage stage, Map<String, String> defines, String label) {
+            this(relPath, stage, defines, label, null);
+        }
+    }
 
     public static void main(String[] args) throws Exception {
         Path root = Path.of(args.length > 0 ? args[0] : "src/main/resources/assets/voxy/shaders").toAbsolutePath();
@@ -125,8 +129,9 @@ public final class ShaderCompilerSmokeTest {
                 new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT,
                         Map.of("VOXY_NO_ATLAS", "", "USE_ENV_FOG", ""),
                         "lod/gl46/quads.frag (Metal — VOXY_NO_ATLAS + USE_ENV_FOG)"),
-                // M13 chunk 1 default Metal path: real atlas bakery, no
-                // depth-bound sample until MC depth import lands, fog enabled.
+                // M13 chunk 1 Metal path with the VOXY_NO_DEPTH_BOUND kill
+                // switch active (the pre-chunk-3 default): real atlas bakery,
+                // depth-bound sample compiled out, fog enabled.
                 new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT,
                         Map.of("VOXY_NO_DEPTH_BOUND", "", "VOXY_FORCE_OPAQUE_ALPHA", "", "USE_ENV_FOG", ""),
                         "lod/gl46/quads.frag (Metal — atlas bakery + USE_ENV_FOG)"),
@@ -143,6 +148,22 @@ public final class ShaderCompilerSmokeTest {
                 new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT,
                         Map.of("VOXY_NO_DEPTH_BOUND", "", "VOXY_DEBUG_MAGENTA_MISSING", "", "USE_ENV_FOG", ""),
                         "lod/gl46/quads.frag (Metal — atlas bakery + magenta missing)"),
+                // M13 chunk 3: chunk-bound depth mask. The Metal default now
+                // ENABLES the depth-bound sample (no VOXY_NO_DEPTH_BOUND) —
+                // verify the depthTex texelFetch path transpiles for both the
+                // opaque and translucent pipelines, plus the VOXY_BOUND_DEBUG
+                // red-tint verification variant. The mask's own raster
+                // pipeline (chunkoutline/outline.vsh + outline.fsh) is
+                // covered by the cases near the top of this list.
+                new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT,
+                        Map.of("VOXY_FORCE_OPAQUE_ALPHA", "", "USE_ENV_FOG", ""),
+                        "lod/gl46/quads.frag (Metal — depth-bound enabled default)"),
+                new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT,
+                        Map.of("VOXY_FORCE_OPAQUE_ALPHA", "", "TRANSLUCENT", "", "USE_ENV_FOG", ""),
+                        "lod/gl46/quads.frag (Metal — depth-bound enabled translucent)"),
+                new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT,
+                        Map.of("VOXY_FORCE_OPAQUE_ALPHA", "", "USE_ENV_FOG", "", "VOXY_BOUND_DEBUG", ""),
+                        "lod/gl46/quads.frag (Metal — depth-bound VOXY_BOUND_DEBUG red tint)"),
                 // M9 — MDIC's compute pipelines (cmdgen already covered above).
                 new ShaderCase("util/prefixsum/simple.comp", RuntimeShaderCompiler.Stage.COMPUTE,
                         Map.of("IO_BUFFER", "0"),
@@ -163,6 +184,22 @@ public final class ShaderCompilerSmokeTest {
                 // M12 chunk 5 Metal cull stub — force-all-visible compute.
                 new ShaderCase("lod/gl46/force_all_visible.comp", RuntimeShaderCompiler.Stage.COMPUTE, empty,
                         "lod/gl46/force_all_visible.comp (M12 Metal cull stub)"),
+                // Phase C (issue #11) material g-buffer: quads.frag's PATCHED_SHADER
+                // path + the MetalVxGbufferEmitter appended, writing the 3 MRT planes.
+                // Probes that this permutation transpiles to MSL on Apple before the
+                // pipeline is wired on-device (MDIC vxMaterialMode path).
+                new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT,
+                        Map.of("PATCHED_SHADER", "", "VOXY_VX_GBUFFER", "", "VOXY_FORCE_OPAQUE_ALPHA", "",
+                               "NO_SHADE_FACE_TINT", "1.0", "UP_FACE_TINT", "1.0", "DOWN_FACE_TINT", "0.5",
+                               "Z_AXIS_FACE_TINT", "0.8", "X_AXIS_FACE_TINT", "0.6"),
+                        "lod/gl46/quads.frag (Phase C material g-buffer — opaque)",
+                        me.cortex.voxy.client.core.util.MetalVxGbufferEmitter.SOURCE),
+                new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT,
+                        Map.of("PATCHED_SHADER", "", "VOXY_VX_GBUFFER", "", "TRANSLUCENT", "",
+                               "NO_SHADE_FACE_TINT", "1.0", "UP_FACE_TINT", "1.0", "DOWN_FACE_TINT", "0.5",
+                               "Z_AXIS_FACE_TINT", "0.8", "X_AXIS_FACE_TINT", "0.6"),
+                        "lod/gl46/quads.frag (Phase C material g-buffer — translucent)",
+                        me.cortex.voxy.client.core.util.MetalVxGbufferEmitter.SOURCE),
         };
 
         int passSpv = 0, failSpv = 0, passMsl = 0, failMsl = 0;
@@ -173,6 +210,7 @@ public final class ShaderCompilerSmokeTest {
         Path assetsBase = root.getParent().getParent().getParent();
         for (ShaderCase c : cases) {
             String src = expandImports(root.resolve(c.relPath), assetsBase);
+            if (c.append() != null) src = src + c.append();
             RuntimeShaderCompiler.Result spvResult;
             try {
                 spvResult = RuntimeShaderCompiler.compile(src, c.stage, c.defines, RuntimeShaderCompiler.Target.VULKAN_SPIRV);

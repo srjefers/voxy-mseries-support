@@ -145,10 +145,20 @@ public class MixinRenderSectionManager {
         if (wasBuilt) {//Remove
             //TODO: on chunk remove do ingest if is surrounded by built chunks (or when the tracker says is ok)
 
+            me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorRemove(pos);
             system.chunkBoundRenderer.removeSection(pos);
         } else {//Add
+            me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorAdd(pos);
             system.chunkBoundRenderer.addSection(pos);
         }
         return true;
+    }
+
+    @org.spongepowered.asm.mixin.injection.Inject(method = "<init>", at = @At("RETURN"))
+    private void voxy$resetBoundMirror(org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
+        // Fresh RenderSectionManager = all sections rebuild from scratch;
+        // clear the bound-mask mirror so stale entries can't discard LODs
+        // over chunks Sodium no longer renders.
+        me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorReset();
     }
 }

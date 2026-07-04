@@ -214,6 +214,20 @@ public class HierarchicalOcclusionTraverser {
     private static final boolean CULL_DISABLED =
             "1".equals(System.getenv("VOXY_LOD_NO_CULL"));
     private static final float FRUSTUM_MARGIN = parseFrustumMargin();
+    /** Metal-only floor for the per-frame child-request budget (see
+     *  uploadUniform). VOXY_HOT_REQUEST_FLOOR tunes; 0 restores the old
+     *  "0 requests while the mesh queue is saturated" cliff. */
+    private static final int REQUEST_FLOOR = parseRequestFloor();
+
+    private static int parseRequestFloor() {
+        String v = System.getenv("VOXY_HOT_REQUEST_FLOOR");
+        if (v == null || v.isBlank()) return 8;
+        try {
+            return Math.max(0, Math.min(MAX_REQUEST_QUEUE_SIZE, Integer.parseInt(v.trim())));
+        } catch (NumberFormatException e) {
+            return 8;
+        }
+    }
     private static boolean frustumModeLogged = false;
     private static long frustumFrameCount = 0;
     private static long frustumNanCount = 0;
@@ -329,7 +343,25 @@ public class HierarchicalOcclusionTraverser {
             final double TARGET_COUNT = 4000;
             double iFillness = Math.max(0, (TARGET_COUNT - this.meshGen.getTaskCount()) / TARGET_COUNT);
             iFillness = Math.pow(iFillness, 2);
-            final int requestSize = (int) Math.ceil(iFillness * MAX_REQUEST_QUEUE_SIZE);
+            int requestSize = (int) Math.ceil(iFillness * MAX_REQUEST_QUEUE_SIZE);
+            // 2026-07-03 (Metal): FLOOR the per-frame child-request budget
+            // instead of letting it hit 0 while the mesh queue holds >4000
+            // tasks. At world join the queue saturates with tasks BLOCKED on
+            // model bakes (IdNotYetComputedException retries, not real
+            // meshing throughput), so the quadratic throttle shut off LOD
+            // refinement exactly while the giant coarse parents were on
+            // screen — and each new request is also what seeds the bakery
+            // with the block ids it still needs (RenderGenerationService
+            // computeAndRequestRequiredModels). A small floor keeps
+            // discovery trickling; the bakery warmup burst
+            // (VoxyRenderSystem.computeBakeBudgetNs) drains the resulting
+            // bake demand. VOXY_HOT_REQUEST_FLOOR tunes it (0 restores the
+            // old cliff). GL keeps upstream behaviour byte-identical.
+            boolean isGlBackend = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                    == me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+            if (!isGlBackend) {
+                requestSize = Math.max(REQUEST_FLOOR, requestSize);
+            }
             MemoryUtil.memPutInt(ptr, Math.max(0, Math.min(MAX_REQUEST_QUEUE_SIZE, requestSize))); ptr += 4;
         }
     }
@@ -392,6 +424,58 @@ public class HierarchicalOcclusionTraverser {
             UploadStream.INSTANCE.commit();
         }
 
+        if (this.backend.getType() != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+            // METAL: one compute encoder PER ITERATION. Inside a single Metal
+            // compute encoder, memoryBarrier(scope:) orders shader memory
+            // access between dispatches but does NOT reliably fence the
+            // command processor's INDIRECT-ARGUMENT fetch for the next
+            // dispatchIndirect — iteration N+1's group count can be read
+            // before iteration N finished writing it, truncating the octree
+            // walk at a random depth. That is the static-camera renderList
+            // collapse (min=14 / max=2827 in the [Metal-FLICKER] logs) = the
+            // persistent underwater strobe. Encoder boundaries ARE full
+            // hazard-tracked barriers on Metal, covering indirect args.
+            // VOXY_HOT_SERIALIZE=1 additionally submits+waits per iteration
+            // (diagnostic only — costs up to 7 waits/frame).
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                long pushAddr = stack.nmalloc(4);
+                for (int iter = 0; iter < MAX_ITERATIONS; iter++) {
+                    try (ComputeEncoder encoder = this.backend.beginComputePass()) {
+                        encoder.setPipeline(this.traversal);
+                        encoder.setBuffer(SCENE_UNIFORM_BINDING, this.uniformBuffer, 0);
+                        encoder.setBuffer(REQUEST_QUEUE_BINDING, this.requestBuffer, 0);
+                        encoder.setBuffer(RENDER_QUEUE_BINDING, viewport.getRenderList(), 0);
+                        encoder.setBuffer(NODE_DATA_BINDING, this.nodeBuffer, 0);
+                        encoder.setBuffer(NODE_QUEUE_META_BINDING, this.queueMetaBuffer, 0);
+                        encoder.setBuffer(RENDER_TRACKER_BINDING, this.nodeCleaner.visibilityBuffer, 0);
+                        if (RenderStatistics.enabled) {
+                            encoder.setBuffer(STATISTICS_BUFFER_BINDING, this.statisticsBuffer, 0);
+                        }
+                        encoder.setTexture(HIZ_BINDING, viewport.hiZBuffer.getHizTexture());
+                        encoder.setSampler(HIZ_BINDING, this.hizSampler);
+
+                        MemoryUtil.memPutInt(pushAddr, iter);
+                        encoder.setBytes(PUSH_BINDING, pushAddr, 4);
+                        IGpuBuffer source = iter == 0 ? this.topNodeIds
+                                : ((iter & 1) == 0 ? this.scratchQueueA : this.scratchQueueB);
+                        IGpuBuffer sink = ((iter & 1) == 0 ? this.scratchQueueB : this.scratchQueueA);
+                        encoder.setBuffer(NODE_QUEUE_SOURCE_BINDING, source, 0);
+                        encoder.setBuffer(NODE_QUEUE_SINK_BINDING, sink, 0);
+
+                        if (iter == 0) {
+                            encoder.dispatch(firstDispatchSize, 1, 1);
+                        } else {
+                            encoder.dispatchIndirect(this.queueMetaBuffer, iter * 4L * 4);
+                        }
+                    }
+                    if (HOT_SERIALIZE) {
+                        this.backend.submit();
+                    }
+                }
+            }
+            return;
+        }
+
         try (ComputeEncoder encoder = this.backend.beginComputePass();
              MemoryStack stack = MemoryStack.stackPush()) {
             long pushAddr = stack.nmalloc(4);
@@ -446,6 +530,9 @@ public class HierarchicalOcclusionTraverser {
                     ComputeEncoder.BARRIER_SHADER | ComputeEncoder.BARRIER_TRANSFER);
         }
     }
+
+    /** Diagnostic: submit+wait after every HOT iteration (Metal). */
+    private static final boolean HOT_SERIALIZE = "1".equals(System.getenv("VOXY_HOT_SERIALIZE"));
 
 
     private void downloadResetRequestQueue() {

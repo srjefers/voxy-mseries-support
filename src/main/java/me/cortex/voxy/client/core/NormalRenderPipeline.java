@@ -55,7 +55,17 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
 
     protected NormalRenderPipeline(AsyncNodeManager nodeManager, NodeCleaner nodeCleaner, HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier) {
         super(nodeManager, nodeCleaner, traversal, frexSupplier, false);
-        this.useEnvFog = VoxyConfig.CONFIG.useEnvironmentalFog;
+        // Metal + Iris-pack gbuffer injection: the pack's own fog/composite
+        // shades the injected LOD pixels, so Voxy's per-fragment env fog
+        // would double-fog them (and its colour wouldn't match the pack's).
+        // Pack state is baked at construction — quads.frag's USE_ENV_FOG is a
+        // compile-time define — and VoxyRenderSystem watches for a pack
+        // toggle and recreates the renderer (same path as the config toggle).
+        boolean metal = RenderBackendFactory.get().getType()
+                != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+        this.useEnvFog = VoxyConfig.CONFIG.useEnvironmentalFog
+                && !(metal && (me.cortex.voxy.client.core.util.IrisUtil.irisGbufferInjectMode()
+                        || me.cortex.voxy.client.core.util.IrisUtil.vxContractActive()));
         // M9 migration: defines now flow through a Map<String,String> so the
         // backend-agnostic GraphicsPipelineDesc can forward them to GL,
         // Metal, and Vulkan compile paths uniformly.

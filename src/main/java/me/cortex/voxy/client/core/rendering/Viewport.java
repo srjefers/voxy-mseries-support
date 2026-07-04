@@ -23,6 +23,15 @@ public abstract class Viewport <A extends Viewport<A>> {
                     ? org.lwjgl.opengl.GL30C.GL_DEPTH_COMPONENT32F
                     : org.lwjgl.opengl.GL30C.GL_DEPTH24_STENCIL8);
     public final DepthFramebuffer depthBoundingBuffer = new DepthFramebuffer();
+    /**
+     * Metal only (round 20): {@link #depthBoundingBuffer}'s depth blitted to
+     * raw floats so quads.frag's bound test reads a BUFFER instead of
+     * sampling a depth texture (which silently reads zeros through the
+     * texture2d&lt;float&gt; declaration SPIRV-Cross emits — the mask was
+     * inert since M13 chunk 3). Layout: uint width + 12 pad bytes, then
+     * width*height floats. Owned/resized by ChunkBoundRenderer; null on GL.
+     */
+    public me.cortex.voxy.client.core.gpu.IGpuBuffer metalBoundReadBuffer;
 
     private static final Field planesField;
     static {
@@ -68,6 +77,10 @@ public abstract class Viewport <A extends Viewport<A>> {
     protected void delete0() {
         this.hiZBuffer.free();
         this.depthBoundingBuffer.free();
+        if (this.metalBoundReadBuffer != null) {
+            this.metalBoundReadBuffer.free();
+            this.metalBoundReadBuffer = null;
+        }
     }
 
     public A setVanillaProjection(Matrix4fc projection) {

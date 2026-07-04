@@ -59,9 +59,17 @@ together with the matching Sodium version:
 - **Performance phase 2** pending: the Metal frame currently uses 3
   synchronous GPU waits; collapsing them should push FPS well past the
   current ~110.
-- **Iris shader packs do not apply to LOD terrain** (Voxy's Iris integration
-  is OpenGL-only by design); Iris-alongside-Voxy compatibility on macOS is
-  being tested.
+- **Iris shader packs now drive LOD terrain on Metal** through Voxy's native
+  pack contract (packs shipping `voxy.json`, e.g. BSL): LOD depth goes to the
+  pack's dedicated `vxDepthTex` side-channel and the pack's own `#ifdef VOXY`
+  branches apply fog, AO, shadows and clouds to LOD pixels. Full per-pixel
+  pack lighting of LODs (material g-buffer resolve) is in progress
+  (milestone "Native Iris shader contract on Metal").
+- **BSL fog tuning for LOD view distances**: BSL applies its full fog density
+  across LOD distances by default, washing the far field out white. Lower
+  *Shader Pack Settings → Fog → More Fog Settings → Fog Density LOD* to
+  ~0.25 (BSL added that slider specifically for LOD mods). Equivalent file
+  setting: `FOG_DENSITY_LOD=0.25` in `shaderpacks/<pack>.zip.txt`.
 
 ## Documentation
 

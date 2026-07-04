@@ -92,6 +92,38 @@ Java_me_cortex_voxy_client_core_metal_MetalNative_iosurfaceGetBytesPerRow(
     }
 }
 
+// ---------- CPU read access (diagnostics only — lock forces GPU/CPU sync) ----------
+
+extern "C" JNIEXPORT jint JNICALL
+Java_me_cortex_voxy_client_core_metal_MetalNative_iosurfaceLockReadOnly(
+        JNIEnv *, jclass, jlong handle) {
+    @autoreleasepool {
+        if (handle == 0) return -1;
+        IOSurfaceRef surface = (IOSurfaceRef)(uintptr_t)handle;
+        return (jint)IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL);
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_me_cortex_voxy_client_core_metal_MetalNative_iosurfaceUnlockReadOnly(
+        JNIEnv *, jclass, jlong handle) {
+    @autoreleasepool {
+        if (handle == 0) return;
+        IOSurfaceRef surface = (IOSurfaceRef)(uintptr_t)handle;
+        IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+    }
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_me_cortex_voxy_client_core_metal_MetalNative_iosurfaceGetBaseAddress(
+        JNIEnv *, jclass, jlong handle) {
+    @autoreleasepool {
+        if (handle == 0) return 0;
+        IOSurfaceRef surface = (IOSurfaceRef)(uintptr_t)handle;
+        return (jlong)(uintptr_t)IOSurfaceGetBaseAddress(surface);
+    }
+}
+
 // ---------- IOSurface → MTLTexture wrapping ----------
 //
 // The texture is created from a fresh descriptor each time so callers can

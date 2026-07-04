@@ -12,6 +12,7 @@ public class SharedIndexBuffer {
     public static final SharedIndexBuffer INSTANCE = new SharedIndexBuffer();
     public static final SharedIndexBuffer INSTANCE_BYTE = new SharedIndexBuffer(true);
     public static final SharedIndexBuffer INSTANCE_BB_BYTE = new SharedIndexBuffer(true, true);
+    public static final SharedIndexBuffer INSTANCE_BB_SHORT = new SharedIndexBuffer(true, true, true);
 
     private final IGpuBuffer indexBuffer;
 
@@ -45,6 +46,18 @@ public class SharedIndexBuffer {
     private SharedIndexBuffer(boolean type2, boolean type3) {
         this.indexBuffer = RenderBackendFactory.get().createBuffer(6*2*3*(256/8));
         var cubeBuff = generateByteCubesIndexBuffer(256/8);
+
+        cubeBuff.cpyTo(UploadStream.INSTANCE.upload(this.indexBuffer, 0, this.indexBuffer.size()));
+        UploadStream.INSTANCE.commit();
+        cubeBuff.free();
+    }
+
+    //uint16 variant of INSTANCE_BB_BYTE for encoder-based draws — Metal has no
+    // uint8 index type (RenderEncoder only exposes INDEX_TYPE_UINT16/UINT32).
+    // Same 32-cubes-of-36-indices pattern; max index 255 fits trivially.
+    private SharedIndexBuffer(boolean type2, boolean type3, boolean type4) {
+        this.indexBuffer = RenderBackendFactory.get().createBuffer(6*2*3*(256/8)*2);
+        var cubeBuff = generateShortCubesIndexBuffer(256/8);
 
         cubeBuff.cpyTo(UploadStream.INSTANCE.upload(this.indexBuffer, 0, this.indexBuffer.size()));
         UploadStream.INSTANCE.commit();
@@ -162,6 +175,66 @@ public class SharedIndexBuffer {
             MemoryUtil.memPutByte(ptr++, (byte) (7+j));
             MemoryUtil.memPutByte(ptr++, (byte) (3+j));
             MemoryUtil.memPutByte(ptr++, (byte) (5+j));
+        }
+
+        return buffer;
+    }
+
+    private static MemoryBuffer generateShortCubesIndexBuffer(int cnt) {
+        var buffer = new MemoryBuffer((long) cnt *6*2*3*2);
+        long ptr = buffer.address;
+        MemoryUtil.memSet(ptr, 0, buffer.size);
+
+        for (int i = 0; i < cnt; i++) {
+            int j = i*8;
+
+            //Bottom face
+            MemoryUtil.memPutShort(ptr, (short) (0+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (1+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (2+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (3+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (2+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (1+j)); ptr += 2;
+
+            //top face
+            MemoryUtil.memPutShort(ptr, (short) (6+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (5+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (4+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (5+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (6+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (7+j)); ptr += 2;
+
+            //north face
+            MemoryUtil.memPutShort(ptr, (short) (0+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (4+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (1+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (5+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (1+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (4+j)); ptr += 2;
+
+            //south face
+            MemoryUtil.memPutShort(ptr, (short) (3+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (6+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (2+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (6+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (3+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (7+j)); ptr += 2;
+
+            //west face
+            MemoryUtil.memPutShort(ptr, (short) (2+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (4+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (0+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (4+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (2+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (6+j)); ptr += 2;
+
+            //east face
+            MemoryUtil.memPutShort(ptr, (short) (1+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (5+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (3+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (7+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (3+j)); ptr += 2;
+            MemoryUtil.memPutShort(ptr, (short) (5+j)); ptr += 2;
         }
 
         return buffer;

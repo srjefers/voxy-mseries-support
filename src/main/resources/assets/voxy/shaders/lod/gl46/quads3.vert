@@ -49,8 +49,30 @@ layout(location = 7) out flat uint quadDebug;
 // cameraSubPos (see setupQuad in quad_util.glsl — both are post
 // `- baseSectionPos<<5`), so `length(cornerPoint - cameraSubPos)` is the
 // real world-space distance without needing to round-trip through the MVP.
-#ifdef USE_ENV_FOG
+// 2026-07-03: voxyFogDist was gated on USE_ENV_FOG only, but the vx contract
+// forces useEnvFog() OFF (NormalRenderPipeline:66-68) and configs can turn
+// env fog off — which silently compiled OUT the distance-mip sampling and
+// the far-water alpha ramp in every Iris/BSL session (the [Metal-LODTEST]
+// "ON" logs only reflect define injection, not effective compilation). Any
+// consumer define now pulls the varying in.
+#if defined(USE_ENV_FOG) || defined(VOXY_LOD_DIST_MIP) || defined(VOXY_WATER_FAR_ALPHA) || defined(VOXY_TRANS_NEAR_CULL)
+#define VOXY_NEEDS_FOG_DIST
+#endif
+#ifdef VOXY_NEEDS_FOG_DIST
 layout(location = 2) out float voxyFogDist;
+#endif
+// 2026-07-03 round 3: the near-cull compared voxyFogDist — a 3D SLANT
+// distance — against a horizontal threshold, while MC renders a horizontal
+// square of chunks. From a high camera (or toward the square's diagonals)
+// LOD water inside the MC ring survived the cull and double-composited with
+// BSL/Sodium water, gated only by the per-frame-flipping chunk-bound mask:
+// the flickering pale section-aligned squares. Pass the camera-relative
+// horizontal offset instead (linear in world space, so it interpolates
+// exactly across merged quads; a per-vertex max(|dx|,|dz|) would overestimate
+// mid-quad wherever a long quad crosses the camera axis) and let the
+// fragment shader take the Chebyshev distance that mirrors MC's square.
+#if defined(VOXY_TRANS_NEAR_CULL) && defined(VOXY_TRANS_NEAR_CULL_XZ)
+layout(location = 3) out vec2 voxyCamRelXZ;
 #endif
 
 vec2 taaShift();
@@ -92,7 +114,7 @@ void main() {
     //Note: other data is automatically discarded as it is undefiend and has not been generated
     interData = quad.attributeData;
 
-    #ifdef USE_ENV_FOG
+    #ifdef VOXY_NEEDS_FOG_DIST
     // Reconstruct the corner's world-relative point in the same way
     // getQuadCornerPos does (kept inline rather than refactoring quad_util
     // to avoid touching the GL path's hot vertex code). cameraSubPos comes
@@ -101,6 +123,9 @@ void main() {
     vec2 cornerMask = vec2((cornerId>>1)&1u, cornerId&1u)*quad.lodScale;
     vec3 cornerPoint = quad.basePoint + swizzelDataAxis(quad.axis, vec3(quad.quadSizeAddin*cornerMask, 0));
     voxyFogDist = length(cornerPoint - cameraSubPos);
+    #if defined(VOXY_TRANS_NEAR_CULL) && defined(VOXY_TRANS_NEAR_CULL_XZ)
+    voxyCamRelXZ = cornerPoint.xz - cameraSubPos.xz;
+    #endif
     #endif
 
     #ifdef DEBUG_RENDER
