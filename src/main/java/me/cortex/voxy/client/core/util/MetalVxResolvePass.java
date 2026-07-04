@@ -169,6 +169,26 @@ public final class MetalVxResolvePass {
                 + " (water customId -> sky=15 in the resolve, kills chunk-step reflection squares);"
                 + " VOXY_VX_WATER_SKY_MAX=0 reverts");
 
+        // Diagnostic coverage/id visualizer (VOXY_VX_ID_DEBUG=1). The far LOD
+        // water band stays dark with SSR off AND shows no tint under the
+        // skyReflection magenta discriminant — either those pixels never take
+        // the pack's water branch (customId != 200xx/204xx at high mips) or
+        // the trans resolve never covers them at all (we'd be seeing the
+        // opaque seafloor). Read the TRUE id to pick a flat debug albedo
+        // (magenta = water id, yellow = anything else), then hand the pack a
+        // NEUTRAL id so it renders plain lit albedo — no water branch, no
+        // fresnel replacing the albedo at grazing. Three outcomes: magenta
+        // band = coverage+id OK (hunt multipliers); yellow band = id degraded
+        // at high mips; unchanged dark band = no trans coverage there.
+        // v2: an albedo-level debug colour was washed out by the pack's
+        // GetLighting+Fog at LOD distances (no magenta visible anywhere even
+        // though translucent=3077 draws/frame). Rewrite the FINAL write
+        // instead (gbufferData0 = albedo, after lighting/fog/encode) so the
+        // flat colour reaches colortex16 verbatim — see the patchText rewrite
+        // below.
+        boolean idDebug = "1".equals(System.getenv("VOXY_VX_ID_DEBUG"));
+        String idDebugLine = "";
+
         sb.append("""
                 vec4 vx_fragCoord;
 
@@ -189,7 +209,7 @@ public final class MetalVxResolvePass {
                         (float(vxMr >> 4u) * 16.0 + 8.0) / 256.0,
                         (float(vxMg >> 4u) * 16.0 + 8.0) / 256.0);
                     uint vxCustomId = uint(vxMisc.b + 0.5) | (uint(vxMisc.a + 0.5) << 8u);
-                    __SKY_FLOOR____WATER_SKY_MAX__float vxWz = (uVxDepthIsWindow == 1) ? vxD : vxD * 0.5 + 0.5;
+                    __SKY_FLOOR____WATER_SKY_MAX____ID_DEBUG__float vxWz = (uVxDepthIsWindow == 1) ? vxD : vxD * 0.5 + 0.5;
                     gl_FragDepth = vxWz;
                     vx_fragCoord = vec4(gl_FragCoord.xy, vxWz, 1.0);
                     voxy_emitFragment(VoxyFragmentParameters(
@@ -198,7 +218,8 @@ public final class MetalVxResolvePass {
 
                 #define gl_FragCoord vx_fragCoord
                 """.replace("__SKY_FLOOR__", skyFloorLine)
-                   .replace("__WATER_SKY_MAX__", waterSkyMaxLine));
+                   .replace("__WATER_SKY_MAX__", waterSkyMaxLine)
+                   .replace("__ID_DEBUG__", idDebugLine));
 
         // Disable the pack's screen-space reflection inside the RESOLVE only
         // (VOXY_VX_NO_SSR=0 restores). At our SOLID-head hook SSR is a binary
@@ -227,6 +248,69 @@ public final class MetalVxResolvePass {
                     ? "DISABLED (SimpleReflection call replaced, water mirror = analytic sky+clouds)"
                     : "rewrite FAILED (SimpleReflection needle not found — pack text drifted, SSR still live)")
                     + "; VOXY_VX_NO_SSR=0 restores the pack's SSR");
+        }
+
+        // Diagnostic: with SSR off, LOD water is still dark at grazing angles
+        // where the analytic arm should return the bright horizon sky. Force
+        // magenta right AFTER GetSkyColor but leave the cloud mix and the
+        // occlusion/isEyeInWater multipliers LIVE, so one run discriminates
+        // three ways: pure magenta = GetSkyColor guilty (bad uniforms or ray
+        // direction); dimmed/patchy magenta = cloud/multipliers guilty; no
+        // magenta = the fresnel mix path never runs for these pixels.
+        if (translucent && "1".equals(System.getenv("VOXY_VX_SKYREF_DEBUG"))) {
+            String needle = "skyReflection = GetSkyColor(skyRefPos, true);";
+            boolean found = patchText.contains(needle);
+            if (found) {
+                patchText = patchText.replace(needle,
+                        needle + " skyReflection = vec3(1.0, 0.0, 1.0); // voxy debug: magenta discriminant");
+            }
+            Logger.info("[Metal-LODTEST] vx resolve skyReflection debug " + (found
+                    ? "ON (magenta after GetSkyColor; cloud/occlusion multipliers still live)"
+                    : "rewrite FAILED (GetSkyColor needle not found — pack text drifted)"));
+        }
+
+        // Diagnostic coverage/id visualizer (VOXY_VX_ID_DEBUG=1): rewrite the
+        // pack's final colortex16 write to a flat colour keyed on the TRUE
+        // blockID, bypassing lighting/fog/encode entirely. Three outcomes for
+        // the dark far-water band: magenta = resolve emits there with water
+        // id and deferred1 composites it (the darkness is legit pack
+        // lighting/fog — hunt inside GetLighting/Fog); yellow = coverage OK
+        // but the id degraded at high mips; unchanged dark = the resolve
+        // never emits there or deferred1 drops it (check VOXY_VX_DUMP_OUT
+        // coverage).
+        if (translucent && idDebug) {
+            String needle = "gbufferData0 = albedo;";
+            boolean found = patchText.contains(needle);
+            if (found) {
+                // v3 probe encoding: the yellow/magenta test said 100% non-water over
+                // 19.47% coverage while the BOUND TEXTURES read back as 1.06% coverage /
+                // 100% water — the shader sees different data than the texture objects
+                // hold. Encode what the shader ACTUALLY sampled: R = albedo alpha (the
+                // discard-gate input), G = water-id flag, B = customId low byte.
+                patchText = patchText.replace(needle,
+                        "gbufferData0 = vec4(parameters.sampledColour.a,"
+                        + " (blockID == 200u || blockID == 204u) ? 1.0 : 0.0,"
+                        + " float(parameters.customId & 255u) / 255.0, 1.0); // voxy ID debug v3");
+            }
+            Logger.info("[Metal-LODTEST] vx resolve ID DEBUG " + (found
+                    ? "ON at FINAL WRITE v3 (R=sampled albedo alpha, G=waterId flag, B=customId low byte)"
+                    : "rewrite FAILED (gbufferData0 needle not found — pack text drifted)"));
+        }
+
+        // Kill switch for the volumetric-cloud arm of the sky reflection: the
+        // cloud march runs from GetReflectedCameraPos(worldPos,...) with LOD
+        // worldPos hundreds of blocks out — if it returns dense dark samples
+        // there, cloud.a≈1 replaces the bright sky with near-black.
+        if (translucent && "1".equals(System.getenv("VOXY_VX_NO_CLOUDREF"))) {
+            String needle = "skyReflection = mix(skyReflection, cloud.rgb, cloud.a);";
+            boolean found = patchText.contains(needle);
+            if (found) {
+                patchText = patchText.replace(needle,
+                        "// voxy resolve: cloud reflection disabled (VOXY_VX_NO_CLOUDREF)");
+            }
+            Logger.info("[Metal-LODTEST] vx resolve cloud reflection " + (found
+                    ? "DISABLED (sky reflection = pure GetSkyColor)"
+                    : "rewrite FAILED (cloud-mix needle not found — pack text drifted)"));
         }
 
         sb.append('\n').append(appleStrictCompat(patchText)).append('\n');
@@ -478,6 +562,15 @@ public final class MetalVxResolvePass {
     // Only draw buffer 0 (colortex16) is cleared — attachment 1 is colortex1,
     // which carries the frame's real gbuffer data.
     private static final boolean TRANS_CLEAR = !"0".equals(System.getenv("VOXY_VX_TRANS_CLEAR"));
+
+    // Unbind Iris's leftover per-unit GL sampler objects on units 0-3 for the
+    // resolve draw (VOXY_VX_SAMPLER_FIX=0 reverts). A stale sampler with mip
+    // filtering makes the mip-less RECT material planes INCOMPLETE, and
+    // incomplete samplers return constant (0,0,0,1) — which fed the whole
+    // translucent resolve black albedo/tint and customId 65280 (never water)
+    // while depth kept working on unit 3, i.e. the dark/opaque/textureless
+    // LOD water root cause. See runOne's draw-instant probe notes.
+    private static final boolean SAMPLER_FIX = !"0".equals(System.getenv("VOXY_VX_SAMPLER_FIX"));
     private static final float[] TRANS_CLEAR_ZERO = new float[4];
 
     private static int ct5AltTexture(net.irisshaders.iris.pipeline.IrisRenderingPipeline ipipe) {
@@ -609,6 +702,9 @@ public final class MetalVxResolvePass {
             Logger.info("[Metal-LODTEST] vx colortex16 per-frame clear " + (TRANS_CLEAR ? "ON" : "OFF")
                     + " (Iris never clears the voxy channel -> blended alpha accumulated to 1.0 = opaque water);"
                     + " VOXY_VX_TRANS_CLEAR=0 reverts");
+            Logger.info("[Metal-LODTEST] vx resolve sampler-object fix " + (SAMPLER_FIX ? "ON" : "OFF")
+                    + " (stale Iris samplers on units 0-3 made the RECT planes read as incomplete ->"
+                    + " constant (0,0,0,1): black textureless water); VOXY_VX_SAMPLER_FIX=0 reverts");
         }
         if (data.getUniforms() != null) {
             p.uboSize = data.getUniforms().size();
@@ -729,6 +825,18 @@ public final class MetalVxResolvePass {
                 sc.dumpDepthStats("trans", sc.fboTransId(), fbw, fbh);
             }
             int[] transTargets = data.resolveTranslucentTargetsNow(ipipe);
+            if (DUMP_OUT && dumpFrame % 300 == 100) {
+                // Identity check: attachment 0 must be colortex16 (one of its two
+                // sides). If it isn't, the resolve draws into some other target and
+                // everything downstream reasons about the wrong texture.
+                StringBuilder ids = new StringBuilder();
+                try {
+                    var rts = ((me.cortex.voxy.client.mixin.iris.IrisRenderingPipelineAccessor) ipipe).getRenderTargets();
+                    var ct16 = rts.getOrCreate(16);
+                    ids.append(" ct16 main=").append(ct16.getMainTexture()).append(" alt=").append(ct16.getAltTexture());
+                } catch (Throwable t) { ids.append(" ct16 lookup failed: ").append(t.getMessage()); }
+                Logger.info("[VX-BOUND] trans targets=" + java.util.Arrays.toString(transTargets) + ids);
+            }
             runOne(data, trans, tP0, tP1, tP2, transDepthRect, transTargets, fbw, fbh, true,
                     ct5AltTexture(ipipe));
             // Adjudicates the SSR mirror question empirically: which colortex5 side
@@ -892,6 +1000,32 @@ public final class MetalVxResolvePass {
         glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_RECTANGLE, plane2);
         glActiveTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_RECTANGLE, depthRect);
         glActiveTexture(GL_TEXTURE0);
+        // Iris leaves per-unit GL SAMPLER OBJECTS bound from its own passes; a
+        // sampler with mip filtering makes a mip-less RECT texture INCOMPLETE,
+        // and incomplete samplers return constant (0,0,0,1). That was this
+        // resolve's entire input since day one: albedo black/alpha-1 (passes
+        // the coverage gate), tint black, misc -> customId 65280 (never
+        // water, so the pack's water branch never ran -> flat dark navy,
+        // textureless, no waves). Unit 3 escaped because its stale sampler
+        // happened to be mip-free, which kept depth (and thus coverage)
+        // working and hid the fault. Adjudicated by the draw-instant probe:
+        // bindings [ok] + sampler units [0..3] + correct texture content,
+        // yet sampled values were the incomplete-texture constant.
+        // VOXY_VX_SAMPLER_FIX=0 reverts.
+        int[] prevSamplers = null;
+        if (SAMPLER_FIX) {
+            prevSamplers = new int[4];
+            for (int u = 0; u < 4; u++) {
+                glActiveTexture(GL_TEXTURE0 + u);
+                prevSamplers[u] = glGetInteger(org.lwjgl.opengl.GL33C.GL_SAMPLER_BINDING);
+                org.lwjgl.opengl.GL33C.glBindSampler(u, 0);
+            }
+            glActiveTexture(GL_TEXTURE0);
+            if (DUMP_OUT && blend && dumpFrame % 300 == 100) {
+                Logger.info("[VX-BOUND] stale sampler objects on units 0-3: "
+                        + java.util.Arrays.toString(prevSamplers) + " (unbound for the resolve draw)");
+            }
+        }
         if (data.getImageSet() != null) data.getImageSet().bindingFunction().accept(6);
         if (ssrMirrorTex != 0 && p.gaux2Unit >= 0) {
             // See SSR_ALT: keep the sampler object bindingFunction bound (filtering),
@@ -909,10 +1043,45 @@ public final class MetalVxResolvePass {
         }
         if (blend && data.getBlender() != null) data.getBlender().run();
         else glDisable(GL_BLEND);
+        if (DUMP_OUT && blend && dumpFrame % 300 == 100) {
+            // Draw-instant state probe: the v3 output proved the shader samples
+            // opaque-plane-profiled data (alpha=1/id=0 over 19% of frame) while
+            // the texture objects bound above hold trans data. Either the rect
+            // bindings were clobbered between our binds and the draw, or the
+            // sampler uniforms don't hold units 0-3 (e.g. the pack's
+            // layout(binding=...) qualifiers landing on low units at link).
+            int[] rectBinds = new int[6];
+            for (int u = 0; u < 6; u++) {
+                glActiveTexture(GL_TEXTURE0 + u);
+                rectBinds[u] = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
+            }
+            glActiveTexture(GL_TEXTURE0);
+            int[] sunits = new int[4];
+            String[] snames = {"uVxAlbedo", "uVxTint", "uVxMisc", "uVxDepth"};
+            for (int s = 0; s < 4; s++) {
+                int loc = glGetUniformLocation(p.prog, snames[s]);
+                sunits[s] = loc >= 0 ? org.lwjgl.opengl.GL20C.glGetUniformi(p.prog, loc) : -999;
+            }
+            Logger.info("[VX-BOUND] draw-instant rectBinds units0-5=" + java.util.Arrays.toString(rectBinds)
+                    + " expected=[" + plane0 + "," + plane1 + "," + plane2 + "," + depthRect + "]"
+                    + " samplerUnits(uVxAlbedo,uVxTint,uVxMisc,uVxDepth)=" + java.util.Arrays.toString(sunits));
+        }
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        if (prevSamplers != null) {
+            // Iris assumes its sampler-object bindings persist across our hook.
+            for (int u = 0; u < 4; u++) org.lwjgl.opengl.GL33C.glBindSampler(u, prevSamplers[u]);
+        }
         // Both stages: the translucent program had never had a runtime readback
         // (the old !blend gate), which left the water-resolve output unmeasured.
         if (DUMP_OUT) dumpResolveOutput(p, blend ? "trans" : "opaque", fbw, fbh);
+        // GL-side view of the very textures the shader samples. The CPU-side
+        // IOSurface probe ([Metal-VXTRANS]) and the resolve's ID debug
+        // disagreed wholesale (16 covered samples 100% water vs 19.5% of the
+        // frame 100% NON-water), which is only possible if the GL rect
+        // textures bound at units 0/2/3 do not show the trans planes'
+        // content (stale AUX_RECT_TEXES entry / silent bindToGlTexture
+        // failure). This reads them back through a scratch FBO.
+        if (DUMP_OUT && blend) dumpBoundPlaneStats(plane0, plane2, depthRect, fbw, fbh);
         for (int i = 0; i < p.samplerCount; i++) {
             glActiveTexture(GL_TEXTURE0 + 6 + i);
             glBindTexture(GL_TEXTURE_2D, 0);
@@ -956,6 +1125,95 @@ public final class MetalVxResolvePass {
             Logger.warn("[VX-OUT] " + label + " readback failed: " + t.getMessage());
         } finally {
             org.lwjgl.system.MemoryUtil.memFree(buf);
+        }
+    }
+
+    private static int planeReadFbo;
+
+    /**
+     * VOXY_VX_DUMP_OUT=1: read back the GL rect textures the translucent
+     * resolve actually samples (unit 0 = uVxAlbedo, 2 = uVxMisc, 3 = uVxDepth)
+     * and report coverage/water-id/valid-depth stats. Pairs with the CPU-side
+     * [Metal-VXTRANS] IOSurface probe: matching numbers exonerate the GL
+     * binding; diverging numbers convict AUX_RECT_TEXES/bindToGlTexture.
+     */
+    private static void dumpBoundPlaneStats(int albedoTex, int miscTex, int depthTex, int fbw, int fbh) {
+        if (dumpFrame % 300 != 100) return;
+        int prevReadFb = glGetInteger(GL_READ_FRAMEBUFFER_BINDING);
+        int prevRect = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
+        if (planeReadFbo == 0) planeReadFbo = glGenFramebuffers();
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, planeReadFbo);
+        java.nio.ByteBuffer buf = null;
+        try {
+            // Texture dims vs the viewport the resolve renders at. The shader
+            // samples vxTexel over 0..fbw/0..fbh with CLAMP_TO_EDGE — if the
+            // rect texture is SMALLER than the viewport, everything beyond its
+            // extent replicates the edge texel (and a fbw×fbh readback returns
+            // undefined bytes outside), which reconciles validDepth=100% with
+            // waterId=100% over 0.08%.
+            glBindTexture(GL_TEXTURE_RECTANGLE, depthTex);
+            int tw = org.lwjgl.opengl.GL11C.glGetTexLevelParameteri(GL_TEXTURE_RECTANGLE, 0, org.lwjgl.opengl.GL11C.GL_TEXTURE_WIDTH);
+            int th = org.lwjgl.opengl.GL11C.glGetTexLevelParameteri(GL_TEXTURE_RECTANGLE, 0, org.lwjgl.opengl.GL11C.GL_TEXTURE_HEIGHT);
+            glBindTexture(GL_TEXTURE_RECTANGLE, albedoTex);
+            int aw = org.lwjgl.opengl.GL11C.glGetTexLevelParameteri(GL_TEXTURE_RECTANGLE, 0, org.lwjgl.opengl.GL11C.GL_TEXTURE_WIDTH);
+            int ah = org.lwjgl.opengl.GL11C.glGetTexLevelParameteri(GL_TEXTURE_RECTANGLE, 0, org.lwjgl.opengl.GL11C.GL_TEXTURE_HEIGHT);
+            glBindTexture(GL_TEXTURE_RECTANGLE, prevRect);
+            Logger.info(String.format("[VX-BOUND] viewport=%dx%d depthTex=%d %dx%d albedoTex=%d %dx%d",
+                    fbw, fbh, depthTex, tw, th, albedoTex, aw, ah));
+            int rw = Math.min(fbw, Math.max(1, aw)), rh = Math.min(fbh, Math.max(1, ah));
+            int n = rw * rh;
+            buf = org.lwjgl.system.MemoryUtil.memAlloc(n * 4);
+            // uVxAlbedo (unit 0): alpha coverage within the texture's extent
+            glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_RECTANGLE, albedoTex, 0);
+            if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+                glReadBuffer(GL_COLOR_ATTACHMENT0);
+                org.lwjgl.opengl.GL11C.glReadPixels(0, 0, rw, rh, GL_RGBA, org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE, buf);
+                int cov = 0;
+                for (int i = 0; i < n; i++) if ((buf.get(i * 4 + 3) & 0xFF) > 0) cov++;
+                Logger.info(String.format("[VX-BOUND] uVxAlbedo tex=%d alphaCoverage=%.2f%% of %dx%d", albedoTex, 100.0 * cov / n, rw, rh));
+            } else Logger.info("[VX-BOUND] uVxAlbedo tex=" + albedoTex + " FBO incomplete");
+            // uVxMisc (unit 2): water-id fraction over nonzero pixels
+            glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_RECTANGLE, miscTex, 0);
+            if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+                glReadBuffer(GL_COLOR_ATTACHMENT0);
+                org.lwjgl.opengl.GL11C.glReadPixels(0, 0, rw, rh, GL_RGBA, org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE, buf);
+                int nz = 0, water = 0;
+                java.util.HashMap<Integer,Integer> hist = new java.util.HashMap<>();
+                for (int i = 0; i < n; i++) {
+                    int r = buf.get(i * 4) & 0xFF, g = buf.get(i * 4 + 1) & 0xFF;
+                    int b = buf.get(i * 4 + 2) & 0xFF, a = buf.get(i * 4 + 3) & 0xFF;
+                    if ((r | g | b | a) == 0) continue;
+                    nz++;
+                    int id = b | (a << 8);
+                    if (id / 100 == 200 || id / 100 == 204) water++;
+                    else hist.merge(id, 1, Integer::sum);
+                }
+                StringBuilder top = new StringBuilder();
+                hist.entrySet().stream().sorted((p, q) -> q.getValue() - p.getValue()).limit(5)
+                        .forEach(e -> top.append(String.format(" id=%d(blk=%d)x%d", e.getKey(), e.getKey() / 100, e.getValue())));
+                Logger.info(String.format("[VX-BOUND] uVxMisc tex=%d nonzero=%.2f%% waterId=%.2f%% topOtherIds:%s",
+                        miscTex, 100.0 * nz / n, 100.0 * water / Math.max(1, nz), top.length() == 0 ? " none" : top.toString()));
+            } else Logger.info("[VX-BOUND] uVxMisc tex=" + miscTex + " FBO incomplete");
+            // uVxDepth (unit 3): valid packed-depth fraction (resolve coverage gate)
+            glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_RECTANGLE, depthTex, 0);
+            if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+                glReadBuffer(GL_COLOR_ATTACHMENT0);
+                org.lwjgl.opengl.GL11C.glReadPixels(0, 0, rw, rh, GL_RGBA, org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE, buf);
+                int valid = 0;
+                for (int i = 0; i < n; i++) {
+                    double d = (buf.get(i * 4) & 0xFF) / 255.0
+                             + (buf.get(i * 4 + 1) & 0xFF) / (255.0 * 255.0)
+                             + (buf.get(i * 4 + 2) & 0xFF) / (255.0 * 65025.0);
+                    if (d > 0.0 && d < 0.9999999) valid++;
+                }
+                Logger.info(String.format("[VX-BOUND] uVxDepth tex=%d validDepth=%.2f%% of %dx%d", depthTex, 100.0 * valid / n, rw, rh));
+            } else Logger.info("[VX-BOUND] uVxDepth tex=" + depthTex + " FBO incomplete");
+        } catch (Throwable t) {
+            Logger.warn("[VX-BOUND] readback failed: " + t.getMessage());
+        } finally {
+            if (buf != null) org.lwjgl.system.MemoryUtil.memFree(buf);
+            glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_RECTANGLE, 0, 0);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFb);
         }
     }
 
