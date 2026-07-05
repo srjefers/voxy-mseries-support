@@ -250,6 +250,60 @@ public final class MetalVxResolvePass {
                     + "; VOXY_VX_NO_SSR=0 restores the pack's SSR");
         }
 
+        // Near-fallback mirror dim (VOXY_VX_NEAR_MIRROR_DIM, =1 disables). The
+        // masked near-cull (VOXY_TRANS_NEAR_CULL_MASKED) keeps LOD water INSIDE
+        // the MC render ring over Sodium sections that aren't built yet; with
+        // SSR off those pixels take the analytic sky arm at full strength plus
+        // the water sky-light MAX above — a flat bright sky-mirror tone that
+        // reads as pale gray patches against BSL's near water. Dim skyReflection
+        // for pixels whose view distance is inside the near-cull radius so the
+        // kept fallback approximates the surrounding BSL tone; full strength
+        // returns past the ring where LOD water is the only water. Anchored on
+        // the final sky/SSR mix, where both skyReflection and viewPos (decoded
+        // LOD depth via vx_fragCoord) are in scope. The cull distance mirrors
+        // MDICSectionRenderer's voxyLodParams2.x computation but is BAKED at
+        // shader build — a render-distance change mid-session won't retune the
+        // ramp until the vx programs rebuild (shader reload / relaunch).
+        if (translucent) {
+            String nearCullEnv = System.getenv("VOXY_TRANS_NEAR_CULL");
+            boolean nearCullOn = nearCullEnv == null || !"0".equals(nearCullEnv.trim());
+            if (!nearCullOn || NEAR_MIRROR_DIM >= 1.0f) {
+                Logger.info("[Metal-LODTEST] vx near-fallback mirror dim OFF ("
+                        + (nearCullOn ? "VOXY_VX_NEAR_MIRROR_DIM>=1" : "near-cull disabled, no fallback ring")
+                        + "); default dims the kept-fallback ring's sky mirror to 0.45");
+            } else {
+                String needle = "reflection.rgb = max(mix(skyReflection, reflection.rgb, reflection.a), vec3(0.0));";
+                if (patchText.contains(needle)) {
+                    // Same margin default as MDICSectionRenderer.TRANS_NEAR_CULL_MARGIN
+                    // (16 in XZ mode, 48 for the legacy slant metric).
+                    float margin = parseEnvFloat("VOXY_TRANS_NEAR_CULL_MARGIN",
+                            !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_XZ")) ? 16f : 48f);
+                    float rdBlocks;
+                    try {
+                        rdBlocks = Math.max(net.minecraft.client.Minecraft.getInstance()
+                                .gameRenderer.getRenderDistance(), 32f);
+                    } catch (Throwable t) {
+                        rdBlocks = 192f;
+                    }
+                    float cull = Math.max(rdBlocks - margin, 64f);
+                    float dim = Math.max(NEAR_MIRROR_DIM, 0.0f);
+                    // Locale.ROOT: a comma decimal separator would emit broken GLSL.
+                    patchText = patchText.replace(needle, String.format(java.util.Locale.ROOT,
+                            "skyReflection *= mix(%.4f, 1.0, smoothstep(%.1f, %.1f, length(viewPos))); ",
+                            dim, 0.75f * cull, cull) + needle);
+                    Logger.info(String.format(java.util.Locale.ROOT,
+                            "[Metal-LODTEST] vx near-fallback mirror dim ON (skyReflection *= %.2f inside"
+                            + " the kept-fallback ring, ramp %.0f..%.0f blocks; baked at shader build,"
+                            + " RD change needs shader reload); VOXY_VX_NEAR_MIRROR_DIM=1 disables",
+                            dim, 0.75f * cull, cull));
+                } else {
+                    Logger.warn("[Metal-LODTEST] vx near-fallback mirror dim SKIPPED"
+                            + " (reflection-mix anchor not found — pack text drifted; patch not applied);"
+                            + " VOXY_VX_NEAR_MIRROR_DIM inert");
+                }
+            }
+        }
+
         // Diagnostic: with SSR off, LOD water is still dark at grazing angles
         // where the analytic arm should return the bright horizon sky. Force
         // magenta right AFTER GetSkyColor but leave the cloud mix and the
@@ -572,6 +626,21 @@ public final class MetalVxResolvePass {
     // LOD water root cause. See runOne's draw-instant probe notes.
     private static final boolean SAMPLER_FIX = !"0".equals(System.getenv("VOXY_VX_SAMPLER_FIX"));
     private static final float[] TRANS_CLEAR_ZERO = new float[4];
+
+    // Sky-mirror dim factor for LOD water kept as near fallback inside the
+    // masked near-cull ring — see the anchor patch in assembleFragment.
+    // 1 (or >=1) disables the dim entirely.
+    private static final float NEAR_MIRROR_DIM = parseEnvFloat("VOXY_VX_NEAR_MIRROR_DIM", 0.45f);
+
+    private static float parseEnvFloat(String name, float def) {
+        String v = System.getenv(name);
+        if (v == null || v.isBlank()) return def;
+        try {
+            return Float.parseFloat(v.trim());
+        } catch (NumberFormatException e) {
+            return def;
+        }
+    }
 
     private static int ct5AltTexture(net.irisshaders.iris.pipeline.IrisRenderingPipeline ipipe) {
         if (!SSR_ALT) return 0;
