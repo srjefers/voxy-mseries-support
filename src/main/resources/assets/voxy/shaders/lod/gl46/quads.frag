@@ -222,8 +222,32 @@ void main() {
     float voxyNearCullDist = voxyFogDist;
 #endif
     if (voxyLodParams2.x > 0.0 && voxyNearCullDist < voxyLodParams2.x) {
+#if defined(VOXY_TRANS_NEAR_CULL_MASKED) && !defined(VOXY_NO_DEPTH_BOUND)
+        // 2026-07-04 "gray squares" root cause: the UNCONDITIONAL distance
+        // cull assumed MC water covers everything inside the ring, but Sodium
+        // only renders water where the section is BUILT — over unbuilt/
+        // unloaded sections (chunk gen lag, server load radius < client RD)
+        // the cull stripped the LOD water and exposed naked pale seafloor
+        // quads: the stable flat "gray squares on water", checkerboarded at
+        // section granularity. Gate the cull on chunk-bound mask COVERAGE:
+        // a built section rasterized this pixel (bound clear = 0.0) -> MC
+        // water is really there -> cull; no coverage -> keep LOD water as
+        // the fallback. Coverage is binary, immune to the grazing-angle
+        // depth-compare flip that motivated the distance cull.
+        // VOXY_TRANS_NEAR_CULL_MASKED=0 restores the unconditional cull.
+#ifdef VOXY_METAL_BOUND_SSBO
+        float voxyNearCullBound = boundDepths[uint(gl_FragCoord.y) * boundWidth + uint(gl_FragCoord.x)];
+#else
+        float voxyNearCullBound = texelFetch(depthTex, ivec2(gl_FragCoord.xy), 0).r;
+#endif
+        if (voxyNearCullBound > 0.0) {
+            discard;
+            return;
+        }
+#else
         discard;
         return;
+#endif
     }
 #endif
 

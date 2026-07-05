@@ -245,6 +245,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             TRANS_NEAR_CULL_XZ && !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_RADIAL"));
     private static final float TRANS_NEAR_CULL_MARGIN =
             parseEnvFloat("VOXY_TRANS_NEAR_CULL_MARGIN", TRANS_NEAR_CULL_XZ ? 16f : 48f);
+    private static boolean loggedNearCullRuntime;
 
     private static float parseEnvFloat(String name, float def) {
         String v = System.getenv(name);
@@ -503,6 +504,16 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                         if (TRANS_NEAR_CULL_RADIAL) {
                             translucentDefines.put("VOXY_TRANS_NEAR_CULL_RADIAL", "");
                         }
+                    }
+                    // 2026-07-04: gate the cull on chunk-bound mask coverage so
+                    // LOD water survives over UNBUILT sections inside the ring
+                    // (naked-seafloor "gray squares" fix — see quads.frag).
+                    // VOXY_TRANS_NEAR_CULL_MASKED=0 restores the unconditional cull.
+                    if (!"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_MASKED"))) {
+                        translucentDefines.put("VOXY_TRANS_NEAR_CULL_MASKED", "");
+                        Logger.info("[Metal-LODTEST] trans near-cull MASKED (cull only under built-"
+                                + "section coverage; LOD water kept over unbuilt sections); "
+                                + "VOXY_TRANS_NEAR_CULL_MASKED=0 reverts");
                     }
                     Logger.info("[Metal-LODTEST] translucent near-cull ON (vx contract: no LOD water "
                             + "inside MC render distance; metric="
@@ -877,6 +888,14 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             float nearCull = 0.0f;
             if (me.cortex.voxy.client.core.util.IrisUtil.vxContractActive()) {
                 nearCull = Math.max(rdBlocks - TRANS_NEAR_CULL_MARGIN, 64f);
+            }
+            if (!loggedNearCullRuntime) {
+                loggedNearCullRuntime = true;
+                // One-shot: getRenderDistance() units (blocks vs chunks) decide
+                // whether the cull radius is ~RD or degenerate ~64.
+                Logger.info("[Metal-LODTEST] trans near-cull runtime: rdBlocks=" + rdBlocks
+                        + " cullDist=" + nearCull + " (vxContract="
+                        + me.cortex.voxy.client.core.util.IrisUtil.vxContractActive() + ")");
             }
             MemoryUtil.memPutFloat(lodBase + 16, nearCull);
             MemoryUtil.memPutFloat(lodBase + 20, 0f);
