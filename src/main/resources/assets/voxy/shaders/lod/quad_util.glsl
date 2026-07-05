@@ -84,9 +84,22 @@ uvec3 makeRemainingAttributes(const in BlockModel model, const in Quad quad, uin
     //Apply model colour tinting
     uint tintColour = model.colourTint;
 
+#ifdef VOXY_WLOG_TINT_FIX
+    // Pale plant-field squares (2026-07-04): waterlogged plant models
+    // (seagrass/kelp) inherit the water model's biome-LUT flag but bake no
+    // colour provider, so the colour slot holds the uint(-1) sentinel;
+    // colourData[uint(-1) + biomeId] wraps unsigned into ANOTHER model's LUT
+    // entry (pale water blue), tinting every plant-field quad of the
+    // double-sided opaque batch. Treat the sentinel as "no tint" instead of
+    // indexing. Injected on the Metal path only; VOXY_WLOG_TINT_FIX=0 reverts.
+    if (modelHasBiomeLUT(model) && tintColour != uint(-1)) {
+        tintColour = colourData[tintColour + extractBiomeId(quad)];
+    }
+#else
     if (modelHasBiomeLUT(model)) {
         tintColour = colourData[tintColour + extractBiomeId(quad)];
     }
+#endif
 
     #ifdef PATCHED_SHADER
     attributes.x = lighting;
@@ -104,6 +117,14 @@ uvec3 makeRemainingAttributes(const in BlockModel model, const in Quad quad, uin
     if (tintColour != uint(-1)) {
         conditionalTinting = tintColour;
     }
+#ifdef VOXY_WLOG_TINT_FIX
+    else {
+        // Sentinel survived to here (see the guard above): the quad's tinting
+        // function may still fire in the fragment shader, and 0 would multiply
+        // the texture to black — hand it neutral white instead.
+        conditionalTinting = uint(-1);
+    }
+#endif
 
     uint addin = 0;
     if (!isTranslucent) {

@@ -522,6 +522,34 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                             + "VOXY_TRANS_NEAR_CULL_RADIAL=0 restores the Chebyshev square, "
                             + "VOXY_TRANS_NEAR_CULL_XZ=0 restores the slant metric");
                 }
+                // VOXY_WLOG_TINT_FIX — the pale plant-field squares (2026-07-04,
+                //   issue 2). Waterlogged plant models (seagrass/kelp) inherit
+                //   the water model's biome-LUT flag (ModelFactory keeps it so
+                //   the mesher preserves per-voxel biome bits) but bake no
+                //   colour provider, leaving the uint(-1) sentinel in the
+                //   colour slot; the vertex-side LUT fetch colourData[-1+biome]
+                //   wraps unsigned into another model's entry (pale water blue)
+                //   and tints every plant-field quad of the DOUBLE-SIDED opaque
+                //   batch — which has no near-cull, so the quads shine through
+                //   INSIDE MC render distance wherever the fail-open chunk-bound
+                //   mask misses. Guard the sentinel shader-side (Metal-injected
+                //   define; GL source unchanged). VOXY_WLOG_TINT_FIX=0 reverts;
+                //   VOXY_DEBUG_WLOG_TINT=1 paints affected quads magenta for
+                //   one-screenshot adjudication.
+                String wlogFixEnv = System.getenv("VOXY_WLOG_TINT_FIX");
+                if (wlogFixEnv == null || !"0".equals(wlogFixEnv.trim())) {
+                    opaqueDefines.put("VOXY_WLOG_TINT_FIX", "");
+                    translucentDefines.put("VOXY_WLOG_TINT_FIX", "");
+                    Logger.info("[Metal-LODTEST] waterlogged-plant tint sentinel guard ON "
+                            + "(biome-LUT flag + colour=-1 no longer wraps into another model's "
+                            + "tint); VOXY_WLOG_TINT_FIX=0 reverts");
+                }
+                if ("1".equals(System.getenv("VOXY_DEBUG_WLOG_TINT"))) {
+                    opaqueDefines.put("VOXY_DEBUG_WLOG_TINT", "");
+                    translucentDefines.put("VOXY_DEBUG_WLOG_TINT", "");
+                    Logger.info("[Metal-LODTEST] wlog tint DEBUG ON — sentinel-tint quads render "
+                            + "solid magenta");
+                }
                 // Seam-ring brightness parity: GL runs SSAO between opaque and
                 // translucent; that pass is parked on Metal, so LOD terrain sits
                 // ~10% brighter than AO-darkened Sodium terrain — the visible

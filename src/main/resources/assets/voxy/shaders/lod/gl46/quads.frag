@@ -545,6 +545,17 @@ void main() {
         tint = uint2vec4RGBA(interData.z).yzwx;
     }
 
+    #ifdef VOXY_DEBUG_WLOG_TINT
+    // Adjudication aid (VOXY_DEBUG_WLOG_TINT=1): solid magenta on every quad
+    // whose model carries the biome-LUT flag with the -1 colour sentinel (the
+    // waterlogged-plant pale-squares mechanism). One screenshot decides: the
+    // pale squares turning magenta confirms the mechanism.
+    if (modelHasBiomeLUT(model) && model.colourTint == uint(-1)) {
+        colour = vec4(1.0, 0.0, 1.0, 1.0);
+        tint = vec4(1.0);
+    }
+    #endif
+
     uint face = getFace();
     face ^= uint((face&1u)!=uint(gl_FrontFacing!=((face>>1)!=0u)));
     voxy_emitFragment(VoxyFragmentParameters(colour, tile, texPos, face, modelId, getLightmap(), tint, model.customId));
