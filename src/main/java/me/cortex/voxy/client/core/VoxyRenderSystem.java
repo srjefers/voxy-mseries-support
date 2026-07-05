@@ -291,6 +291,13 @@ public class VoxyRenderSystem {
     private long fogClassStreakStartNs;
     private static boolean loggedViewportLeak;
 
+    /** Metal-only kill switch: VOXY_LOD_ZOOM_REFINE=1 restores the upstream
+     *  refine-on-zoom behaviour (spyglass demands finer LOD levels → ~3s
+     *  pop-in) instead of the zoom-invariant minSSS compensation. */
+    private static final boolean ZOOM_REFINE_ENABLED =
+            "1".equals(System.getenv("VOXY_LOD_ZOOM_REFINE"));
+    private static boolean zoomCompEngaged;
+
     /**
      * Submersion-type fog records (water/lava/powder-snow/blindness) carry a
      * short environmental end; atmospheric fog is hundreds of blocks. The
@@ -432,6 +439,52 @@ public class VoxyRenderSystem {
             if (factor != null) {
                 width = (int) (width*factor[0]);
                 height = (int) (height*factor[1]);
+            }
+        }
+
+        viewport.zoomCompensation = 1.0f;
+        if (!ZOOM_REFINE_ENABLED
+                && me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                        != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+            // The projection's FOV includes spyglass zoom (getFov(..., true) in
+            // makeProjectionMatrix) but the HOT traversal's minSSS is uploaded
+            // FOV-independent — zooming inflates every node's screenspace area
+            // ~170x, so the walk demands 3-4 finer LOD levels that each need a
+            // request→build→upload round trip (~3s of pop-in). Scale minSSS by
+            // the projected-AREA zoom factor instead so the already-built level
+            // stays selected. The REQUEST/cull frustum keeps the zoomed planes.
+            float m00 = projection.m00();
+            float m11 = projection.m11();
+            float baseFov = Minecraft.getInstance().options.fov().get();
+            float baseM11 = 1.0f / (float) Math.tan(Math.toRadians(baseFov) * 0.5);
+            float aspect = m00 != 0.0f ? Math.abs(m11 / m00) : 0.0f;
+            float baseM00 = aspect > 0.0f ? baseM11 / aspect : 0.0f;
+            float zoomComp = (baseM00 != 0.0f && baseM11 != 0.0f)
+                    ? (m00 / baseM00) * (m11 / baseM11)
+                    : 1.0f;
+            if (!Float.isFinite(zoomComp)) {
+                zoomComp = 1.0f;
+            }
+            zoomComp = Math.min(400.0f, Math.max(1.0f, zoomComp));
+            // Engage only past 16x area (4x linear). 4x proved too low
+            // on-device: the first world frame hit zoomComp=4.1 with no
+            // spyglass (join transient) and would have coarsened LODs a
+            // level. The spyglass is ~169x area, so 16x keeps wide margin
+            // over fov_effects wobble (~1.4x) and join transients while
+            // never missing a real zoom.
+            boolean engaged = zoomComp > 16.0f;
+            viewport.zoomCompensation = engaged ? zoomComp : 1.0f;
+            if (engaged != zoomCompEngaged) {
+                zoomCompEngaged = engaged;
+                if (engaged) {
+                    Logger.info("[Metal-LODTEST] LOD zoom compensation ON (zoomComp="
+                            + zoomComp + "): minSSS scaled by the projected-area zoom factor"
+                            + " so zoom keeps the current LOD level instead of ~3s pop-in;"
+                            + " VOXY_LOD_ZOOM_REFINE=1 restores refine-on-zoom");
+                } else {
+                    Logger.info("[Metal-LODTEST] LOD zoom compensation off (zoomComp="
+                            + zoomComp + " below engage threshold)");
+                }
             }
         }
 

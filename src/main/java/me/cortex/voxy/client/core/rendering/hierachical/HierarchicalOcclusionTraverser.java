@@ -333,7 +333,15 @@ public class HierarchicalOcclusionTraverser {
         MemoryUtil.memPutInt(ptr, viewport.hiZBuffer.getPackedLevels()); ptr += 4;
         viewport.innerTranslation.getToAddress(ptr); ptr += 4 * 3;
 
-        final float screenspaceAreaDecreasingSize = VoxyConfig.CONFIG.subDivisionSize * VoxyConfig.CONFIG.subDivisionSize;
+        float screenspaceAreaDecreasingSize = VoxyConfig.CONFIG.subDivisionSize * VoxyConfig.CONFIG.subDivisionSize;
+        if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+            // Zoom-invariant LOD selection: the MVP's zoomed FOV inflates every
+            // node's screenspace area, so an uncompensated minSSS forces 3-4
+            // finer LOD levels under the spyglass (~3s pop-in). See
+            // Viewport.zoomCompensation; VOXY_LOD_ZOOM_REFINE=1 disables.
+            screenspaceAreaDecreasingSize *= viewport.zoomCompensation;
+        }
         MemoryUtil.memPutFloat(ptr, (float) (screenspaceAreaDecreasingSize) / (viewport.width * viewport.height)); ptr += 4;
         setFrustum(viewport, ptr); ptr += 4 * 4 * 6;
         MemoryUtil.memPutInt(ptr, (int) (viewport.getRenderList().size() / 4 - 1)); ptr += 4;
