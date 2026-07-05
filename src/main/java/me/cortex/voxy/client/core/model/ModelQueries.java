@@ -45,4 +45,9 @@ public abstract class ModelQueries {
     public static boolean isFullyOpaque(long metadata) {
         return ((metadata>>(8*6))&64) != 0;
     }
+
+    //Cross-model plant (non-fluid, non-waterlogged VegetationBlock) — see ModelFactory bit-55 flag
+    public static boolean isPlant(long metadata) {
+        return ((metadata>>(8*6))&128) != 0;
+    }
 }

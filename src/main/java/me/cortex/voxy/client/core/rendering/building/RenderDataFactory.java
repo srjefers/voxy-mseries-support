@@ -30,6 +30,36 @@ public class RenderDataFactory {
     private static final boolean DISABLE_CULL_SAME_OCCLUDES =
             "1".equals(System.getenv("VOXY_LOD_MESH_ALL_SAME_FACES"));
 
+    // Far-LOD plant cull (2026-07-05, Metal only): the Mipper lets a plant voxel
+    // (opacity 0) win representative-voxel selection over air for a whole 2^L
+    // cell, and the bakery has no cross geometry (UP/DOWN bake empty, 4 sides
+    // bake the projected blade), so plains at distance read as hollow green cube
+    // shells instead of flat grass. Treat plant voxels (ModelQueries.isPlant) as
+    // air — light byte preserved exactly like the air path — for sections at
+    // lvl >= PLANT_CULL_MIN_LVL. Takes effect on section rebuild; meshes are not
+    // disk-cached. VOXY_LOD_FAR_PLANTS=1 restores upstream behavior entirely;
+    // VOXY_LOD_PLANT_LVL=N tunes the first culled level (default 1 = plants only
+    // in the nearest 1:1 ring). Static finals: this runs on mesh worker threads.
+    private static final int PLANT_CULL_MIN_LVL = parseEnvInt("VOXY_LOD_PLANT_LVL", 1);
+    private static final boolean CULL_FAR_PLANTS =
+            me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                    != me.cortex.voxy.client.core.gpu.BackendType.OPENGL
+            && !"1".equals(System.getenv("VOXY_LOD_FAR_PLANTS"));
+    private static final java.util.concurrent.atomic.AtomicBoolean PLANT_CULL_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    private static int parseEnvInt(String name, int def) {
+        String v = System.getenv(name);
+        if (v == null || v.isEmpty()) {
+            return def;
+        }
+        try {
+            return Integer.parseInt(v.trim());
+        } catch (NumberFormatException e) {
+            return def;
+        }
+    }
+
     private static final boolean VERIFY_MESHING = VoxyCommon.isVerificationFlagOn("verifyMeshing");
 
     //TODO: MAKE a render cache that caches each WorldSection directional face generation, cause then can just pull that directly
@@ -239,9 +269,10 @@ public class RenderDataFactory {
         return quadData;
     }
 
-    private int prepareSectionData(final long[] rawSectionData) {
+    private int prepareSectionData(final long[] rawSectionData, final int lvl) {
         final var sectionData = this.sectionData;
         final var rawModelIds = this.modelMan._unsafeRawAccess();
+        final boolean cullPlants = CULL_FAR_PLANTS && lvl >= PLANT_CULL_MIN_LVL;
         long opaque = 0;
         long notEmpty = 0;
         long pureFluid = 0;
@@ -260,14 +291,25 @@ public class RenderDataFactory {
                 }
                 long modelMetadata = this.modelMan.getModelMetadataFromClientId(modelId);
 
-                sectionData[i * 2] = packPartialQuadData(modelId, block, modelMetadata);
-                sectionData[i * 2 + 1] = modelMetadata;
+                if (cullPlants && ModelQueries.isPlant(modelMetadata)) {
+                    //Far-LOD plant cull: same emission as the air branch above (light byte kept),
+                    // no notEmpty/opaque/fluid bits so the mesher sees an empty voxel
+                    if (PLANT_CULL_LOGGED.compareAndSet(false, true)) {
+                        Logger.info("[Metal-LODTEST] far-plant cull ON: plant cross-models meshed as air at LOD lvl >= "
+                                + PLANT_CULL_MIN_LVL + " (tune VOXY_LOD_PLANT_LVL=N, revert with VOXY_LOD_FAR_PLANTS=1)");
+                    }
+                    sectionData[i * 2] = (block&(0xFFL<<56))>>>1;
+                    sectionData[i * 2 + 1] = 0;
+                } else {
+                    sectionData[i * 2] = packPartialQuadData(modelId, block, modelMetadata);
+                    sectionData[i * 2 + 1] = modelMetadata;
 
-                long msk = 1L << (i & 63);
-                opaque |= ModelQueries.isFullyOpaque(modelMetadata) ? msk : 0;
-                notEmpty |= modelId != 0 ? msk : 0;
-                pureFluid |= ModelQueries.isFluid(modelMetadata) ? msk : 0;
-                partialFluid |= ModelQueries.containsFluid(modelMetadata) ? msk : 0;
+                    long msk = 1L << (i & 63);
+                    opaque |= ModelQueries.isFullyOpaque(modelMetadata) ? msk : 0;
+                    notEmpty |= modelId != 0 ? msk : 0;
+                    pureFluid |= ModelQueries.isFluid(modelMetadata) ? msk : 0;
+                    partialFluid |= ModelQueries.containsFluid(modelMetadata) ? msk : 0;
+                }
             }
 
             //Do increment here
@@ -1653,7 +1695,7 @@ public class RenderDataFactory {
         Arrays.fill(this.fluidMasks, 0);
 
         //Prepare everything
-        int neighborMsk = this.prepareSectionData(section._unsafeGetRawDataArray());
+        int neighborMsk = this.prepareSectionData(section._unsafeGetRawDataArray(), section.lvl);
         if (neighborMsk>>31!=0) {//We failed to get everything so throw exception
             DIAG_GEN_PREPARE_THROW.incrementAndGet();
             throw new IdNotYetComputedException(neighborMsk&(~(1<<31)), true);
