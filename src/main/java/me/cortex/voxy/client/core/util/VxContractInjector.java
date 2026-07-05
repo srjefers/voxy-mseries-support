@@ -47,6 +47,7 @@ public final class VxContractInjector {
     private static int vao;
     private static int uColour, uDepthTex, uInjectGamma, uInjectExposure, uInjectSqrt, uShadowMask;
     private static int uProjInv, uLightVec, uMaskAuto, uMaskScale, uDepthIsWindow;
+    private static int uProj, uLongShadows, uShadowDim, uShadowSteps;
     private static int colorFbo;
     private static int[] attachedTargets = new int[0];
     private static boolean warnedFailure;
@@ -93,6 +94,26 @@ public final class VxContractInjector {
             System.getenv("VOXY_VX_SHADOW_MASK") == null
                     && !"0".equals(System.getenv("VOXY_VX_SHADOW_MASK_AUTO"));
     private static final float VX_SHADOW_MASK_SCALE = parseEnvF("VOXY_VX_SHADOW_MASK_SCALE", 1.0f);
+
+    /** 2026-07-04 (issue 3, "mejorar las sombras mas"): terrain-scale cast
+     *  shadows. The colortex6 seed above can NEVER produce them — BSL's
+     *  GetLODShadows uses the seed only as the darkening DEPTH where its own
+     *  16-step view-space march (reach ~0.25..64 view blocks, sized for
+     *  DH-near ranges) finds an occluder; at 1000+ block LOD distances those
+     *  steps are sub-pixel, so unoccluded pixels return 1.0 and mountains
+     *  never shadow valleys. Fix: march the LOD depth bridge (already bound
+     *  as uDepthTex) toward the sun HERE and darken the injected colour
+     *  directly. The march starts at >=64 view blocks — exactly where BSL's
+     *  contact march ends — so the two never double-darken; the seed is also
+     *  scaled by (1-occlusion) so BSL's march can't re-darken inside ours.
+     *  Requires auto-mask mode (needs uProjInv/uLightVec).
+     *  VOXY_VX_LOD_LONG_SHADOWS=0 kills; VOXY_VX_LOD_SHADOW_DIM=<f> sets the
+     *  max darkening factor; VOXY_VX_LOD_SHADOW_STEPS=<n> the tap count. */
+    private static final boolean VX_LOD_LONG_SHADOWS =
+            !"0".equals(System.getenv("VOXY_VX_LOD_LONG_SHADOWS"));
+    private static final float VX_LOD_SHADOW_DIM = parseEnvF("VOXY_VX_LOD_SHADOW_DIM", 0.55f);
+    private static final int VX_LOD_SHADOW_STEPS =
+            Math.max(4, Math.min(24, (int) parseEnvF("VOXY_VX_LOD_SHADOW_STEPS", 12f)));
     /** Cleared if the Iris celestial API throws — degrades to constant mode. */
     private static boolean shadowMaskAutoOk = true;
     private static boolean warnedShadowAuto;
@@ -241,6 +262,10 @@ public final class VxContractInjector {
                     // so the reconstruction matches deferred1's vxProjInv math.
                     org.joml.Matrix4f projInv = new org.joml.Matrix4f(viewport.projection).invert();
                     glUniformMatrix4fv(uProjInv, false, projInv.get(new float[16]));
+                    // Forward projection for the long-shadow march (view-space
+                    // sun-ray sample points reprojected back to bridge texels).
+                    glUniformMatrix4fv(uProj, false,
+                            new org.joml.Matrix4f(viewport.projection).get(new float[16]));
                     // Iris's view-space shadow-light vector — the source of BSL's
                     // lightVec. Public API on 1.10.7; any drift degrades to the
                     // constant seed instead of crashing the inject.
@@ -263,6 +288,9 @@ public final class VxContractInjector {
             }
             glUniform1i(uMaskAuto, maskAuto ? 1 : 0);
             glUniform1f(uMaskScale, VX_SHADOW_MASK_SCALE);
+            glUniform1i(uLongShadows, (maskAuto && VX_LOD_LONG_SHADOWS) ? 1 : 0);
+            glUniform1f(uShadowDim, VX_LOD_SHADOW_DIM);
+            glUniform1i(uShadowSteps, VX_LOD_SHADOW_STEPS);
             glUniform1i(uDepthIsWindow,
                     me.cortex.voxy.client.core.rendering.util.MetalMvpUtil.METAL_NDC_REMAP ? 1 : 0);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -616,10 +644,14 @@ public final class VxContractInjector {
                 uniform int uInjectSqrt;
                 uniform float uShadowMask;
                 uniform mat4 uProjInv;
+                uniform mat4 uProj;
                 uniform vec3 uLightVec;
                 uniform float uMaskScale;
                 uniform int uMaskAuto;
                 uniform int uDepthIsWindow;
+                uniform int uLongShadows;
+                uniform float uShadowDim;
+                uniform int uShadowSteps;
                 in vec2 vUV;
                 out vec4 outColor0;
                 out vec4 outColor1;
@@ -639,7 +671,6 @@ public final class VxContractInjector {
                     // factor here made LODs render at half the brightness of
                     // the pack's own LOD output — the "washed grey".)
                     vec3 lin = pow(c.rgb, vec3(uInjectGamma)) * uInjectExposure;
-                    outColor0 = vec4((uInjectSqrt == 1) ? sqrt(max(lin, vec3(0.0))) : lin, 1.0);
                     // colortex6 seed: r = shadowMask (see VX_SHADOW_MASK note —
                     // constant 1.0 was the left-of-sun gray-veil bug), b = "LOD
                     // wrote here" mask the pack's own voxy_opaque writes as
@@ -659,14 +690,72 @@ public final class VxContractInjector {
                         vec3 nrm = cross(dFdx(vpos), dFdy(vpos));
                         float n2 = dot(nrm, nrm);
                         float dEdge = abs(dFdx(d)) + abs(dFdy(d));
+                        float noL = 0.0;
                         if (n2 > 1e-12 && dEdge < 0.05) {
                             nrm *= inversesqrt(n2);
                             nrm *= -sign(dot(nrm, vpos));
-                            vxMask = clamp(dot(nrm, uLightVec), 0.0, 1.0) * uMaskScale;
+                            noL = clamp(dot(nrm, uLightVec), 0.0, 1.0);
+                            vxMask = noL * uMaskScale;
                         } else {
                             vxMask = 0.0;
                         }
+                        // Long-shadow march (see VX_LOD_LONG_SHADOWS note):
+                        // exponential taps along the sun ray through the LOD
+                        // height field, starting at >=64 view blocks where
+                        // BSL's own contact march ends. Sun-averted faces
+                        // (noL 0) are already dark via vanilla face shade —
+                        // skip them so nothing double-darkens.
+                        if (uLongShadows == 1 && noL > 0.0) {
+                            float dist = length(vpos);
+                            float t0 = max(64.0, 0.03 * dist);
+                            float tMax = min(1024.0, 0.6 * dist);
+                            if (tMax > t0 * 1.5) {
+                                float stepE = log2(tMax / t0) / float(uShadowSteps - 1);
+                                float dither = fract(sin(dot(gl_FragCoord.xy,
+                                        vec2(12.9898, 78.233))) * 43758.5453);
+                                float occ = 0.0;
+                                for (int k = 0; k < uShadowSteps; k++) {
+                                    float t = t0 * exp2((float(k) + dither) * stepE);
+                                    vec3 sp = vpos + uLightVec * t;
+                                    vec4 clipP = uProj * vec4(sp, 1.0);
+                                    if (clipP.w <= 0.0) break;
+                                    vec2 ndcXY = clipP.xy / clipP.w;
+                                    vec2 uv = ndcXY * 0.5 + 0.5;
+                                    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
+                                    vec2 st = vec2(uv.x * float(sz.x), (1.0 - uv.y) * float(sz.y));
+                                    float dS = dot(texture(uDepthTex, st).rgb,
+                                            vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+                                    // Bridge clears to far: no LOD occluder at
+                                    // this texel (near-field MC terrain is
+                                    // BSL's own depthtex0 march's job).
+                                    if (dS <= 0.0 || dS >= 0.9999999) continue;
+                                    float zNdcS = (uDepthIsWindow == 1) ? dS * 2.0 - 1.0 : dS;
+                                    vec4 svH = uProjInv * vec4(ndcXY, zNdcS, 1.0);
+                                    vec3 sv = svH.xyz / svH.w;
+                                    // Occluded when the height-field surface at
+                                    // this texel is nearer than the ray point,
+                                    // within a distance-scaled slab thickness
+                                    // (height-field assumption); 0.5-block bias
+                                    // against acne on the emitting surface.
+                                    float zDelta = sv.z - sp.z;
+                                    float thick = 0.25 * t + 4.0;
+                                    float tapOcc = smoothstep(0.5, 2.0, zDelta)
+                                            * (1.0 - smoothstep(thick * 0.75, thick, zDelta));
+                                    // Screen-edge fade so rays leaving the
+                                    // frame release smoothly instead of popping.
+                                    vec2 ef2 = min(smoothstep(vec2(0.0), vec2(0.05), uv),
+                                                   vec2(1.0) - smoothstep(vec2(0.95), vec2(1.0), uv));
+                                    occ = max(occ, tapOcc * min(ef2.x, ef2.y));
+                                    if (occ >= 0.99) break;
+                                }
+                                lin *= mix(1.0, uShadowDim, occ * noL);
+                                // Keep BSL's contact march from re-darkening
+                                // inside our shadow.
+                                vxMask *= 1.0 - occ;
+                            }
+                        }
                     }
+                    outColor0 = vec4((uInjectSqrt == 1) ? sqrt(max(lin, vec3(0.0))) : lin, 1.0);
                     outColor1 = vec4(vxMask, 0.0, 1.0, 1.0);
                 }
                 """;
@@ -683,11 +772,20 @@ public final class VxContractInjector {
         uMaskAuto = glGetUniformLocation(program, "uMaskAuto");
         uMaskScale = glGetUniformLocation(program, "uMaskScale");
         uDepthIsWindow = glGetUniformLocation(program, "uDepthIsWindow");
+        uProj = glGetUniformLocation(program, "uProj");
+        uLongShadows = glGetUniformLocation(program, "uLongShadows");
+        uShadowDim = glGetUniformLocation(program, "uShadowDim");
+        uShadowSteps = glGetUniformLocation(program, "uShadowSteps");
         Logger.info("[Metal-LODTEST] vx colortex6 shadowMask mode="
                 + (VX_SHADOW_MASK_AUTO ? "auto (per-pixel NoL, scale=" + VX_SHADOW_MASK_SCALE + ")"
                                        : "constant " + VX_SHADOW_MASK)
                 + "; VOXY_VX_SHADOW_MASK_AUTO=0 -> constant mode (default 0 = LOD shadows off), "
                 + "VOXY_VX_SHADOW_MASK=<v> sets the constant, VOXY_VX_SHADOW_MASK_SCALE tunes auto");
+        Logger.info("[Metal-LODTEST] vx LOD long-shadow march "
+                + (VX_LOD_LONG_SHADOWS ? "ON" : "OFF")
+                + " (terrain casts shadows beyond BSL's 64-block contact march; dim="
+                + VX_LOD_SHADOW_DIM + ", steps=" + VX_LOD_SHADOW_STEPS
+                + "); VOXY_VX_LOD_LONG_SHADOWS=0 kills, VOXY_VX_LOD_SHADOW_DIM/_STEPS tune");
         vao = glGenVertexArrays();
         return vao != 0;
     }
