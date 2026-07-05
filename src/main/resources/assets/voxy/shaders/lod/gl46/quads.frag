@@ -154,6 +154,11 @@ vec4 computeColour(vec2 texturePos, vec4 colour) {
 
 
 void main() {
+#if defined(VOXY_BOUND_DEBUG) && defined(PATCHED_SHADER)
+    // See the bound-mask block below: PATCHED variants paint the debug red
+    // at the emit site via this flag (no outColour exists to write here).
+    bool voxyBoundDebugHit = false;
+#endif
 #if defined(TRANSLUCENT) && !defined(PATCHED_SHADER)
     #ifdef VOXY_LOD_WATER_DEBUG
     // Diagnostic (VOXY_LOD_WATER_DEBUG=1): render translucent LOD water as
@@ -414,8 +419,16 @@ void main() {
         // VOXY_BOUND_DEBUG=1 (Metal mask-verification aid): paint the
         // bound-discarded fragments solid red instead of discarding so a
         // screenshot shows exactly where the chunk-bound depth mask bites.
+        // PATCHED (vx material) variant has no outColour — flag the hit and
+        // paint at the emit site instead (writing outColour here failed to
+        // compile and took the whole vx pipeline down -> silent Iris-off
+        // fallback, 2026-07-04).
+        #ifdef PATCHED_SHADER
+        voxyBoundDebugHit = true;
+        #else
         outColour = vec4(1.0, 0.0, 0.0, 1.0);
         return;
+        #endif
         #else
         discard;
         return;
@@ -552,6 +565,14 @@ void main() {
     // pale squares turning magenta confirms the mechanism.
     if (modelHasBiomeLUT(model) && model.colourTint == uint(-1)) {
         colour = vec4(1.0, 0.0, 1.0, 1.0);
+        tint = vec4(1.0);
+    }
+    #endif
+
+    #ifdef VOXY_BOUND_DEBUG
+    // PATCHED half of the bound-mask debug (see the bound block above).
+    if (voxyBoundDebugHit) {
+        colour = vec4(1.0, 0.0, 0.0, 1.0);
         tint = vec4(1.0);
     }
     #endif
