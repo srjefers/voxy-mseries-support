@@ -114,6 +114,61 @@ public final class VxContractInjector {
     private static final float VX_LOD_SHADOW_DIM = parseEnvF("VOXY_VX_LOD_SHADOW_DIM", 0.55f);
     private static final int VX_LOD_SHADOW_STEPS =
             Math.max(4, Math.min(24, (int) parseEnvF("VOXY_VX_LOD_SHADOW_STEPS", 12f)));
+
+    /** 2026-07-09 long-shadow march V2 ("far-LOD shadows wrong", confirmed
+     *  visible WITHOUT the spyglass). The v1 geometry above had four verified
+     *  failure modes: (1) t0 = max(64, 0.03*dist) skipped the t ~= 115..400
+     *  near-ray window where the real ridge occluders live across the 4k-15k
+     *  band; (2) the tMax > 1.5*t0 gate cut ALL shadows past ~22.7k
+     *  (0.045*dist outgrows the 1024 tMax cap) — the outer ~29% of a 32k
+     *  world had strictly none; (3) the fixed zDelta accept window (0.5..2.0
+     *  rising edge) turned the hundreds of blocks of view depth a single far
+     *  grazing texel spans into per-pixel occlusion noise; (4) the 24-bit
+     *  bridge depth quantum (metal_depth_export.frag RGB pack) linearizes to
+     *  ~ D^2 * 2^-24 / nearPlane view blocks and crosses the fixed 0.5-block
+     *  acne bias around ~16k. V2: constant t0=64 (never lower — BSL's contact
+     *  march covers ~0.25..54 blocks and the no-double-darken invariant above
+     *  depends on starting past it), D^2-scaled precision bias, fwidth-based
+     *  grazing tolerance capped at 4x the base rising-edge span, and a
+     *  distance fade (default 6000..10000) as the PRIMARY far containment.
+     *  Beyond the fade the un-shadowed state IS the BSL-matched baseline (the
+     *  pack applies no shadow term to LOD pixels there either) so the
+     *  transition is invisible — this trades "wrong/noisy far shadows" for
+     *  "clean shadows to ~6-10k, smoothly none beyond" until a sun-space LOD
+     *  shadow map lands. VOXY_VX_LOD_SHADOW_V2=0 re-emits the exact v1 math
+     *  for A/B; VOXY_VX_LOD_SHADOW_FADE="start,end" moves the fade (a value
+     *  of 0 disables it); VOXY_VX_LOD_SHADOW_BIAS_K tunes the precision-bias
+     *  safety factor (baked into the shader at build). */
+    private static final boolean VX_LOD_SHADOW_V2 =
+            !"0".equals(System.getenv("VOXY_VX_LOD_SHADOW_V2"));
+    private static final float VX_LOD_SHADOW_BIAS_K = parseEnvF("VOXY_VX_LOD_SHADOW_BIAS_K", 2.0f);
+    /** {start, end} in view blocks, or null when the fade is disabled. */
+    private static final float[] VX_LOD_SHADOW_FADE = parseShadowFade();
+
+    private static float[] parseShadowFade() {
+        float start = 6000f, end = 10000f;
+        String v = System.getenv("VOXY_VX_LOD_SHADOW_FADE");
+        if (v != null && !v.isBlank()) {
+            try {
+                String[] parts = v.trim().split(",");
+                if (parts.length == 1) {
+                    if (Float.parseFloat(parts[0].trim()) == 0f) return null; // fade off
+                } else if (parts.length >= 2) {
+                    float s = Float.parseFloat(parts[0].trim());
+                    float e = Float.parseFloat(parts[1].trim());
+                    if (e <= 0f) return null; // "x,0" also reads as off
+                    if (e > s && s >= 0f) {
+                        start = s;
+                        end = e;
+                    }
+                }
+            } catch (NumberFormatException ignored) {
+                // malformed -> keep defaults, never break the inject
+            }
+        }
+        return new float[]{start, end};
+    }
+
     /** Cleared if the Iris celestial API throws — degrades to constant mode. */
     private static boolean shadowMaskAutoOk = true;
     private static boolean warnedShadowAuto;
@@ -635,7 +690,7 @@ public final class VxContractInjector {
                     gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
                 }
                 """;
-        String fs = """
+        String fsHead = """
                 #version 150 core
                 uniform sampler2DRect uColour;
                 uniform sampler2DRect uDepthTex;
@@ -690,6 +745,17 @@ public final class VxContractInjector {
                         vec3 nrm = cross(dFdx(vpos), dFdy(vpos));
                         float n2 = dot(nrm, nrm);
                         float dEdge = abs(dFdx(d)) + abs(dFdy(d));
+                """;
+        // V2-only: the grazing-tolerance input must be computed HERE — next
+        // to the existing dFdx/dFdy, still inside the dynamically-uniform
+        // uMaskAuto branch — because derivatives are undefined inside the
+        // non-uniform (noL > 0) branch the march itself lives in.
+        String fsGrad = !VX_LOD_SHADOW_V2 ? "" : """
+                        // V2 grazing tolerance: linear-depth footprint of this
+                        // pixel (blocks of view depth per screen texel).
+                        float linGrad = fwidth(vpos.z);
+                """;
+        String fsMid = """
                         float noL = 0.0;
                         if (n2 > 1e-12 && dEdge < 0.05) {
                             nrm *= inversesqrt(n2);
@@ -705,6 +771,12 @@ public final class VxContractInjector {
                         // BSL's own contact march ends. Sun-averted faces
                         // (noL 0) are already dark via vanilla face shade —
                         // skip them so nothing double-darkens.
+                """;
+        // The exact v1 march, emitted verbatim by VOXY_VX_LOD_SHADOW_V2=0
+        // for A/B. See the VX_LOD_SHADOW_V2 note for its verified failure
+        // geometry (no shadows past ~22.7k, skipped 4k-15k ridge occluders,
+        // grazing noise, ~16k acne).
+        String fsMarchV1 = """
                         if (uLongShadows == 1 && noL > 0.0) {
                             float dist = length(vpos);
                             float t0 = max(64.0, 0.03 * dist);
@@ -754,11 +826,132 @@ public final class VxContractInjector {
                                 vxMask *= 1.0 - occ;
                             }
                         }
+                """;
+        // V2 precision constant: the bridge depth crosses as a 24-bit RGB
+        // pack (metal_depth_export.frag EncodeFloatRGB, quantum 2^-24 in the
+        // stored [0,1) value), so one quantum at pixel view distance D
+        // linearizes to ~ D^2 * 2^-24 / NEARQ view blocks, where NEARQ is
+        // the LOD projection near plane (VoxyRenderSystem.computeProjectionMat:
+        // 8 below a 32-block render distance, else 16; 0.1 in the
+        // disable-sodium debug mode). K covers the residual convention slack
+        // (window-vs-NDC storage under VOXY_LOD_METAL_NDC differs by up to
+        // 2x) — a too-large bias only lifts far shadow contact slightly, a
+        // too-small one acnes.
+        float nearQ = 16f;
+        if (VX_LOD_SHADOW_V2) {
+            try {
+                nearQ = net.minecraft.client.Minecraft.getInstance().gameRenderer
+                        .getRenderDistance() <= 32.0f ? 8f : 16f;
+                if (me.cortex.voxy.client.VoxyClient.disableSodiumChunkRender()) nearQ = 0.1f;
+            } catch (Throwable ignored) {
+                // pre-world edge case: keep the common-case 16
+            }
+        }
+        String kcStr = String.format(java.util.Locale.ROOT, "%.9e",
+                VX_LOD_SHADOW_BIAS_K / (16777216.0 * nearQ));
+        String fadeGlsl = "";
+        if (VX_LOD_SHADOW_FADE != null) {
+            fadeGlsl = String.format(java.util.Locale.ROOT,
+                    "                // Distance fade — the PRIMARY far containment. Beyond\n"
+                  + "                // it the un-shadowed state IS the BSL-matched baseline\n"
+                  + "                // (the pack applies no shadow term to LOD pixels out\n"
+                  + "                // here either), so the transition is invisible.\n"
+                  + "                occ *= 1.0 - smoothstep(%.1f, %.1f, dist);\n",
+                    VX_LOD_SHADOW_FADE[0], VX_LOD_SHADOW_FADE[1]);
+        }
+        String fsMarchV2 = String.format(java.util.Locale.ROOT, """
+                        if (uLongShadows == 1 && noL > 0.0) {
+                            float dist = length(vpos);
+                            // V2 (VOXY_VX_LOD_SHADOW_V2=0 re-emits the v1 math):
+                            // constant t0 — v1's max(64, 0.03*dist) floor skipped
+                            // the t ~= 115..400 near-ray window where the real
+                            // ridge occluders live across the 4k-15k band. NEVER
+                            // below 64: BSL's contact march covers ~0.25..54 view
+                            // blocks and the no-double-darken invariant above
+                            // depends on our march starting past it.
+                            float t0 = 64.0;
+                            float tMax = min(1024.0, 0.6 * dist);
+                            // Hard gate kept from v1. With constant t0 it only
+                            // skips pixels nearer than ~160 view blocks (contact-
+                            // march territory). v1's ~22.7k no-shadow cutoff came
+                            // from its GROWING t0 crossing the tMax cap here;
+                            // with t0 constant that cutoff is gone and the
+                            // distance fade below is the SOLE far containment —
+                            // pushing VOXY_VX_LOD_SHADOW_FADE past ~23k no longer
+                            // hits a hard stop behind it.
+                            if (tMax > t0 * 1.5) {
+                                // Precision-aware acne bias (v1: fixed 0.5): one
+                                // 24-bit bridge-depth quantum at view distance D
+                                // is ~ D*D * 2^-24 / nearPlane view blocks; past
+                                // ~8k the fixed edge sinks under it and every tap
+                                // acnes. Constant baked Java-side: K * 2^-24 / NEARQ.
+                                float bias = max(0.5, %s * dist * dist);
+                                // Grazing tolerance: one far grazing texel spans
+                                // hundreds of blocks of view depth — a fixed edge
+                                // turns that footprint into per-pixel occlusion
+                                // noise. Widen by the linear-depth footprint,
+                                // CAPPED at 4x the base rising-edge span (3*bias):
+                                // uncapped, every far tap occludes and the gray-
+                                // veil failure class returns (see the colortex6
+                                // note above).
+                                float rise = bias + clamp(linGrad, 0.0, 12.0 * bias);
+                                float stepE = log2(tMax / t0) / float(uShadowSteps - 1);
+                                float dither = fract(sin(dot(gl_FragCoord.xy,
+                                        vec2(12.9898, 78.233))) * 43758.5453);
+                                float occ = 0.0;
+                                for (int k = 0; k < uShadowSteps; k++) {
+                                    float t = t0 * exp2((float(k) + dither) * stepE);
+                                    vec3 sp = vpos + uLightVec * t;
+                                    vec4 clipP = uProj * vec4(sp, 1.0);
+                                    if (clipP.w <= 0.0) break;
+                                    vec2 ndcXY = clipP.xy / clipP.w;
+                                    vec2 uv = ndcXY * 0.5 + 0.5;
+                                    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
+                                    vec2 st = vec2(uv.x * float(sz.x), (1.0 - uv.y) * float(sz.y));
+                                    float dS = dot(texture(uDepthTex, st).rgb,
+                                            vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+                                    // Bridge clears to far: no LOD occluder at
+                                    // this texel (near-field MC terrain is
+                                    // BSL's own depthtex0 march's job).
+                                    if (dS <= 0.0 || dS >= 0.9999999) continue;
+                                    float zNdcS = (uDepthIsWindow == 1) ? dS * 2.0 - 1.0 : dS;
+                                    vec4 svH = uProjInv * vec4(ndcXY, zNdcS, 1.0);
+                                    vec3 sv = svH.xyz / svH.w;
+                                    // Occluded when the height-field surface at
+                                    // this texel is nearer than the ray point,
+                                    // within a distance-scaled slab thickness
+                                    // (height-field assumption); rising edge =
+                                    // precision bias + grazing widen (v1: 0.5..2.0,
+                                    // which this reproduces at bias=0.5, widen=0).
+                                    float zDelta = sv.z - sp.z;
+                                    float thick = 0.25 * t + 4.0;
+                                    float tapOcc = smoothstep(rise, rise * 4.0, zDelta)
+                                            * (1.0 - smoothstep(thick * 0.75, thick, zDelta));
+                                    // Screen-edge fade so rays leaving the
+                                    // frame release smoothly instead of popping.
+                                    vec2 ef2 = min(smoothstep(vec2(0.0), vec2(0.05), uv),
+                                                   vec2(1.0) - smoothstep(vec2(0.95), vec2(1.0), uv));
+                                    occ = max(occ, tapOcc * min(ef2.x, ef2.y));
+                                    if (occ >= 0.99) break;
+                                }
+                """, kcStr)
+                + fadeGlsl
+                + """
+                                lin *= mix(1.0, uShadowDim, occ * noL);
+                                // Keep BSL's contact march from re-darkening
+                                // inside our shadow.
+                                vxMask *= 1.0 - occ;
+                            }
+                        }
+                """;
+        String fsTail = """
                     }
                     outColor0 = vec4((uInjectSqrt == 1) ? sqrt(max(lin, vec3(0.0))) : lin, 1.0);
                     outColor1 = vec4(vxMask, 0.0, 1.0, 1.0);
                 }
                 """;
+        String fs = fsHead + fsGrad + fsMid
+                + (VX_LOD_SHADOW_V2 ? fsMarchV2 : fsMarchV1) + fsTail;
         program = VxIrisSideChannel.compile(vs, fs, "VxContractInjector");
         if (program == 0) return false;
         uColour = glGetUniformLocation(program, "uColour");
@@ -783,9 +976,15 @@ public final class VxContractInjector {
                 + "VOXY_VX_SHADOW_MASK=<v> sets the constant, VOXY_VX_SHADOW_MASK_SCALE tunes auto");
         Logger.info("[Metal-LODTEST] vx LOD long-shadow march "
                 + (VX_LOD_LONG_SHADOWS ? "ON" : "OFF")
-                + " (terrain casts shadows beyond BSL's 64-block contact march; dim="
+                + ", v2=" + (VX_LOD_SHADOW_V2 ? "ON" : "OFF (exact v1 math)")
+                + " (terrain casts shadows beyond BSL's contact march; dim="
                 + VX_LOD_SHADOW_DIM + ", steps=" + VX_LOD_SHADOW_STEPS
-                + "); VOXY_VX_LOD_LONG_SHADOWS=0 kills, VOXY_VX_LOD_SHADOW_DIM/_STEPS tune");
+                + ", biasK=" + VX_LOD_SHADOW_BIAS_K + ", nearQ=" + nearQ
+                + ", fade=" + (VX_LOD_SHADOW_FADE == null ? "OFF"
+                        : VX_LOD_SHADOW_FADE[0] + ".." + VX_LOD_SHADOW_FADE[1])
+                + "); VOXY_VX_LOD_LONG_SHADOWS=0 kills, VOXY_VX_LOD_SHADOW_V2=0 -> v1, "
+                + "VOXY_VX_LOD_SHADOW_FADE=start,end (0 disables), "
+                + "VOXY_VX_LOD_SHADOW_DIM/_STEPS/_BIAS_K tune");
         vao = glGenVertexArrays();
         return vao != 0;
     }
