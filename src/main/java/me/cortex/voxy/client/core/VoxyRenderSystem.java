@@ -296,7 +296,25 @@ public class VoxyRenderSystem {
      *  pop-in) instead of the zoom-invariant minSSS compensation. */
     private static final boolean ZOOM_REFINE_ENABLED =
             "1".equals(System.getenv("VOXY_LOD_ZOOM_REFINE"));
+    /** Number of LOD levels a zoom is allowed to refine (each level is 4x
+     *  projected area / 2x linear). The compensation divides zoomComp by
+     *  4^N before engaging, so the traversal only sees the zoom EXCESS
+     *  beyond the budget. VOXY_LOD_ZOOM_REFINE_LEVELS tunes (default 2);
+     *  0 restores full zoom invariance (effComp = zoomComp). */
+    private static final int ZOOM_REFINE_LEVELS = parseZoomRefineLevels();
+    private static final float ZOOM_REFINE_BUDGET_AREA =
+            (float) Math.pow(4.0, ZOOM_REFINE_LEVELS);
     private static boolean zoomCompEngaged;
+
+    private static int parseZoomRefineLevels() {
+        String v = System.getenv("VOXY_LOD_ZOOM_REFINE_LEVELS");
+        if (v == null || v.isBlank()) return 2;
+        try {
+            return Math.max(0, Integer.parseInt(v.trim()));
+        } catch (NumberFormatException e) {
+            return 2;
+        }
+    }
 
     /**
      * Submersion-type fog records (water/lava/powder-snow/blindness) carry a
@@ -466,24 +484,32 @@ public class VoxyRenderSystem {
                 zoomComp = 1.0f;
             }
             zoomComp = Math.min(400.0f, Math.max(1.0f, zoomComp));
-            // Engage only past 16x area (4x linear). 4x proved too low
-            // on-device: the first world frame hit zoomComp=4.1 with no
-            // spyglass (join transient) and would have coarsened LODs a
-            // level. The spyglass is ~169x area, so 16x keeps wide margin
-            // over fov_effects wobble (~1.4x) and join transients while
-            // never missing a real zoom.
-            boolean engaged = zoomComp > 16.0f;
-            viewport.zoomCompensation = engaged ? zoomComp : 1.0f;
+            // Continuous refine budget instead of the old binary >16x engage:
+            // divide out 4^N of the zoom area so the traversal refines exactly
+            // N LOD levels (2^N linear) under the scope and the compensation
+            // absorbs the rest. Full compensation was EXACT (projected-area
+            // metric), so the scope showed the unzoomed level magnified ~13x —
+            // giant amorphous blocks. The max(1,·) floor also structurally
+            // neutralizes the world-join transient (zoomComp~4.1 on the first
+            // frame with no spyglass → effComp=1 for N>=1) that the old 16x
+            // threshold existed to guard against.
+            float effComp = Math.min(400.0f,
+                    Math.max(1.0f, zoomComp / ZOOM_REFINE_BUDGET_AREA));
+            viewport.zoomCompensation = effComp;
+            boolean engaged = effComp > 1.0f;
             if (engaged != zoomCompEngaged) {
                 zoomCompEngaged = engaged;
                 if (engaged) {
                     Logger.info("[Metal-LODTEST] LOD zoom compensation ON (zoomComp="
-                            + zoomComp + "): minSSS scaled by the projected-area zoom factor"
-                            + " so zoom keeps the current LOD level instead of ~3s pop-in;"
-                            + " VOXY_LOD_ZOOM_REFINE=1 restores refine-on-zoom");
+                            + zoomComp + ", refine budget N=" + ZOOM_REFINE_LEVELS
+                            + " levels, effComp=" + effComp + "): minSSS scaled by the"
+                            + " EXCESS projected-area zoom so the scope refines exactly"
+                            + " N levels finer; VOXY_LOD_ZOOM_REFINE_LEVELS tunes N,"
+                            + " VOXY_LOD_ZOOM_REFINE=1 restores full refine-on-zoom");
                 } else {
                     Logger.info("[Metal-LODTEST] LOD zoom compensation off (zoomComp="
-                            + zoomComp + " below engage threshold)");
+                            + zoomComp + " within the " + ZOOM_REFINE_LEVELS
+                            + "-level refine budget; effComp=1)");
                 }
             }
         }
