@@ -658,6 +658,80 @@ public final class MetalVxResolvePass {
     private static Prog trans;
     private static int resolveVao;
 
+    // ---- Iris pipeline recreation handling (VOXY_VX_RESOLVE_REBUILD=0 reverts) ----
+    // The build is keyed to ONE Iris pipeline generation: the GL programs embed
+    // that generation's patch text/option set, and uboScratch is nmemAlloc-ed at
+    // build time sized for that generation's uniform layout. Iris recreates its
+    // pipeline on EVERY world rejoin ("Reloading pipeline on dimension change")
+    // and on shader option toggles; each recreation mints a fresh
+    // IrisVoxyRenderPipelineData (MixinIrisRenderingPipeline ctor hook). Running
+    // the old build against a new generation means stale programs at best and a
+    // native scratch OVERRUN at worst — runOne feeds the CURRENT data's
+    // getUniforms().updater() the OLD-size allocation, so a larger new layout is
+    // heap corruption. Track the identities the build ran against and destroy +
+    // lazily rebuild when either changes (both resolve entry points run on the
+    // render thread with the GL context current, so destruction here is safe).
+    private static final boolean REBUILD_ON_PIPELINE_CHANGE =
+            !"0".equals(System.getenv("VOXY_VX_RESOLVE_REBUILD"));
+    private static IrisVoxyRenderPipelineData builtData;
+    private static Object builtIrisPipeline;
+
+    private static void checkPipelineGeneration(IrisVoxyRenderPipelineData data, Object ipipe) {
+        if (!REBUILD_ON_PIPELINE_CHANGE) return;
+        if (buildAttempted && (builtData != data || builtIrisPipeline != ipipe)) {
+            Logger.info("[Metal-LODTEST] vx resolve: Iris pipeline recreated (dataChanged="
+                    + (builtData != data) + " irisChanged=" + (builtIrisPipeline != ipipe)
+                    + ") — destroying the stale build and rebuilding against the live pipeline;"
+                    + " VOXY_VX_RESOLVE_REBUILD=0 reverts to the old never-reset behaviour");
+            reset();
+        }
+        builtData = data;
+        builtIrisPipeline = ipipe;
+    }
+
+    /**
+     * Destroy everything build()/the lazy debug paths created — GL programs,
+     * FBOs, the UBO + its native scratch, the VAO — and clear the static build
+     * state so the next resolve frame rebuilds against the live Iris pipeline.
+     * Must run on the render thread with a GL context current. No-op when
+     * nothing was ever built (the GL backend never reaches this class's build
+     * paths) and when VOXY_VX_RESOLVE_REBUILD=0.
+     */
+    public static void reset() {
+        if (!REBUILD_ON_PIPELINE_CHANGE) return;
+        boolean hadBuild = buildAttempted || debugProg != -1 || resolveVao != 0;
+        if (opaque != null) { freeProg(opaque); opaque = null; }
+        if (trans != null) { freeProg(trans); trans = null; }
+        if (resolveVao != 0) { glDeleteVertexArrays(resolveVao); resolveVao = 0; }
+        if (debugProg > 0) glDeleteProgram(debugProg);
+        debugProg = -1; // lazy-compile sentinel — runDebug rebuilds on demand
+        if (debugFbo != 0) { glDeleteFramebuffers(debugFbo); debugFbo = 0; }
+        debugAttached = new int[0];
+        if (aoReadFbo != 0) { glDeleteFramebuffers(aoReadFbo); aoReadFbo = 0; }
+        if (planeReadFbo != 0) { glDeleteFramebuffers(planeReadFbo); planeReadFbo = 0; }
+        if (ct5ReadFbo != 0) { glDeleteFramebuffers(ct5ReadFbo); ct5ReadFbo = 0; }
+        buildAttempted = false;
+        buildOk = false;
+        builtData = null;
+        builtIrisPipeline = null;
+        if (hadBuild) {
+            Logger.info("[Metal-LODTEST] vx resolve reset: stale GL programs/FBOs/UBO scratch destroyed;"
+                    + " next contract frame rebuilds (expect the vx resolve marker lines to re-print)");
+        }
+    }
+
+    private static void freeProg(Prog p) {
+        if (p.prog != 0) glDeleteProgram(p.prog);
+        if (p.ubo != 0) glDeleteBuffers(p.ubo);
+        if (p.fbo != 0) glDeleteFramebuffers(p.fbo);
+        if (p.uboScratch != 0) org.lwjgl.system.MemoryUtil.nmemFree(p.uboScratch);
+        p.prog = 0;
+        p.ubo = 0;
+        p.fbo = 0;
+        p.uboScratch = 0;
+        p.attached = new int[0];
+    }
+
     // Diagnostic (VOXY_VX_DUMP_OUT=1): objectively measure what BSL's resolve actually
     // produces. gbufferData0 here is the LIT albedo (this BSL voxy program applies
     // GetLighting in-place in the gbuffer pass, not a deferred pass), so reading back the
@@ -803,6 +877,7 @@ public final class MetalVxResolvePass {
                                int oP0, int oP1, int oP2, int opaqueDepthRect,
                                int tP0, int tP1, int tP2, int transDepthRect,
                                int fbw, int fbh) {
+        checkPipelineGeneration(data, ipipe);
         if (!build(data)) return;
         if (oP0 == 0 || opaqueDepthRect == 0) return;
         if (DUMP_OUT) dumpFrame++;
@@ -868,6 +943,7 @@ public final class MetalVxResolvePass {
                                net.irisshaders.iris.pipeline.IrisRenderingPipeline ipipe,
                                int tP0, int tP1, int tP2, int transDepthRect,
                                int fbw, int fbh) {
+        checkPipelineGeneration(data, ipipe);
         if (!build(data)) return;
         if (trans == null || tP0 == 0 || transDepthRect == 0) return;
         var sc = me.cortex.voxy.client.core.util.VxIrisSideChannel.getOrCreate();

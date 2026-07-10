@@ -839,6 +839,22 @@ public class VoxyRenderSystem {
         Logger.info("Shutting down render pipeline");
         try {this.pipeline.free();} catch (Exception e){Logger.error("Error releasing render pipeline", e);}
 
+        // The vx resolve pass caches its build in STATICS that outlive this
+        // instance (GL programs compiled against ONE Iris pipeline generation +
+        // a native UBO scratch sized for that generation's uniform layout).
+        // Iris recreates its pipeline on every world rejoin, so free the stale
+        // build here — on the render thread with the GL context current — and
+        // let the next contract frame rebuild against the live pipeline. The
+        // per-frame identity check in MetalVxResolvePass covers recreations
+        // that don't pass through this shutdown (shader option toggles). No-op
+        // on the GL backend (nothing is ever built there) and under
+        // VOXY_VX_RESOLVE_REBUILD=0.
+        try {
+            me.cortex.voxy.client.core.util.MetalVxResolvePass.reset();
+        } catch (Exception e) {
+            Logger.error("Error resetting vx resolve pass", e);
+        }
+
 
 
         Logger.info("Flushing download stream");
