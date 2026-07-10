@@ -270,7 +270,7 @@ public final class MetalVxResolvePass {
             if (!nearCullOn || NEAR_MIRROR_DIM >= 1.0f) {
                 Logger.info("[Metal-LODTEST] vx near-fallback mirror dim OFF ("
                         + (nearCullOn ? "VOXY_VX_NEAR_MIRROR_DIM>=1" : "near-cull disabled, no fallback ring")
-                        + "); default dims the kept-fallback ring's sky mirror to 0.45");
+                        + "); default dims the kept-fallback ring's sky mirror to a perceived 0.45");
             } else {
                 String needle = "reflection.rgb = max(mix(skyReflection, reflection.rgb, reflection.a), vec3(0.0));";
                 if (patchText.contains(needle)) {
@@ -287,15 +287,30 @@ public final class MetalVxResolvePass {
                     }
                     float cull = Math.max(rdBlocks - margin, 64f);
                     float dim = Math.max(NEAR_MIRROR_DIM, 0.0f);
+                    // V2 math (VOXY_VX_MIRROR_DIM_V2=0 reverts for A/B): the dim
+                    // multiplies LINEAR light but voxy_translucent sqrt-encodes
+                    // the final colour (ALPHA_BLEND==0), so a linear 0.20 was
+                    // perceived as ~0.45 — inject dim^2 so the env value means
+                    // the PERCEIVED dim. And most kept-fallback water lives in
+                    // the outer band just inside the cull radius (outer-ring
+                    // Sodium sections rarely build), which the old 0.75*cull
+                    // ramp start had already mostly released — hold full
+                    // strength to 0.95*cull and only release in the last ~5%
+                    // to avoid a hard pop at the cull boundary.
+                    float injectedDim = MIRROR_DIM_V2 ? dim * dim : dim;
+                    float rampStart = (MIRROR_DIM_V2 ? 0.95f : 0.75f) * cull;
                     // Locale.ROOT: a comma decimal separator would emit broken GLSL.
                     patchText = patchText.replace(needle, String.format(java.util.Locale.ROOT,
                             "skyReflection *= mix(%.4f, 1.0, smoothstep(%.1f, %.1f, length(viewPos))); ",
-                            dim, 0.75f * cull, cull) + needle);
+                            injectedDim, rampStart, cull) + needle);
                     Logger.info(String.format(java.util.Locale.ROOT,
-                            "[Metal-LODTEST] vx near-fallback mirror dim ON (skyReflection *= %.2f inside"
-                            + " the kept-fallback ring, ramp %.0f..%.0f blocks; baked at shader build,"
-                            + " RD change needs shader reload); VOXY_VX_NEAR_MIRROR_DIM=1 disables",
-                            dim, 0.75f * cull, cull));
+                            "[Metal-LODTEST] vx near-fallback mirror dim ON (%s: skyReflection *= %.4f"
+                            + " linear = ~%.2f perceived after the pack's sqrt encode, ramp %.0f..%.0f"
+                            + " blocks; baked at shader build, RD change needs shader reload);"
+                            + " VOXY_VX_NEAR_MIRROR_DIM=1 disables, VOXY_VX_MIRROR_DIM_V2=0 reverts"
+                            + " to the old linear/0.75-ramp math",
+                            MIRROR_DIM_V2 ? "V2 perceptual" : "V1 linear",
+                            injectedDim, Math.sqrt(injectedDim), rampStart, cull));
                 } else {
                     Logger.warn("[Metal-LODTEST] vx near-fallback mirror dim SKIPPED"
                             + " (reflection-mix anchor not found — pack text drifted; patch not applied);"
@@ -629,8 +644,17 @@ public final class MetalVxResolvePass {
 
     // Sky-mirror dim factor for LOD water kept as near fallback inside the
     // masked near-cull ring — see the anchor patch in assembleFragment.
-    // 1 (or >=1) disables the dim entirely.
+    // 1 (or >=1) disables the dim entirely. With V2 (default) the value is
+    // PERCEIVED dim (the square is what gets injected, cancelling the pack's
+    // final sqrt encode).
     private static final float NEAR_MIRROR_DIM = parseEnvFloat("VOXY_VX_NEAR_MIRROR_DIM", 0.45f);
+
+    // VOXY_VX_MIRROR_DIM_V2=0 reverts the near-fallback mirror dim to the old
+    // math (linear factor, ramp start at 0.75*cull) for A/B. The old math had
+    // two verified defects: the pack's ALPHA_BLEND==0 sqrt encode halved the
+    // dim's perceived strength, and the 0.75*cull ramp start released the dim
+    // across the outer band where most kept-fallback water actually lives.
+    private static final boolean MIRROR_DIM_V2 = !"0".equals(System.getenv("VOXY_VX_MIRROR_DIM_V2"));
 
     private static float parseEnvFloat(String name, float def) {
         String v = System.getenv(name);
