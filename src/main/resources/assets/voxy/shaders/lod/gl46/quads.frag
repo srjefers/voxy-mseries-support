@@ -621,6 +621,16 @@ void main() {
     }
     #endif
 
+    #if !defined(TRANSLUCENT) && defined(VOXY_OPAQUE_WATER_DEBUG)
+    // Probe (VOXY_LOD_OPAQUE_WATER_DEBUG=1): any ORANGE in-game = a water
+    // customId rasterized by the OPAQUE pass — LOD water that bypasses
+    // voxy_translucent (and every pack-side water fix) entirely.
+    if (model.customId / 100u == 200u || model.customId / 100u == 204u) {
+        colour = vec4(1.0, 0.5, 0.0, 1.0);
+        tint = vec4(1.0);
+    }
+    #endif
+
     uint face = getFace();
     face ^= uint((face&1u)!=uint(gl_FrontFacing!=((face>>1)!=0u)));
     voxy_emitFragment(VoxyFragmentParameters(colour, tile, texPos, face, modelId, getLightmap(), tint, model.customId));

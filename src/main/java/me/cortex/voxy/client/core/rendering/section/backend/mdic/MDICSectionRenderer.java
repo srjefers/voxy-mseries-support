@@ -632,6 +632,16 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                     translucentDefines.put("VOXY_LOD_WATER_DEBUG", "");
                     Logger.info("[Metal-LODTEST] VOXY_LOD_WATER_DEBUG: translucent LOD water = solid magenta + depth test OFF");
                 }
+                // Probe (2026-07-14): orange-tint OPAQUE-pass fragments whose
+                // model carries a water customId. The near pale water quads
+                // showed NO tint from any voxy_translucent/voxy_opaque debug
+                // arm — if they turn orange here, they are water faces meshed
+                // into the OPAQUE LOD pass (Mipper rep-selection), which the
+                // whole pack-side water path can never touch.
+                if ("1".equals(System.getenv("VOXY_LOD_OPAQUE_WATER_DEBUG"))) {
+                    opaqueDefines.put("VOXY_OPAQUE_WATER_DEBUG", "");
+                    Logger.info("[Metal-LODTEST] VOXY_LOD_OPAQUE_WATER_DEBUG: opaque-pass water-customId fragments = solid orange");
+                }
                 // Depth bias for translucent LOD water (toward the camera).
                 // DEFAULT 0 (off): testing on 2026-05-26 proved the water "holes"
                 // are NOT z-fighting — VOXY_LOD_WATER_DEBUG (magenta + depth OFF)

@@ -208,6 +208,15 @@ public final class VxContractInjector {
      *  seafloor dim actually touches red, so "dim engaged but insufficient"
      *  and "dim never engages" are distinguishable on a screenshot. */
     private static final boolean VX_SEAFLOOR_DEBUG = "1".equals(System.getenv("VOXY_VX_SEAFLOOR_DEBUG"));
+    /** Round-9: align the seafloor dim's interior fade with the water ring
+     *  parity ramp (0.95*maxDist..maxDist) instead of the legacy 96-block band
+     *  (maxDist-96..maxDist). The legacy fade was ~90% released by 480 blocks —
+     *  exactly the 471..496 outer band where kept-fallback water concentrates —
+     *  so the bright Mipper floor bled nearly undimmed through the pale quads.
+     *  Zero change beyond maxDist either way (fade is 0 there in both shapes).
+     *  VOXY_VX_SEAFLOOR_FADE_V2=0 reverts to the legacy fade. */
+    private static final boolean VX_SEAFLOOR_FADE_V2 =
+            !"0".equals(System.getenv("VOXY_VX_SEAFLOOR_FADE_V2"));
     private static boolean sfLoggedFirst, sfLoggedEngaged;
 
     private static float parseEnvF(String name, float dflt) {
@@ -867,12 +876,14 @@ public final class VxContractInjector {
                             // to the 0.10 floor. Horizontal camera distance =
                             // view-space position minus its vertical part
                             // (camera at origin), matching the RADIAL cull
-                            // metric; 96-block interior fade so the ring edge
-                            // has no seam. uSeafloorMaxDist <= 0 = unlimited.
+                            // metric; interior fade (__SF_FADE_START__, resolved
+                            // at build: V2 = 0.95*maxDist, legacy = maxDist-96)
+                            // so the ring edge has no seam. uSeafloorMaxDist
+                            // <= 0 = unlimited.
                             float sfFade = 1.0;
                             if (uSeafloorMaxDist > 0.0) {
                                 float sfDist = length(pTv - uUpView * dot(pTv, uUpView));
-                                sfFade = 1.0 - smoothstep(uSeafloorMaxDist - 96.0,
+                                sfFade = 1.0 - smoothstep(__SF_FADE_START__,
                                                           uSeafloorMaxDist, sfDist);
                             }
                             if (sfFade > 0.0) {
@@ -880,6 +891,19 @@ public final class VxContractInjector {
                                 lin *= mix(1.0, sfDim, sfFade);
                                 if (uSeafloorDebug == 1) lin = mix(lin, vec3(1.0, 0.0, 0.0), 0.6 * sfFade);
                             }
+                        } else if (uSeafloorDebug == 1 && uSeafloorMaxDist > 0.0) {
+                            // Classifier (debug-only): an injected LOD pixel INSIDE
+                            // the ring whose trans depth equals its own depth — no
+                            // LOD water wrote above it. The near pale panes showed
+                            // no tint from any water-path arm; if they turn VIOLET
+                            // here, the trans pass wrote no depth there at all
+                            // (water geometry missing / never rasterized), ruling
+                            // out ghost-depth and pointing at meshing/coverage.
+                            float zO2 = (uDepthIsWindow == 1) ? d * 2.0 - 1.0 : d;
+                            vec4 pO2 = uProjInv * vec4(vUV * 2.0 - 1.0, zO2, 1.0);
+                            vec3 pOv = pO2.xyz / pO2.w;
+                            float sfDist2 = length(pOv - uUpView * dot(pOv, uUpView));
+                            if (sfDist2 < uSeafloorMaxDist) lin = mix(lin, vec3(0.5, 0.0, 1.0), 0.6);
                         }
                     }
                     // colortex6 seed: r = shadowMask (see VX_SHADOW_MASK note —
@@ -1108,6 +1132,14 @@ public final class VxContractInjector {
                 """;
         String fs = fsHead + fsGrad + fsMid
                 + (VX_LOD_SHADOW_V2 ? fsMarchV2 : fsMarchV1) + fsTail;
+        fs = fs.replace("__SF_FADE_START__",
+                VX_SEAFLOOR_FADE_V2 ? "uSeafloorMaxDist * 0.95" : "uSeafloorMaxDist - 96.0");
+        Logger.info("[Metal-LODTEST] vx seafloor fade " + (VX_SEAFLOOR_FADE_V2
+                ? "V2 ON (interior fade 0.95*maxDist..maxDist, aligned with the water ring"
+                  + " parity ramp so the floor stays dimmed through the 471..496 fallback band;"
+                  + " the legacy 96-block fade was ~90% released there)"
+                : "LEGACY (maxDist-96..maxDist band)")
+                + "; VOXY_VX_SEAFLOOR_FADE_V2=0 reverts");
         program = VxIrisSideChannel.compile(vs, fs, "VxContractInjector");
         if (program == 0) return false;
         uColour = glGetUniformLocation(program, "uColour");
