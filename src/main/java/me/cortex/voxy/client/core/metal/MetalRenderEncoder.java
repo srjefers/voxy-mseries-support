@@ -188,6 +188,7 @@ public final class MetalRenderEncoder implements RenderEncoder {
             indirectContents = mb.getContentsPtr();
         }
         long perDrawScratchAddr = MemoryUtil.memAddress(this.perDrawScratch);
+        long tFT = me.cortex.voxy.client.core.util.FrameTiming.ENABLED ? System.nanoTime() : 0;
         for (int i = 0; i < drawCount; i++) {
             long cmdAddr = offset + (long) i * stride;
             if (indirectContents != 0) {
@@ -200,6 +201,10 @@ public final class MetalRenderEncoder implements RenderEncoder {
                     metalPrimitive, this.boundIndexType,
                     this.boundIndexBuffer, this.boundIndexBufferOffset,
                     indirectBuf, cmdAddr);
+        }
+        if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
+            me.cortex.voxy.client.core.util.FrameTiming.jniDrawLoopNs += System.nanoTime() - tFT;
+            me.cortex.voxy.client.core.util.FrameTiming.jniDrawCount += drawCount;
         }
     }
 

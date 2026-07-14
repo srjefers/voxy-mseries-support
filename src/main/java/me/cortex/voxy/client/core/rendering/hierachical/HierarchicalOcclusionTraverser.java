@@ -571,7 +571,13 @@ public class HierarchicalOcclusionTraverser {
             // requests are ever created. Shared-storage Metal buffers are CPU
             // readable after submit(), so read the queue directly and then
             // clear it for the next frame.
-            this.backend.submit();
+            if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
+                long tFT = System.nanoTime();
+                this.backend.submit();
+                me.cortex.voxy.client.core.util.FrameTiming.hotReadbackNs += System.nanoTime() - tFT;
+            } else {
+                this.backend.submit();
+            }
             DIAG_REQUEST_DIRECT_READ_COUNT.incrementAndGet();
             this.forwardDownloadResult(metalBuffer.getContentsPtr(), this.requestBuffer.size());
             this.requestBuffer.zeroRange(0, 4);
