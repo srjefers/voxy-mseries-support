@@ -514,6 +514,20 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                         Logger.info("[Metal-LODTEST] trans near-cull MASKED (cull only under built-"
                                 + "section coverage; LOD water kept over unbuilt sections); "
                                 + "VOXY_TRANS_NEAR_CULL_MASKED=0 reverts");
+                        // 2026-07-14: masked-culled LOD water keeps a depth-only
+                        // "ghost" write so the trans depth bridge carries the water
+                        // surface (dT < d) and the seafloor water-column dim reaches
+                        // LOD floors under REAL MC water (the near pale patches —
+                        // the plain discard erased the depth too, so dT==d made the
+                        // dim structurally unreachable at exactly those pixels).
+                        // VOXY_TRANS_NEAR_CULL_GHOST=0 reverts to the plain discard.
+                        if (!"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_GHOST"))) {
+                            translucentDefines.put("VOXY_TRANS_NEAR_CULL_GHOST", "");
+                            Logger.info("[Metal-LODTEST] trans near-cull GHOST depth ON "
+                                    + "(culled LOD water keeps its depth write; floors under "
+                                    + "real MC water get the seafloor dim); "
+                                    + "VOXY_TRANS_NEAR_CULL_GHOST=0 reverts");
+                        }
                     }
                     Logger.info("[Metal-LODTEST] translucent near-cull ON (vx contract: no LOD water "
                             + "inside MC render distance; metric="

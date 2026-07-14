@@ -160,16 +160,6 @@ void main() {
     bool voxyBoundDebugHit = false;
 #endif
 #if defined(TRANSLUCENT) && !defined(PATCHED_SHADER)
-    #ifdef VOXY_LOD_WATER_DEBUG
-    // Diagnostic (VOXY_LOD_WATER_DEBUG=1): render translucent LOD water as
-    // unmistakable solid magenta — no fog, no blend — so a screenshot shows
-    // EXACTLY where the LOD water geometry rasterizes. Distinguishes "water
-    // missing / clipped / depth-rejected" (no magenta where water should be)
-    // from "water present but wrong colour/fog" (magenta is there, just the
-    // normal path renders it wrong).
-    outColour = vec4(1.0, 0.0, 1.0, 1.0);
-    return;
-    #endif
     #ifdef VOXY_FLAT_WATER
     // Escape hatch (VOXY_LOD_FLAT_WATER=1): the 2026-05-26 interim flat ocean
     // blue, fog-faded like the opaque terrain. The DEFAULT is now the real
@@ -246,14 +236,68 @@ void main() {
         float voxyNearCullBound = texelFetch(depthTex, ivec2(gl_FragCoord.xy), 0).r;
 #endif
         if (voxyNearCullBound > 0.0) {
+#ifdef VOXY_TRANS_NEAR_CULL_GHOST
+            // 2026-07-14 ghost depth: built-surface coverage must suppress the
+            // LOD water COLOUR (Sodium/BSL draw the real water here) but a
+            // plain discard also erases the water-surface DEPTH write — the
+            // trans bridge then holds the RESTORED opaque depth, dT == d, and
+            // VxContractInjector's seafloor water-column dim can never reach
+            // the bright LOD floor injected under real MC water (the near pale
+            // patches). Emit a ZERO-ALPHA fragment instead: invisible
+            // (premultiplied blend no-op; material plane 0 alpha 0 -> the
+            // trans resolve discards, so no double water and no pack depth
+            // write) but the depth write survives -> dT = water surface depth
+            // -> the existing dim darkens the floor like a real BSL seafloor.
+            // Returns BEFORE the chunk-bound test below, which would otherwise
+            // discard a water top face inside the built AABB.
+            // VOXY_TRANS_NEAR_CULL_GHOST=0 reverts to the discard.
+    #ifdef PATCHED_SHADER
+            // lightMap 8/256 is getLightmap()'s clamp floor: the emitter's
+            // nibble quantization round((lightMap*256-8)/16) lands exactly on
+            // 0 — no round(-0.5)->uint UB for the Metal compiler to exploit.
+            voxy_emitFragment(VoxyFragmentParameters(
+                    vec4(0.0), vec2(0.0), vec2(0.0), 0u, 0u,
+                    vec2(8.0/256.0), vec4(1.0), 0u));
+    #else
+            outColour = vec4(0.0);
+    #endif
+            return;
+#else
             discard;
             return;
+#endif
         }
 #else
         discard;
         return;
 #endif
     }
+#endif
+
+#if defined(TRANSLUCENT) && defined(VOXY_LOD_WATER_DEBUG)
+    // Diagnostic (VOXY_LOD_WATER_DEBUG=1): render translucent LOD water as
+    // unmistakable solid magenta — no fog, no blend — so a screenshot shows
+    // EXACTLY where the LOD water geometry rasterizes. Distinguishes "water
+    // missing / clipped / depth-rejected" (no magenta where water should be)
+    // from "water present but wrong colour/fog" (magenta is there, just the
+    // normal path renders it wrong). Sits AFTER the near-cull block: only
+    // fragments that SURVIVE the cull paint, so under the vx contract this
+    // classifies the residual near pale quads — magenta on them = kept
+    // fallback LOD water (surface colour problem), no magenta = no LOD
+    // water data there at all (ingestion gap).
+    #ifdef PATCHED_SHADER
+    // 2026-07-14: the original outColour arm is DEAD in material mode (the
+    // translucent program is PATCHED — no outColour exists), which made this
+    // probe silently no-op under the vx contract. Emit through the pack
+    // emitter instead: full-alpha magenta albedo, lightMap 248/256 (the
+    // emitter's nibble quantization lands on 15 — bright regardless of sky).
+    voxy_emitFragment(VoxyFragmentParameters(
+            vec4(1.0, 0.0, 1.0, 1.0), vec2(0.0), vec2(0.0), 0u, 0u,
+            vec2(248.0/256.0), vec4(1.0), 0u));
+    #else
+    outColour = vec4(1.0, 0.0, 1.0, 1.0);
+    #endif
+    return;
 #endif
 
     //vec2 uv = vec2(0);
