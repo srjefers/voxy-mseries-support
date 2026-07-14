@@ -48,7 +48,7 @@ public final class VxContractInjector {
     private static int uColour, uDepthTex, uInjectGamma, uInjectExposure, uInjectSqrt, uShadowMask;
     private static int uProjInv, uLightVec, uMaskAuto, uMaskScale, uDepthIsWindow;
     private static int uProj, uLongShadows, uShadowDim, uShadowSteps;
-    private static int uSeafloorDimLoc, uTransDepthTexLoc, uSeafloorAttenLoc, uSeafloorFloorLoc, uUpViewLoc;
+    private static int uSeafloorDimLoc, uTransDepthTexLoc, uSeafloorAttenLoc, uSeafloorFloorLoc, uUpViewLoc, uSeafloorDebugLoc, uSeafloorMaxDistLoc;
     private static int colorFbo;
     private static int[] attachedTargets = new int[0];
     private static boolean warnedFailure;
@@ -194,6 +194,21 @@ public final class VxContractInjector {
     private static final boolean VX_SEAFLOOR_DIM = !"0".equals(System.getenv("VOXY_VX_SEAFLOOR_DIM"));
     private static final float VX_SEAFLOOR_DIM_ATTEN = parseEnvF("VOXY_VX_SEAFLOOR_DIM_ATTEN", 0.88f);
     private static final float VX_SEAFLOOR_DIM_FLOOR = parseEnvF("VOXY_VX_SEAFLOOR_DIM_FLOOR", 0.10f);
+    /** 2026-07-14 regression fix: the dim's premise (converge the LOD floor to
+     *  the dark real-BSL seafloor) only holds INSIDE the trans near-cull ring,
+     *  where REAL MC/BSL water overlays the injected floor — the pale-patch
+     *  zone. Beyond the ring the LOD water surface + analytic mirror own the
+     *  look, and the unbounded dim crushed far kelp/seafloor texture to the
+     *  0.10 floor ("las algas no tienen texturas"). Gate by horizontal camera
+     *  distance, mirroring MDICSectionRenderer's cull radius (rdBlocks - 16).
+     *  VOXY_VX_SEAFLOOR_MAX_DIST: unset/-1 = auto (the ring), 0 = unlimited
+     *  (the old behaviour), >0 = explicit blocks. */
+    private static final float VX_SEAFLOOR_MAX_DIST = parseEnvF("VOXY_VX_SEAFLOOR_MAX_DIST", -1f);
+    /** Diagnostic (VOXY_BOUND_DEBUG house style): paint every pixel the
+     *  seafloor dim actually touches red, so "dim engaged but insufficient"
+     *  and "dim never engages" are distinguishable on a screenshot. */
+    private static final boolean VX_SEAFLOOR_DEBUG = "1".equals(System.getenv("VOXY_VX_SEAFLOOR_DEBUG"));
+    private static boolean sfLoggedFirst, sfLoggedEngaged;
 
     private static float parseEnvF(String name, float dflt) {
         String v = System.getenv(name);
@@ -402,10 +417,35 @@ public final class VxContractInjector {
                     seafloorDim = false;
                 }
             }
+            if (!sfLoggedFirst) {
+                sfLoggedFirst = true;
+                Logger.info("[Metal-LODTEST] seafloor dim first inject frame: engaged=" + seafloorDim
+                        + " bridge=" + (transDepthBridge != null)
+                        + " maskAuto=" + maskAuto
+                        + (VX_SEAFLOOR_DEBUG ? " DEBUG-TINT ON (dimmed pixels red)" : ""));
+            }
+            // Auto radius mirrors MDICSectionRenderer's near-cull ring
+            // (max(rdBlocks,32)-16, floor 64): the only zone where real
+            // MC/BSL water overlays the injected LOD floor. Recomputed per
+            // frame — render distance is live-editable in video settings.
+            float sfMaxDist = VX_SEAFLOOR_MAX_DIST;
+            if (sfMaxDist < 0f) {
+                float rdBlocks = Math.max(net.minecraft.client.Minecraft.getInstance()
+                        .gameRenderer.getRenderDistance(), 32f);
+                sfMaxDist = Math.max(rdBlocks - 16f, 64f);
+            }
+            if (seafloorDim && !sfLoggedEngaged) {
+                sfLoggedEngaged = true;
+                Logger.info("[Metal-LODTEST] seafloor dim ENGAGED (trans-depth RECT bound on unit 2; "
+                        + "red tint " + (VX_SEAFLOOR_DEBUG ? "ON" : "off")
+                        + "; maxDist=" + (sfMaxDist > 0f ? sfMaxDist + " blocks" : "unlimited") + ")");
+            }
             glUniform1i(uSeafloorDimLoc, seafloorDim ? 1 : 0);
             glUniform1i(uTransDepthTexLoc, 2);
             glUniform1f(uSeafloorAttenLoc, VX_SEAFLOOR_DIM_ATTEN);
             glUniform1f(uSeafloorFloorLoc, VX_SEAFLOOR_DIM_FLOOR);
+            glUniform1i(uSeafloorDebugLoc, VX_SEAFLOOR_DEBUG ? 1 : 0);
+            glUniform1f(uSeafloorMaxDistLoc, sfMaxDist);
             glUniform1i(uDepthIsWindow,
                     me.cortex.voxy.client.core.rendering.util.MetalMvpUtil.METAL_NDC_REMAP ? 1 : 0);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -775,6 +815,8 @@ public final class VxContractInjector {
                 uniform float uSeafloorAtten;
                 uniform float uSeafloorFloor;
                 uniform vec3 uUpView;
+                uniform int uSeafloorDebug;
+                uniform float uSeafloorMaxDist;
                 in vec2 vUV;
                 out vec4 outColor0;
                 out vec4 outColor1;
@@ -816,8 +858,28 @@ public final class VxContractInjector {
                             vec2 sfNdc = vUV * 2.0 - 1.0;
                             vec4 pO = uProjInv * vec4(sfNdc, zO, 1.0);
                             vec4 pT = uProjInv * vec4(sfNdc, zT, 1.0);
-                            float column = abs(dot(pO.xyz / pO.w - pT.xyz / pT.w, uUpView));
-                            lin *= max(pow(uSeafloorAtten, column), uSeafloorFloor);
+                            vec3 pTv = pT.xyz / pT.w;
+                            float column = abs(dot(pO.xyz / pO.w - pTv, uUpView));
+                            // 2026-07-14 gate: dim only inside the trans
+                            // near-cull ring (where real MC/BSL water covers
+                            // the injected floor — the pale-patch zone). The
+                            // unbounded dim crushed FAR kelp/seafloor texture
+                            // to the 0.10 floor. Horizontal camera distance =
+                            // view-space position minus its vertical part
+                            // (camera at origin), matching the RADIAL cull
+                            // metric; 96-block interior fade so the ring edge
+                            // has no seam. uSeafloorMaxDist <= 0 = unlimited.
+                            float sfFade = 1.0;
+                            if (uSeafloorMaxDist > 0.0) {
+                                float sfDist = length(pTv - uUpView * dot(pTv, uUpView));
+                                sfFade = 1.0 - smoothstep(uSeafloorMaxDist - 96.0,
+                                                          uSeafloorMaxDist, sfDist);
+                            }
+                            if (sfFade > 0.0) {
+                                float sfDim = max(pow(uSeafloorAtten, column), uSeafloorFloor);
+                                lin *= mix(1.0, sfDim, sfFade);
+                                if (uSeafloorDebug == 1) lin = mix(lin, vec3(1.0, 0.0, 0.0), 0.6 * sfFade);
+                            }
                         }
                     }
                     // colortex6 seed: r = shadowMask (see VX_SHADOW_MASK note —
@@ -1065,16 +1127,21 @@ public final class VxContractInjector {
         uShadowSteps = glGetUniformLocation(program, "uShadowSteps");
         uSeafloorDimLoc = glGetUniformLocation(program, "uSeafloorDim");
         uTransDepthTexLoc = glGetUniformLocation(program, "uTransDepthTex");
+        uSeafloorDebugLoc = glGetUniformLocation(program, "uSeafloorDebug");
         uSeafloorAttenLoc = glGetUniformLocation(program, "uSeafloorAtten");
         uSeafloorFloorLoc = glGetUniformLocation(program, "uSeafloorFloor");
         uUpViewLoc = glGetUniformLocation(program, "uUpView");
+        uSeafloorMaxDistLoc = glGetUniformLocation(program, "uSeafloorMaxDist");
         Logger.info("[Metal-LODTEST] vx seafloor water-column dim "
                 + (VX_SEAFLOOR_DIM ? "ON" : "OFF")
                 + " (LOD floor under LOD water darkened by atten^blocks — the mip rep-voxel"
                 + " carries near-surface sky light to submerged floors, so they injected"
                 + " beach-bright and bled pale through the 0.70-alpha fallback water;"
                 + " atten=" + VX_SEAFLOOR_DIM_ATTEN + ", floor=" + VX_SEAFLOOR_DIM_FLOOR
-                + "); VOXY_VX_SEAFLOOR_DIM=0 reverts, _ATTEN/_FLOOR tune");
+                + ", maxDist=" + (VX_SEAFLOOR_MAX_DIST < 0f ? "auto (near-cull ring)"
+                        : VX_SEAFLOOR_MAX_DIST == 0f ? "unlimited" : VX_SEAFLOOR_MAX_DIST + " blocks")
+                + "); VOXY_VX_SEAFLOOR_DIM=0 reverts, _ATTEN/_FLOOR tune, "
+                + "_MAX_DIST gates (0 = unlimited)");
         Logger.info("[Metal-LODTEST] vx colortex6 shadowMask mode="
                 + (VX_SHADOW_MASK_AUTO ? "auto (per-pixel NoL, scale=" + VX_SHADOW_MASK_SCALE + ")"
                                        : "constant " + VX_SHADOW_MASK)
