@@ -48,6 +48,7 @@ public final class VxContractInjector {
     private static int uColour, uDepthTex, uInjectGamma, uInjectExposure, uInjectSqrt, uShadowMask;
     private static int uProjInv, uLightVec, uMaskAuto, uMaskScale, uDepthIsWindow;
     private static int uProj, uLongShadows, uShadowDim, uShadowSteps;
+    private static int uSeafloorDimLoc, uTransDepthTexLoc, uSeafloorAttenLoc, uSeafloorFloorLoc, uUpViewLoc;
     private static int colorFbo;
     private static int[] attachedTargets = new int[0];
     private static boolean warnedFailure;
@@ -177,6 +178,23 @@ public final class VxContractInjector {
      *  instead of the flat passthrough. A/B kill switch; default OFF. */
     private static final boolean TRANS_RESOLVE = "1".equals(System.getenv("VOXY_VX_TRANS_RESOLVE"));
 
+    /** Seafloor water-column dim (VOXY_VX_SEAFLOOR_DIM=0 reverts). The mip
+     *  rep-voxel carries NEAR-SURFACE sky light down to submerged floor quads
+     *  (Mipper's max(opacity<<4|corner) tiebreak favours the topmost corner of
+     *  uniform water columns, and floor faces read the light of the water cell
+     *  above them), so LOD seafloors inject as bright as beach sand and bleed
+     *  pale through BSL's constant-0.70-alpha fallback water. Real BSL floors
+     *  (WATER_FOG=0 in the user profile) are dark purely via MC lightmap
+     *  attenuation (~1 sky level per water block) — reconstruct the water
+     *  column per pixel from the trans/opaque depth pair and apply the
+     *  equivalent transmission, converging LOD water to real water term for
+     *  term. ATTEN is the per-water-block linear transmission (0.88 ~= one
+     *  daytime-lightmap sky level per block), FLOOR the ambient minimum so
+     *  deep floors never go fully black. */
+    private static final boolean VX_SEAFLOOR_DIM = !"0".equals(System.getenv("VOXY_VX_SEAFLOOR_DIM"));
+    private static final float VX_SEAFLOOR_DIM_ATTEN = parseEnvF("VOXY_VX_SEAFLOOR_DIM_ATTEN", 0.88f);
+    private static final float VX_SEAFLOOR_DIM_FLOOR = parseEnvF("VOXY_VX_SEAFLOOR_DIM_FLOOR", 0.10f);
+
     private static float parseEnvF(String name, float dflt) {
         String v = System.getenv(name);
         if (v == null || v.isBlank()) return dflt;
@@ -281,6 +299,10 @@ public final class VxContractInjector {
         glActiveTexture(GL_TEXTURE1);
         int prevTexRect1 = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
         int prevSampler1 = glGetInteger(org.lwjgl.opengl.GL33C.GL_SAMPLER_BINDING);
+        // Unit 2 carries the trans-depth bridge for the seafloor dim.
+        glActiveTexture(GL_TEXTURE0 + 2);
+        int prevTexRect2 = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
+        int prevSampler2 = glGetInteger(org.lwjgl.opengl.GL33C.GL_SAMPLER_BINDING);
         glActiveTexture(GL_TEXTURE0);
         int prevTexRect0 = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
         int prevSampler0 = glGetInteger(org.lwjgl.opengl.GL33C.GL_SAMPLER_BINDING);
@@ -297,6 +319,7 @@ public final class VxContractInjector {
 
             org.lwjgl.opengl.GL33C.glBindSampler(0, 0);
             org.lwjgl.opengl.GL33C.glBindSampler(1, 0);
+            org.lwjgl.opengl.GL33C.glBindSampler(2, 0);
             glUseProgram(program);
             glBindVertexArray(vao);
             glActiveTexture(GL_TEXTURE0);
@@ -346,6 +369,43 @@ public final class VxContractInjector {
             glUniform1i(uLongShadows, (maskAuto && VX_LOD_LONG_SHADOWS) ? 1 : 0);
             glUniform1f(uShadowDim, VX_LOD_SHADOW_DIM);
             glUniform1i(uShadowSteps, VX_LOD_SHADOW_STEPS);
+            // Seafloor water-column dim inputs: the trans-depth bridge on
+            // unit 2 plus the view-space up vector (the column metric is the
+            // VERTICAL water thickness, not the slanted view-ray length).
+            // uProjInv is normally uploaded by the shadow-auto block above;
+            // when that path is off/degraded, upload it here — the dim's
+            // reconstruction needs it regardless.
+            boolean seafloorDim = false;
+            if (VX_SEAFLOOR_DIM && transDepthBridge != null) {
+                try {
+                    int sfRect = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor
+                            .acquireAuxRectTex(transDepthBridge);
+                    if (sfRect != 0) {
+                        org.joml.Vector3f up = new org.joml.Matrix4f(viewport.modelView)
+                                .transformDirection(new org.joml.Vector3f(0, 1, 0));
+                        if (up.lengthSquared() > 1e-6f) {
+                            up.normalize();
+                            if (!maskAuto) {
+                                org.joml.Matrix4f projInv =
+                                        new org.joml.Matrix4f(viewport.projection).invert();
+                                glUniformMatrix4fv(uProjInv, false, projInv.get(new float[16]));
+                            }
+                            glUniform3f(uUpViewLoc, up.x, up.y, up.z);
+                            glActiveTexture(GL_TEXTURE0 + 2);
+                            glBindTexture(GL_TEXTURE_RECTANGLE, sfRect);
+                            glActiveTexture(GL_TEXTURE0);
+                            seafloorDim = true;
+                        }
+                    }
+                } catch (Throwable t) {
+                    // fail-open to the undimmed (current) behaviour
+                    seafloorDim = false;
+                }
+            }
+            glUniform1i(uSeafloorDimLoc, seafloorDim ? 1 : 0);
+            glUniform1i(uTransDepthTexLoc, 2);
+            glUniform1f(uSeafloorAttenLoc, VX_SEAFLOOR_DIM_ATTEN);
+            glUniform1f(uSeafloorFloorLoc, VX_SEAFLOOR_DIM_FLOOR);
             glUniform1i(uDepthIsWindow,
                     me.cortex.voxy.client.core.rendering.util.MetalMvpUtil.METAL_NDC_REMAP ? 1 : 0);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -398,6 +458,9 @@ public final class VxContractInjector {
             glActiveTexture(GL_TEXTURE1);
             glBindTexture(GL_TEXTURE_RECTANGLE, prevTexRect1);
             org.lwjgl.opengl.GL33C.glBindSampler(1, prevSampler1);
+            glActiveTexture(GL_TEXTURE0 + 2);
+            glBindTexture(GL_TEXTURE_RECTANGLE, prevTexRect2);
+            org.lwjgl.opengl.GL33C.glBindSampler(2, prevSampler2);
             glActiveTexture(prevActiveTex);
             glUseProgram(prevProgram);
             glBindVertexArray(prevVao);
@@ -707,6 +770,11 @@ public final class VxContractInjector {
                 uniform int uLongShadows;
                 uniform float uShadowDim;
                 uniform int uShadowSteps;
+                uniform sampler2DRect uTransDepthTex;
+                uniform int uSeafloorDim;
+                uniform float uSeafloorAtten;
+                uniform float uSeafloorFloor;
+                uniform vec3 uUpView;
                 in vec2 vUV;
                 out vec4 outColor0;
                 out vec4 outColor1;
@@ -726,6 +794,32 @@ public final class VxContractInjector {
                     // factor here made LODs render at half the brightness of
                     // the pack's own LOD output — the "washed grey".)
                     vec3 lin = pow(c.rgb, vec3(uInjectGamma)) * uInjectExposure;
+                    // Seafloor water-column dim (VOXY_VX_SEAFLOOR_DIM=0
+                    // reverts): the mip rep-voxel carries near-surface sky
+                    // light down to submerged floor quads (Mipper top-corner
+                    // tiebreak), so LOD seafloors inject bright and bleed pale
+                    // through BSL's 0.70-alpha fallback water. Real BSL floors
+                    // (WATER_FOG=0) are dark purely via lightmap attenuation
+                    // (~1 sky level per water block). Reconstruct the vertical
+                    // column from the trans/opaque depth pair and apply the
+                    // equivalent dim. Where no LOD water drew, the trans
+                    // bridge holds the RESTORED opaque depth, so dT == d
+                    // bit-identically and the eps guard no-ops: land and
+                    // floors behind built MC sections are untouched by
+                    // construction.
+                    if (uSeafloorDim == 1) {
+                        vec3 tEnc = texture(uTransDepthTex, texel).rgb;
+                        float dT = dot(tEnc, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+                        if (dT > 0.0 && dT < 0.9999999 && dT < d - 0.0000002) {
+                            float zO = (uDepthIsWindow == 1) ? d  * 2.0 - 1.0 : d;
+                            float zT = (uDepthIsWindow == 1) ? dT * 2.0 - 1.0 : dT;
+                            vec2 sfNdc = vUV * 2.0 - 1.0;
+                            vec4 pO = uProjInv * vec4(sfNdc, zO, 1.0);
+                            vec4 pT = uProjInv * vec4(sfNdc, zT, 1.0);
+                            float column = abs(dot(pO.xyz / pO.w - pT.xyz / pT.w, uUpView));
+                            lin *= max(pow(uSeafloorAtten, column), uSeafloorFloor);
+                        }
+                    }
                     // colortex6 seed: r = shadowMask (see VX_SHADOW_MASK note —
                     // constant 1.0 was the left-of-sun gray-veil bug), b = "LOD
                     // wrote here" mask the pack's own voxy_opaque writes as
@@ -969,6 +1063,18 @@ public final class VxContractInjector {
         uLongShadows = glGetUniformLocation(program, "uLongShadows");
         uShadowDim = glGetUniformLocation(program, "uShadowDim");
         uShadowSteps = glGetUniformLocation(program, "uShadowSteps");
+        uSeafloorDimLoc = glGetUniformLocation(program, "uSeafloorDim");
+        uTransDepthTexLoc = glGetUniformLocation(program, "uTransDepthTex");
+        uSeafloorAttenLoc = glGetUniformLocation(program, "uSeafloorAtten");
+        uSeafloorFloorLoc = glGetUniformLocation(program, "uSeafloorFloor");
+        uUpViewLoc = glGetUniformLocation(program, "uUpView");
+        Logger.info("[Metal-LODTEST] vx seafloor water-column dim "
+                + (VX_SEAFLOOR_DIM ? "ON" : "OFF")
+                + " (LOD floor under LOD water darkened by atten^blocks — the mip rep-voxel"
+                + " carries near-surface sky light to submerged floors, so they injected"
+                + " beach-bright and bled pale through the 0.70-alpha fallback water;"
+                + " atten=" + VX_SEAFLOOR_DIM_ATTEN + ", floor=" + VX_SEAFLOOR_DIM_FLOOR
+                + "); VOXY_VX_SEAFLOOR_DIM=0 reverts, _ATTEN/_FLOOR tune");
         Logger.info("[Metal-LODTEST] vx colortex6 shadowMask mode="
                 + (VX_SHADOW_MASK_AUTO ? "auto (per-pixel NoL, scale=" + VX_SHADOW_MASK_SCALE + ")"
                                        : "constant " + VX_SHADOW_MASK)
