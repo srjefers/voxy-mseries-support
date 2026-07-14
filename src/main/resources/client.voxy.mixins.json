@@ -33,6 +33,7 @@
     "sodium.AccessorChunkTracker",
     "sodium.AccessorSharedQuadIndexBuffer",
     "sodium.AccessorSodiumWorldRenderer",
+    "sodium.MixinBuiltSectionInfo",
     "sodium.MixinChunkJobQueue",
     "sodium.MixinDefaultChunkRenderer",
     "sodium.MixinRenderRegionManager",
