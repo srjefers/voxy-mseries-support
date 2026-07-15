@@ -49,6 +49,7 @@ public final class VxContractInjector {
     private static int uProjInv, uLightVec, uMaskAuto, uMaskScale, uDepthIsWindow;
     private static int uProj, uLongShadows, uShadowDim, uShadowSteps;
     private static int uSeafloorDimLoc, uTransDepthTexLoc, uSeafloorAttenLoc, uSeafloorFloorLoc, uUpViewLoc, uSeafloorDebugLoc, uSeafloorMaxDistLoc;
+    private static int uAbyssLoc, uAbyssColorLoc, uSeaOffsetLoc;
     private static int colorFbo;
     private static int[] attachedTargets = new int[0];
     private static boolean warnedFailure;
@@ -218,6 +219,48 @@ public final class VxContractInjector {
     private static final boolean VX_SEAFLOOR_FADE_V2 =
             !"0".equals(System.getenv("VOXY_VX_SEAFLOOR_FADE_V2"));
     private static boolean sfLoggedFirst, sfLoggedEngaged;
+
+    /** Abyss fill (VOXY_VX_ABYSS_FILL=0 reverts): during the world-join churn
+     *  window, near-ocean FLOOR sections can lag Voxy's bake/upload pipeline
+     *  by minutes while Sodium already renders the real water above them —
+     *  the water then shades against nothing and composites as the flat pale
+     *  panes (pane RGB tracked BSL's raw sky; the tint probe confirmed NO LOD
+     *  fragment of any kind existed at those pixels). Where the trans bridge
+     *  carries an LOD water-surface depth (the ghost cull preserves it at
+     *  zero alpha) but the opaque bridge has no LOD, present a synthetic dark
+     *  seabed AS a vx LOD pixel: this colour branch writes the fill into the
+     *  pack's opaque vx targets while VxIrisSideChannel.abyssDepth writes the
+     *  matching synthetic depth into vxDepthTexOpaque (LOD depth never
+     *  touches depthtex0, so without the side channel the pack's sky
+     *  composite would stomp the colour — the colour branch is gated on the
+     *  depth pass succeeding). Self-healing: once real LOD data arrives the
+     *  LOD-absent gate fails and the real floor injects; real geometry drawn
+     *  later always wins the depth test against the pushed-back fill.
+     *  PUSH = blocks the fill sits behind the water surface along the view
+     *  ray; RGB = linear fill colour (default deep-ocean dark). */
+    private static final boolean VX_ABYSS_FILL = !"0".equals(System.getenv("VOXY_VX_ABYSS_FILL"));
+    private static final float VX_ABYSS_PUSH = parseEnvF("VOXY_VX_ABYSS_PUSH", 24f);
+    /** Diagnostic (house style): paint the fill bright green so "fill covers
+     *  the panes" vs "fill never engages" is unmistakable on a screenshot. */
+    private static final boolean VX_ABYSS_DEBUG = "1".equals(System.getenv("VOXY_VX_ABYSS_DEBUG"));
+    private static final float[] VX_ABYSS_RGB = parseEnvRgb("VOXY_VX_ABYSS_RGB", 0.010f, 0.024f, 0.032f);
+    private static boolean abyssLoggedFirst;
+
+    private static float[] parseEnvRgb(String name, float r, float g, float b) {
+        String v = System.getenv(name);
+        if (v != null && !v.isBlank()) {
+            try {
+                String[] parts = v.trim().split(",");
+                if (parts.length == 3) {
+                    return new float[]{Float.parseFloat(parts[0].trim()),
+                            Float.parseFloat(parts[1].trim()),
+                            Float.parseFloat(parts[2].trim())};
+                }
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return new float[]{r, g, b};
+    }
 
     private static float parseEnvF(String name, float dflt) {
         String v = System.getenv(name);
@@ -400,12 +443,15 @@ public final class VxContractInjector {
             // when that path is off/degraded, upload it here — the dim's
             // reconstruction needs it regardless.
             boolean seafloorDim = false;
-            if (VX_SEAFLOOR_DIM && transDepthBridge != null) {
+            boolean abyss = false;
+            int sfRect = 0;
+            org.joml.Vector3f up = null;
+            if ((VX_SEAFLOOR_DIM || VX_ABYSS_FILL) && transDepthBridge != null) {
                 try {
-                    int sfRect = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor
+                    sfRect = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor
                             .acquireAuxRectTex(transDepthBridge);
                     if (sfRect != 0) {
-                        org.joml.Vector3f up = new org.joml.Matrix4f(viewport.modelView)
+                        up = new org.joml.Matrix4f(viewport.modelView)
                                 .transformDirection(new org.joml.Vector3f(0, 1, 0));
                         if (up.lengthSquared() > 1e-6f) {
                             up.normalize();
@@ -418,12 +464,17 @@ public final class VxContractInjector {
                             glActiveTexture(GL_TEXTURE0 + 2);
                             glBindTexture(GL_TEXTURE_RECTANGLE, sfRect);
                             glActiveTexture(GL_TEXTURE0);
-                            seafloorDim = true;
+                            seafloorDim = VX_SEAFLOOR_DIM;
+                            abyss = VX_ABYSS_FILL;
+                        } else {
+                            up = null;
                         }
                     }
                 } catch (Throwable t) {
-                    // fail-open to the undimmed (current) behaviour
+                    // fail-open to the undimmed/unfilled (current) behaviour
                     seafloorDim = false;
+                    abyss = false;
+                    up = null;
                 }
             }
             if (!sfLoggedFirst) {
@@ -457,6 +508,56 @@ public final class VxContractInjector {
             glUniform1f(uSeafloorMaxDistLoc, sfMaxDist);
             glUniform1i(uDepthIsWindow,
                     me.cortex.voxy.client.core.rendering.util.MetalMvpUtil.METAL_NDC_REMAP ? 1 : 0);
+            // Abyss fill: run the synthetic-depth half FIRST and gate the
+            // colour branch on its success — fill colour whose depth never
+            // reached vxDepthTexOpaque would be stomped by the pack's sky
+            // composite (vxZ == 1.0), i.e. the pale panes unchanged.
+            // seaOffset = seaLevel - cameraY (view-space up units): the
+            // analytic sea-plane fallback for pixels where even the LOD
+            // water sections haven't uploaded yet; >-0.5 (camera at/under
+            // sea level) disables that branch in both shaders.
+            float seaOffset = 1.0f;
+            if (abyss && up != null) {
+                boolean abyssDepthOk;
+                try {
+                    var mc = net.minecraft.client.Minecraft.getInstance();
+                    if (mc.level != null && mc.gameRenderer.getMainCamera() != null) {
+                        seaOffset = (float) (mc.level.getSeaLevel()
+                                - mc.gameRenderer.getMainCamera().position().y);
+                    }
+                    abyssDepthOk = VxIrisSideChannel.getOrCreate().abyssDepth(
+                            colourRect, depthRect, sfRect, fbw, fbh,
+                            me.cortex.voxy.client.core.rendering.util.MetalMvpUtil.METAL_NDC_REMAP,
+                            new org.joml.Matrix4f(viewport.projection),
+                            new org.joml.Matrix4f(viewport.projection).invert(),
+                            up, sfMaxDist, VX_ABYSS_PUSH, seaOffset);
+                } catch (Throwable t) {
+                    abyssDepthOk = false;
+                }
+                abyss = abyssDepthOk;
+            } else {
+                abyss = false;
+            }
+            glUniform1f(uSeaOffsetLoc, seaOffset);
+            glUniform1i(uAbyssLoc, abyss ? 1 : 0);
+            if (VX_ABYSS_DEBUG) {
+                glUniform3f(uAbyssColorLoc, 0.0f, 1.0f, 0.0f);
+            } else {
+                glUniform3f(uAbyssColorLoc, VX_ABYSS_RGB[0], VX_ABYSS_RGB[1], VX_ABYSS_RGB[2]);
+            }
+            // One-shot: fires the first frame the fill actually ENGAGES (the
+            // trans bridge appears a few frames after the first inject), or
+            // immediately when the kill switch has it off.
+            if (!abyssLoggedFirst && (abyss || !VX_ABYSS_FILL)) {
+                abyssLoggedFirst = true;
+                Logger.info("[Metal-LODTEST] vx abyss fill " + (abyss
+                        ? "ENGAGED (synthetic dark seabed where real water has no LOD floor yet;"
+                        + " push=" + VX_ABYSS_PUSH + " blocks, rgb=" + VX_ABYSS_RGB[0] + ","
+                        + VX_ABYSS_RGB[1] + "," + VX_ABYSS_RGB[2]
+                        + (VX_ABYSS_DEBUG ? ", DEBUG-TINT GREEN" : "")
+                        + "; VOXY_VX_ABYSS_FILL=0 reverts, _PUSH/_RGB tune)"
+                        : "OFF (VOXY_VX_ABYSS_FILL=0)"));
+            }
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
             // Phase D (issue #11): translucent LOD layer. Decode the
@@ -826,6 +927,9 @@ public final class VxContractInjector {
                 uniform vec3 uUpView;
                 uniform int uSeafloorDebug;
                 uniform float uSeafloorMaxDist;
+                uniform int uAbyss;
+                uniform vec3 uAbyssColor;
+                uniform float uSeaOffset;
                 in vec2 vUV;
                 out vec4 outColor0;
                 out vec4 outColor1;
@@ -835,7 +939,60 @@ public final class VxContractInjector {
                     vec4 c = texture(uColour, texel);
                     vec3 dEnc = texture(uDepthTex, texel).rgb;
                     float d = dot(dEnc, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
-                    if (c.a <= 0.001 || d <= 0.0 || d >= 0.9999999) discard;
+                    if (c.a <= 0.001 || d <= 0.0 || d >= 0.9999999) {
+                        // ABYSS FILL colour branch (VOXY_VX_ABYSS_FILL=0
+                        // reverts) — conditions MUST stay bit-identical with
+                        // VxIrisSideChannel's abyssDepth pass: colour without
+                        // depth gets stomped by the pack's sky composite,
+                        // depth without colour composites stale colortex0.
+                        // The trans bridge carries the LOD water-surface
+                        // depth here (the ghost cull keeps depth at zero
+                        // alpha exactly so reconstruction survives the masked
+                        // cull); a valid dT with NO LOD behind it is the
+                        // pale-pane case — real water over a floor Voxy
+                        // hasn't baked/uploaded yet.
+                        if (uAbyss == 1) {
+                            vec3 abP = vec3(0.0);
+                            bool abHave = false;
+                            vec3 abEnc = texture(uTransDepthTex, texel).rgb;
+                            float abDT = dot(abEnc, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+                            if (abDT > 0.0 && abDT < 0.9999995) {
+                                float abZ = (uDepthIsWindow == 1) ? abDT * 2.0 - 1.0 : abDT;
+                                vec4 abP4 = uProjInv * vec4(vUV * 2.0 - 1.0, abZ, 1.0);
+                                abP = abP4.xyz / abP4.w;
+                                abHave = true;
+                            } else if (uSeaOffset < -0.5) {
+                                // Analytic sea-plane fallback — see the
+                                // abyssDepth shader; during early join churn
+                                // even the LOD water sections are missing, so
+                                // the trans bridge can't locate the surface.
+                                vec4 abR4 = uProjInv * vec4(vUV * 2.0 - 1.0, 0.0, 1.0);
+                                vec3 abR = normalize(abR4.xyz / abR4.w);
+                                float abUr = dot(abR, uUpView);
+                                if (abUr < -0.05) {
+                                    abP = abR * (uSeaOffset / abUr);
+                                    abHave = true;
+                                }
+                            }
+                            if (abHave) {
+                                float abLen = length(abP);
+                                if (abLen > 1e-3 && dot(abP / abLen, uUpView) < -0.05) {
+                                    float abHoriz = length(abP - uUpView * dot(abP, uUpView));
+                                    if (uSeafloorMaxDist <= 0.0 || abHoriz < uSeafloorMaxDist) {
+                                        // colortex6 seed: r=0 (a deep seabed
+                                        // receives no direct sun), b=1 "LOD
+                                        // wrote here" — same convention as
+                                        // the real branch below.
+                                        vec3 abLin = max(uAbyssColor, vec3(0.0));
+                                        outColor0 = vec4((uInjectSqrt == 1) ? sqrt(abLin) : abLin, 1.0);
+                                        outColor1 = vec4(0.0, 0.0, 1.0, 1.0);
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                        discard;
+                    }
                     // Pack colour convention (BSL ALPHA_BLEND 0): colortex0
                     // carries sqrt-encoded scene-linear radiance. NATIVE
                     // PARITY: BSL's own voxy_opaque stores
@@ -1164,6 +1321,9 @@ public final class VxContractInjector {
         uSeafloorFloorLoc = glGetUniformLocation(program, "uSeafloorFloor");
         uUpViewLoc = glGetUniformLocation(program, "uUpView");
         uSeafloorMaxDistLoc = glGetUniformLocation(program, "uSeafloorMaxDist");
+        uAbyssLoc = glGetUniformLocation(program, "uAbyss");
+        uAbyssColorLoc = glGetUniformLocation(program, "uAbyssColor");
+        uSeaOffsetLoc = glGetUniformLocation(program, "uSeaOffset");
         Logger.info("[Metal-LODTEST] vx seafloor water-column dim "
                 + (VX_SEAFLOOR_DIM ? "ON" : "OFF")
                 + " (LOD floor under LOD water darkened by atten^blocks — the mip rep-voxel"
