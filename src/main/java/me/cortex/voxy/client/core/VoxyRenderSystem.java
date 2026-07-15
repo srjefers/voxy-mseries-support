@@ -843,6 +843,20 @@ public class VoxyRenderSystem {
     public void shutdown() {
         Logger.info("Flushing download stream");
         DownloadStream.INSTANCE.flushWaitClear();
+        // World-rejoin fix: UploadStream is a process-lifetime singleton but
+        // its queued copies target the world-lifetime buffers freed below.
+        // Un-flushed session-N entries used to execute on session-N+1's first
+        // commit against freed Metal handles (native use-after-free — prime
+        // suspect for the white/untextured LODs on rejoin). Drain here while
+        // every target is still alive; VOXY_UPLOAD_FLUSH_FIX=0 reverts.
+        if (!"0".equals(System.getenv("VOXY_UPLOAD_FLUSH_FIX"))) {
+            try {
+                Logger.info("Flushing upload stream");
+                me.cortex.voxy.client.core.rendering.util.UploadStream.INSTANCE.flushWaitClear();
+            } catch (Exception e) {
+                Logger.error("Error flushing upload stream", e);
+            }
+        }
         Logger.info("Shutting down rendering");
         try {
             //Cleanup callbacks
@@ -885,6 +899,16 @@ public class VoxyRenderSystem {
 
         Logger.info("Flushing download stream");
         DownloadStream.INSTANCE.flushWaitClear();
+        // Anything queued into the upload stream DURING the teardown above
+        // targets buffers that may already be freed — drop those entries
+        // WITHOUT executing them (see UploadStream.discardClear).
+        if (!"0".equals(System.getenv("VOXY_UPLOAD_FLUSH_FIX"))) {
+            try {
+                me.cortex.voxy.client.core.rendering.util.UploadStream.INSTANCE.discardClear();
+            } catch (Exception e) {
+                Logger.error("Error discarding upload stream", e);
+            }
+        }
 
         //Release hold on the world
         this.worldIn.releaseRef();

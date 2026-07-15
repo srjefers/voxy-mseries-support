@@ -46,6 +46,7 @@ public class ModelStore {
                         ModelFactory.MODEL_TEXTURE_SIZE*3*256,
                         ModelFactory.MODEL_TEXTURE_SIZE*2*256)
                 .name("ModelTextures");
+        zeroInitAtlas();
 
 
         //Limit the mips of the texture to match that of the terrain atlas
@@ -73,6 +74,51 @@ public class ModelStore {
                         .build());
     }
 
+
+    /**
+     * World-rejoin fix: a fresh Shared MTLTexture has UNDEFINED contents.
+     * The FIRST texture of a process happens to land on zeroed fresh pages
+     * (unbaked atlas cells read alpha 0 and the shader alpha-discards them
+     * until their bake arrives), but a texture allocated after a world
+     * reload gets RECYCLED driver memory — pale garbage with nonzero alpha
+     * in every cell whose bake upload hasn't landed yet, i.e. white-ish
+     * "textured" LODs right after rejoin. Same bug class as the historical
+     * HiZ undefined-contents fix. Zero-fill every mip so a rejoin behaves
+     * exactly like the first boot; GL path untouched (upstream behaviour),
+     * VOXY_ATLAS_ZERO_INIT=0 reverts.
+     */
+    private void zeroInitAtlas() {
+        if (RenderBackendFactory.get().getType() == me.cortex.voxy.client.core.gpu.BackendType.OPENGL) return;
+        if ("0".equals(System.getenv("VOXY_ATLAS_ZERO_INIT"))) return;
+        long start = System.nanoTime();
+        int levels = Integer.numberOfTrailingZeros(ModelFactory.MODEL_TEXTURE_SIZE);
+        int w0 = ModelFactory.MODEL_TEXTURE_SIZE * 3 * 256;
+        int h0 = ModelFactory.MODEL_TEXTURE_SIZE * 2 * 256;
+        // One reusable zero band, replaceRegion'd across each mip in strips
+        // (a full mip-0 scratch would be ~400 MB; the band caps it at ~24 MB).
+        int bandRows = Math.max(1, (24 << 20) / (w0 * 4));
+        long scratch = org.lwjgl.system.MemoryUtil.nmemCalloc(1, (long) w0 * 4 * bandRows);
+        if (scratch == 0) throw new OutOfMemoryError("model atlas zero-init scratch");
+        long bytes = 0;
+        try {
+            for (int level = 0; level < levels; level++) {
+                int w = Math.max(1, w0 >> level);
+                int h = Math.max(1, h0 >> level);
+                int rowsPerBand = Math.max(1, (int) Math.min(h, ((long) bandRows * w0) / w));
+                for (int y = 0; y < h; y += rowsPerBand) {
+                    int rows = Math.min(rowsPerBand, h - y);
+                    this.textures.uploadSubImage2D(level, 0, y, w, rows, GL_RGBA, GL_UNSIGNED_BYTE, scratch);
+                    bytes += (long) w * rows * 4;
+                }
+            }
+        } finally {
+            org.lwjgl.system.MemoryUtil.nmemFree(scratch);
+        }
+        me.cortex.voxy.common.Logger.info("[Metal-LODTEST] model atlas zero-init: "
+                + (bytes >> 20) + " MB across " + levels + " mips in "
+                + ((System.nanoTime() - start) / 1_000_000) + " ms (rejoin recycled-memory guard;"
+                + " VOXY_ATLAS_ZERO_INIT=0 reverts)");
+    }
 
     public void free() {
         this.modelBuffer.free();
