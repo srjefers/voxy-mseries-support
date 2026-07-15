@@ -158,6 +158,117 @@ public class VoxyClient implements ClientModInitializer {
             Logger.info("VOXY_AUTO_SCREENSHOT active: every " + parsedInterval + "s");
         }
 
+        // VOXY_DEBUG_REJOIN=<seconds>: after N seconds in-world, save-quit to
+        // the title screen via the exact pause-menu chain
+        // (Minecraft.disconnectFromWorld) and re-join the VOXY_QUICKPLAY world
+        // exactly once. Automates the leave+rejoin white-LOD repro without
+        // menu interaction (--quickPlaySingleplayer is a one-shot vanilla boot
+        // cookie, so the rejoin must issue openWorld itself — the same call
+        // vanilla QuickPlay.joinSingleplayerWorld makes). Diagnostic-only,
+        // default off; pair with VOXY_AUTO_SCREENSHOT.
+        String rejoin = System.getenv("VOXY_DEBUG_REJOIN");
+        if (rejoin != null && !rejoin.isBlank()) {
+            int rejoinSecs;
+            try {
+                rejoinSecs = Math.max(2, Integer.parseInt(rejoin.trim()));
+            } catch (NumberFormatException e) {
+                rejoinSecs = 15;
+            }
+            final long delayNanos = rejoinSecs * 1_000_000_000L;
+            final String rejoinWorld = System.getenv("VOXY_QUICKPLAY");
+            // 0 await-world, 1 in-world timer, 2 await-title, 3 title-settle, 4 done
+            final int[] phase = {0};
+            final long[] t0 = {0};
+            final int[] settle = {0};
+            net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(client -> {
+                switch (phase[0]) {
+                    case 0 -> {
+                        if (client.level != null) {
+                            t0[0] = System.nanoTime();
+                            phase[0] = 1;
+                        }
+                    }
+                    case 1 -> {
+                        if (client.level == null) {
+                            phase[0] = 0;
+                            return;
+                        }
+                        if (System.nanoTime() - t0[0] < delayNanos) return;
+                        phase[0] = 2;
+                        Logger.info("[VOXY_DEBUG_REJOIN] leaving to title");
+                        // schedule() enqueues on the client event loop (execute()
+                        // would run inline mid-tick); disconnectFromWorld is the
+                        // pause-menu "Save and Quit" chain: level.disconnect ->
+                        // disconnectWithSavingScreen -> setScreen(TitleScreen).
+                        client.schedule(() -> client.disconnectFromWorld(
+                                net.minecraft.client.multiplayer.ClientLevel.DEFAULT_QUIT_MESSAGE));
+                    }
+                    case 2 -> {
+                        if (client.level == null
+                                && client.screen instanceof net.minecraft.client.gui.screens.TitleScreen) {
+                            settle[0] = 0;
+                            phase[0] = 3;
+                        }
+                    }
+                    case 3 -> {
+                        // ~2s at title: let VoxyRenderSystem shutdown + the
+                        // resolve-pass reset finish before the rejoin.
+                        if (++settle[0] < 40) return;
+                        phase[0] = 4; // fires exactly once per process
+                        if (rejoinWorld == null || rejoinWorld.isBlank()) {
+                            Logger.error("[VOXY_DEBUG_REJOIN] set VOXY_QUICKPLAY=<world folder> for the rejoin target");
+                            return;
+                        }
+                        Logger.info("[VOXY_DEBUG_REJOIN] rejoining '" + rejoinWorld + "'");
+                        // Same call vanilla QuickPlay.joinSingleplayerWorld makes:
+                        client.createWorldOpenFlows().openWorld(rejoinWorld,
+                                () -> client.setScreen(new net.minecraft.client.gui.screens.TitleScreen()));
+                    }
+                    default -> {}
+                }
+            });
+            Logger.info("VOXY_DEBUG_REJOIN active: leave+rejoin after " + rejoinSecs + "s in-world");
+        }
+
+        // VOXY_DEBUG_CMD="15:time set noon;60:weather rain;120:weather clear":
+        // run server commands at fixed seconds-after-join. Diagnostic-only —
+        // lets automated runs A/B weather/time states (the washed far-LOD
+        // ring investigation) without cheats enabled or menu interaction.
+        // Executed through the integrated server's own command source, on the
+        // server thread, so player permissions don't apply.
+        String dbgCmds = System.getenv("VOXY_DEBUG_CMD");
+        if (dbgCmds != null && !dbgCmds.isBlank()) {
+            record TimedCmd(long delayNanos, String cmd) {}
+            java.util.List<TimedCmd> cmds = new java.util.ArrayList<>();
+            for (String part : dbgCmds.split(";")) {
+                int colon = part.indexOf(':');
+                if (colon <= 0) continue;
+                try {
+                    cmds.add(new TimedCmd(Long.parseLong(part.substring(0, colon).trim()) * 1_000_000_000L,
+                            part.substring(colon + 1).trim()));
+                } catch (NumberFormatException ignored) {}
+            }
+            final long[] joinedAt = {-1};
+            final boolean[] fired = new boolean[cmds.size()];
+            net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(client -> {
+                if (client.level == null) { joinedAt[0] = -1; java.util.Arrays.fill(fired, false); return; }
+                if (joinedAt[0] < 0) joinedAt[0] = System.nanoTime();
+                long elapsed = System.nanoTime() - joinedAt[0];
+                var server = client.getSingleplayerServer();
+                if (server == null) return;
+                for (int i = 0; i < cmds.size(); i++) {
+                    if (!fired[i] && elapsed >= cmds.get(i).delayNanos()) {
+                        fired[i] = true;
+                        String cmd = cmds.get(i).cmd();
+                        Logger.info("[VOXY_DEBUG_CMD] running: /" + cmd);
+                        server.execute(() -> server.getCommands().performPrefixedCommand(
+                                server.createCommandSourceStack(), cmd));
+                    }
+                }
+            });
+            Logger.info("VOXY_DEBUG_CMD active: " + cmds.size() + " scheduled commands");
+        }
+
         FabricLoader.getInstance()
                 .getEntrypoints("frex_flawless_frames", Consumer.class)
                 .forEach(api -> ((Consumer<Function<String,Consumer<Boolean>>>)api).accept(name->active->{if (active) {

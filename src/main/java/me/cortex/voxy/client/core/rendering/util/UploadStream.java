@@ -154,6 +154,69 @@ public class UploadStream {
         }
     }
 
+    /**
+     * Renderer-shutdown drain (world-rejoin fix): this stream is a
+     * PROCESS-lifetime singleton, but the buffers its queued copies target
+     * are WORLD-lifetime. Copies queued but not yet committed when
+     * VoxyRenderSystem.shutdown() frees those buffers used to sit in
+     * {@link #uploadList} until the NEXT world's first {@link #commit()} —
+     * which then executed them against freed Metal handles (native
+     * use-after-free scribbling into whatever the driver re-allocated,
+     * e.g. the new session's model records / atlas). Call this at shutdown
+     * START, while every target is still alive: it executes the queued
+     * copies and retires all in-flight fence frames so nothing from this
+     * world survives into the next one.
+     */
+    public void flushWaitClear() {
+        this.commit();
+        // commit() early-returns without touching the cursor when uploadList
+        // is empty; reset it explicitly so the next session never expands
+        // into an arena block retireAllFrames is about to free.
+        this.caddr = -1;
+        this.offset = 0;
+        this.retireAllFrames();
+    }
+
+    /**
+     * Shutdown-END counterpart of {@link #flushWaitClear()}: anything queued
+     * DURING shutdown targets buffers that may already be freed, so these
+     * entries are dropped WITHOUT executing (a copy into a dead buffer is
+     * the exact bug this pair exists to prevent; losing a copy to a dead
+     * buffer is harmless).
+     */
+    public void discardClear() {
+        if (!this.uploadList.isEmpty()) {
+            Logger.warn("UploadStream: dropping " + this.uploadList.size()
+                    + " copies queued during renderer shutdown (their targets may already be freed)");
+            this.uploadList.clear();
+        }
+        this.caddr = -1;
+        this.offset = 0;
+        this.retireAllFrames();
+    }
+
+    private void retireAllFrames() {
+        // Bounded: Metal fences signal at the backend's next submit, which
+        // flushBackendFences forces; shutdown must never hang on a fence.
+        int attempts = 100;
+        while ((!this.frames.isEmpty() || !this.thisFrameAllocations.isEmpty()) && --attempts != 0) {
+            if (!this.frames.isEmpty() && !this.frames.peek().fence.signaled()) {
+                glFinish();
+                flushBackendFences();
+            }
+            this.tick(false);
+        }
+        if (!this.frames.isEmpty()) {
+            Logger.warn("UploadStream: " + this.frames.size()
+                    + " in-flight frames did not retire at shutdown; force-releasing");
+            while (!this.frames.isEmpty()) {
+                var frame = this.frames.pop();
+                frame.allocations.forEach(this.allocationArena::free);
+                frame.fence.free();
+            }
+        }
+    }
+
     public long getBaseAddress() {
         return this.uploadBuffer.addr();
     }

@@ -55,6 +55,17 @@ public abstract class Viewport <A extends Viewport<A>> {
     public double cameraY;
     public double cameraZ;
     public FogParameters fogParameters;
+    /**
+     * Metal only: projected-AREA factor of the current projection vs the
+     * user's base FOV setting (spyglass zoom ≈ 170x area). The projection
+     * includes the spyglass FOV but the HOT traversal's minSSS threshold is
+     * FOV-independent, so zooming demands 3-4 finer LOD levels that take
+     * seconds of request→build→upload round trips (the pop-in). The
+     * traversal multiplies minSSS by this so LOD level selection stays
+     * zoom-invariant. 1.0 below the engage threshold and always on GL.
+     * Written per-frame by VoxyRenderSystem.setupViewport.
+     */
+    public float zoomCompensation = 1.0f;
 
     public final Matrix4f MVP = new Matrix4f();
     public final Vector3i section = new Vector3i();

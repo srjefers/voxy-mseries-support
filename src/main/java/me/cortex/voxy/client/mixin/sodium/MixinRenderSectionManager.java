@@ -99,6 +99,22 @@ public class MixinRenderSectionManager {
             return false;
         }
         if (wasBuilt == (instance.getFlags()!=0)) {//Only want to do stuff on change
+            // Rebuild-in-place (built→built, no flag transition): the
+            // section's opaque/trans-only class may still have FLIPPED
+            // (last opaque block mined out of a water section, …) — the
+            // bound mask must re-route it between the real-depth and
+            // coverage-epsilon instance sets or the split goes stale.
+            if (wasBuilt && instance.getFlags() != 0 && info != null) {
+                boolean hasOpaque = voxy$hasOpaque(info);
+                long rpos = voxy$boundPos(instance.getChunkX(), instance.getChunkY(), instance.getChunkZ());
+                if (me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorReclass(rpos, hasOpaque)) {
+                    VoxyRenderSystem sys = ((IGetVoxyRenderSystem)(this.level.levelRenderer)).getVoxyRenderSystem();
+                    if (sys != null) {
+                        sys.chunkBoundRenderer.removeSection(rpos);
+                        sys.chunkBoundRenderer.addSection(rpos, hasOpaque);
+                    }
+                }
+            }
             return true;
         }
 
@@ -135,23 +151,43 @@ public class MixinRenderSectionManager {
             }
         }
 
-        //Do some very cheeky stuff for MiB
-        if (VoxyCommon.IS_MINE_IN_ABYSS) {
-            int sector = (x+512)>>10;
-            x-=sector<<10;
-            y+=16+(256-32-sector*30);
-        }
-        long pos = SectionPos.asLong(x,y,z);
+        long pos = voxy$boundPos(x, y, z);
         if (wasBuilt) {//Remove
             //TODO: on chunk remove do ingest if is surrounded by built chunks (or when the tracker says is ok)
 
             me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorRemove(pos);
             system.chunkBoundRenderer.removeSection(pos);
         } else {//Add
-            me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorAdd(pos);
-            system.chunkBoundRenderer.addSection(pos);
+            boolean hasOpaque = voxy$hasOpaque(info);
+            me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorAdd(pos, hasOpaque);
+            system.chunkBoundRenderer.addSection(pos, hasOpaque);
         }
         return true;
+    }
+
+    /**
+     * The opaque-geometry bit MixinBuiltSectionInfo captured before Sodium
+     * collapsed the pass list. Defaults to TRUE (= today's single-set
+     * behavior) if the duck mixin somehow didn't apply — a false negative
+     * here would route every section to the coverage-epsilon set and let
+     * LODs draw inside the whole loaded-chunk volume.
+     */
+    @Unique
+    private static boolean voxy$hasOpaque(BuiltSectionInfo info) {
+        return info == null
+                || !(((Object) info) instanceof me.cortex.voxy.client.core.rendering.IVoxyBuiltSectionInfo iv)
+                || iv.voxy$hasOpaque();
+    }
+
+    @Unique
+    private static long voxy$boundPos(int x, int y, int z) {
+        //Do some very cheeky stuff for MiB
+        if (VoxyCommon.IS_MINE_IN_ABYSS) {
+            int sector = (x+512)>>10;
+            x-=sector<<10;
+            y+=16+(256-32-sector*30);
+        }
+        return SectionPos.asLong(x,y,z);
     }
 
     @org.spongepowered.asm.mixin.injection.Inject(method = "<init>", at = @At("RETURN"))

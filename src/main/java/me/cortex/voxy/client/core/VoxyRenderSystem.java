@@ -291,6 +291,31 @@ public class VoxyRenderSystem {
     private long fogClassStreakStartNs;
     private static boolean loggedViewportLeak;
 
+    /** Metal-only kill switch: VOXY_LOD_ZOOM_REFINE=1 restores the upstream
+     *  refine-on-zoom behaviour (spyglass demands finer LOD levels → ~3s
+     *  pop-in) instead of the zoom-invariant minSSS compensation. */
+    private static final boolean ZOOM_REFINE_ENABLED =
+            "1".equals(System.getenv("VOXY_LOD_ZOOM_REFINE"));
+    /** Number of LOD levels a zoom is allowed to refine (each level is 4x
+     *  projected area / 2x linear). The compensation divides zoomComp by
+     *  4^N before engaging, so the traversal only sees the zoom EXCESS
+     *  beyond the budget. VOXY_LOD_ZOOM_REFINE_LEVELS tunes (default 2);
+     *  0 restores full zoom invariance (effComp = zoomComp). */
+    private static final int ZOOM_REFINE_LEVELS = parseZoomRefineLevels();
+    private static final float ZOOM_REFINE_BUDGET_AREA =
+            (float) Math.pow(4.0, ZOOM_REFINE_LEVELS);
+    private static boolean zoomCompEngaged;
+
+    private static int parseZoomRefineLevels() {
+        String v = System.getenv("VOXY_LOD_ZOOM_REFINE_LEVELS");
+        if (v == null || v.isBlank()) return 2;
+        try {
+            return Math.max(0, Integer.parseInt(v.trim()));
+        } catch (NumberFormatException e) {
+            return 2;
+        }
+    }
+
     /**
      * Submersion-type fog records (water/lava/powder-snow/blindness) carry a
      * short environmental end; atmospheric fog is hundreds of blocks. The
@@ -432,6 +457,60 @@ public class VoxyRenderSystem {
             if (factor != null) {
                 width = (int) (width*factor[0]);
                 height = (int) (height*factor[1]);
+            }
+        }
+
+        viewport.zoomCompensation = 1.0f;
+        if (!ZOOM_REFINE_ENABLED
+                && me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                        != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+            // The projection's FOV includes spyglass zoom (getFov(..., true) in
+            // makeProjectionMatrix) but the HOT traversal's minSSS is uploaded
+            // FOV-independent — zooming inflates every node's screenspace area
+            // ~170x, so the walk demands 3-4 finer LOD levels that each need a
+            // request→build→upload round trip (~3s of pop-in). Scale minSSS by
+            // the projected-AREA zoom factor instead so the already-built level
+            // stays selected. The REQUEST/cull frustum keeps the zoomed planes.
+            float m00 = projection.m00();
+            float m11 = projection.m11();
+            float baseFov = Minecraft.getInstance().options.fov().get();
+            float baseM11 = 1.0f / (float) Math.tan(Math.toRadians(baseFov) * 0.5);
+            float aspect = m00 != 0.0f ? Math.abs(m11 / m00) : 0.0f;
+            float baseM00 = aspect > 0.0f ? baseM11 / aspect : 0.0f;
+            float zoomComp = (baseM00 != 0.0f && baseM11 != 0.0f)
+                    ? (m00 / baseM00) * (m11 / baseM11)
+                    : 1.0f;
+            if (!Float.isFinite(zoomComp)) {
+                zoomComp = 1.0f;
+            }
+            zoomComp = Math.min(400.0f, Math.max(1.0f, zoomComp));
+            // Continuous refine budget instead of the old binary >16x engage:
+            // divide out 4^N of the zoom area so the traversal refines exactly
+            // N LOD levels (2^N linear) under the scope and the compensation
+            // absorbs the rest. Full compensation was EXACT (projected-area
+            // metric), so the scope showed the unzoomed level magnified ~13x —
+            // giant amorphous blocks. The max(1,·) floor also structurally
+            // neutralizes the world-join transient (zoomComp~4.1 on the first
+            // frame with no spyglass → effComp=1 for N>=1) that the old 16x
+            // threshold existed to guard against.
+            float effComp = Math.min(400.0f,
+                    Math.max(1.0f, zoomComp / ZOOM_REFINE_BUDGET_AREA));
+            viewport.zoomCompensation = effComp;
+            boolean engaged = effComp > 1.0f;
+            if (engaged != zoomCompEngaged) {
+                zoomCompEngaged = engaged;
+                if (engaged) {
+                    Logger.info("[Metal-LODTEST] LOD zoom compensation ON (zoomComp="
+                            + zoomComp + ", refine budget N=" + ZOOM_REFINE_LEVELS
+                            + " levels, effComp=" + effComp + "): minSSS scaled by the"
+                            + " EXCESS projected-area zoom so the scope refines exactly"
+                            + " N levels finer; VOXY_LOD_ZOOM_REFINE_LEVELS tunes N,"
+                            + " VOXY_LOD_ZOOM_REFINE=1 restores full refine-on-zoom");
+                } else {
+                    Logger.info("[Metal-LODTEST] LOD zoom compensation off (zoomComp="
+                            + zoomComp + " within the " + ZOOM_REFINE_LEVELS
+                            + "-level refine budget; effComp=1)");
+                }
             }
         }
 
@@ -764,6 +843,20 @@ public class VoxyRenderSystem {
     public void shutdown() {
         Logger.info("Flushing download stream");
         DownloadStream.INSTANCE.flushWaitClear();
+        // World-rejoin fix: UploadStream is a process-lifetime singleton but
+        // its queued copies target the world-lifetime buffers freed below.
+        // Un-flushed session-N entries used to execute on session-N+1's first
+        // commit against freed Metal handles (native use-after-free — prime
+        // suspect for the white/untextured LODs on rejoin). Drain here while
+        // every target is still alive; VOXY_UPLOAD_FLUSH_FIX=0 reverts.
+        if (!"0".equals(System.getenv("VOXY_UPLOAD_FLUSH_FIX"))) {
+            try {
+                Logger.info("Flushing upload stream");
+                me.cortex.voxy.client.core.rendering.util.UploadStream.INSTANCE.flushWaitClear();
+            } catch (Exception e) {
+                Logger.error("Error flushing upload stream", e);
+            }
+        }
         Logger.info("Shutting down rendering");
         try {
             //Cleanup callbacks
@@ -786,10 +879,36 @@ public class VoxyRenderSystem {
         Logger.info("Shutting down render pipeline");
         try {this.pipeline.free();} catch (Exception e){Logger.error("Error releasing render pipeline", e);}
 
+        // The vx resolve pass caches its build in STATICS that outlive this
+        // instance (GL programs compiled against ONE Iris pipeline generation +
+        // a native UBO scratch sized for that generation's uniform layout).
+        // Iris recreates its pipeline on every world rejoin, so free the stale
+        // build here — on the render thread with the GL context current — and
+        // let the next contract frame rebuild against the live pipeline. The
+        // per-frame identity check in MetalVxResolvePass covers recreations
+        // that don't pass through this shutdown (shader option toggles). No-op
+        // on the GL backend (nothing is ever built there) and under
+        // VOXY_VX_RESOLVE_REBUILD=0.
+        try {
+            me.cortex.voxy.client.core.util.MetalVxResolvePass.reset();
+        } catch (Exception e) {
+            Logger.error("Error resetting vx resolve pass", e);
+        }
+
 
 
         Logger.info("Flushing download stream");
         DownloadStream.INSTANCE.flushWaitClear();
+        // Anything queued into the upload stream DURING the teardown above
+        // targets buffers that may already be freed — drop those entries
+        // WITHOUT executing them (see UploadStream.discardClear).
+        if (!"0".equals(System.getenv("VOXY_UPLOAD_FLUSH_FIX"))) {
+            try {
+                me.cortex.voxy.client.core.rendering.util.UploadStream.INSTANCE.discardClear();
+            } catch (Exception e) {
+                Logger.error("Error discarding upload stream", e);
+            }
+        }
 
         //Release hold on the world
         this.worldIn.releaseRef();

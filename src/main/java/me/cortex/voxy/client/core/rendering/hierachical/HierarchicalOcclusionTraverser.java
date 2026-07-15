@@ -218,6 +218,15 @@ public class HierarchicalOcclusionTraverser {
      *  uploadUniform). VOXY_HOT_REQUEST_FLOOR tunes; 0 restores the old
      *  "0 requests while the mesh queue is saturated" cliff. */
     private static final int REQUEST_FLOOR = parseRequestFloor();
+    /** Metal-only: while a zoom refine is in flight (viewport.zoomCompensation
+     *  > 1, i.e. the spyglass exceeded the N-level refine budget in
+     *  VoxyRenderSystem), floor the SOFT per-frame request limit at
+     *  MAX_REQUEST_QUEUE_SIZE so the scoped refinement completes in ~1s
+     *  instead of trickling through the mesh-queue throttle. Only the
+     *  uploaded soft-limit uniform changes; the hard cap, buffer size and
+     *  shader define stay 50. VOXY_LOD_ZOOM_REQ_BOOST=0 disables. */
+    private static final boolean ZOOM_REQ_BOOST_ENABLED =
+            !"0".equals(System.getenv("VOXY_LOD_ZOOM_REQ_BOOST"));
 
     private static int parseRequestFloor() {
         String v = System.getenv("VOXY_HOT_REQUEST_FLOOR");
@@ -333,7 +342,15 @@ public class HierarchicalOcclusionTraverser {
         MemoryUtil.memPutInt(ptr, viewport.hiZBuffer.getPackedLevels()); ptr += 4;
         viewport.innerTranslation.getToAddress(ptr); ptr += 4 * 3;
 
-        final float screenspaceAreaDecreasingSize = VoxyConfig.CONFIG.subDivisionSize * VoxyConfig.CONFIG.subDivisionSize;
+        float screenspaceAreaDecreasingSize = VoxyConfig.CONFIG.subDivisionSize * VoxyConfig.CONFIG.subDivisionSize;
+        if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+            // Zoom-invariant LOD selection: the MVP's zoomed FOV inflates every
+            // node's screenspace area, so an uncompensated minSSS forces 3-4
+            // finer LOD levels under the spyglass (~3s pop-in). See
+            // Viewport.zoomCompensation; VOXY_LOD_ZOOM_REFINE=1 disables.
+            screenspaceAreaDecreasingSize *= viewport.zoomCompensation;
+        }
         MemoryUtil.memPutFloat(ptr, (float) (screenspaceAreaDecreasingSize) / (viewport.width * viewport.height)); ptr += 4;
         setFrustum(viewport, ptr); ptr += 4 * 4 * 6;
         MemoryUtil.memPutInt(ptr, (int) (viewport.getRenderList().size() / 4 - 1)); ptr += 4;
@@ -361,6 +378,15 @@ public class HierarchicalOcclusionTraverser {
                     == me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
             if (!isGlBackend) {
                 requestSize = Math.max(REQUEST_FLOOR, requestSize);
+                // Zoom-refine boost: a compensation > 1 means the spyglass
+                // exceeded the N-level refine budget and the traversal is
+                // actively demanding finer children — floor the soft limit at
+                // the full queue size for the scoped duration so the refine
+                // lands fast. Self-limiting once the children are resident
+                // (markRequested dedup + hasChildren stop the demand).
+                if (ZOOM_REQ_BOOST_ENABLED && viewport.zoomCompensation > 1.0f) {
+                    requestSize = MAX_REQUEST_QUEUE_SIZE;
+                }
             }
             MemoryUtil.memPutInt(ptr, Math.max(0, Math.min(MAX_REQUEST_QUEUE_SIZE, requestSize))); ptr += 4;
         }
@@ -545,7 +571,13 @@ public class HierarchicalOcclusionTraverser {
             // requests are ever created. Shared-storage Metal buffers are CPU
             // readable after submit(), so read the queue directly and then
             // clear it for the next frame.
-            this.backend.submit();
+            if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
+                long tFT = System.nanoTime();
+                this.backend.submit();
+                me.cortex.voxy.client.core.util.FrameTiming.hotReadbackNs += System.nanoTime() - tFT;
+            } else {
+                this.backend.submit();
+            }
             DIAG_REQUEST_DIRECT_READ_COUNT.incrementAndGet();
             this.forwardDownloadResult(metalBuffer.getContentsPtr(), this.requestBuffer.size());
             this.requestBuffer.zeroRange(0, 4);

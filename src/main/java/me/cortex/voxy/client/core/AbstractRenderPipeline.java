@@ -345,6 +345,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
     private me.cortex.voxy.client.core.rendering.util.DepthMirror metalDepthMirror;
     /** Animation counter for the placeholder Metal render — replaced by real Voxy output incrementally. */
     private int metalFrame;
+    private long fpsWindowStartNs;
     /** VOXY_UNDERWATER_LOD=1 forces LOD draws even when submerged-fog saturates the far field. */
     private static final boolean UNDERWATER_LOD_FORCE = "1".equals(System.getenv("VOXY_UNDERWATER_LOD"));
     /**
@@ -660,7 +661,13 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         // push baseInstance via setVertexBytes (drawIndexedPrimitives:
         // indirectBuffer: doesn't propagate it natively). Without this
         // submit() the CPU sees stale data from the prior frame.
-        backend.submit();
+        if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
+            long tFT = System.nanoTime();
+            backend.submit();
+            me.cortex.voxy.client.core.util.FrameTiming.drawCallFlushNs += System.nanoTime() - tFT;
+        } else {
+            backend.submit();
+        }
 
         // M13 2026-05-15 Layer B diagnostic — read back the renderList and
         // drawCountCallBuffer values so we can see exactly how many sections
@@ -695,12 +702,35 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             }
             int topNodeCount = this.traversal.getTopNodeCount();
             int firstDispatchSize = (topNodeCount + 127) >> 7;
+            // fps over the 600-frame window between these logs — the perf A/B
+            // matrix reads it straight from the log (paused-time windows show
+            // up as implausibly low fps and are skipped by the reader).
+            long nowNs = System.nanoTime();
+            double windowFps = this.fpsWindowStartNs != 0
+                    ? 600.0 / ((nowNs - this.fpsWindowStartNs) / 1e9) : -1;
+            this.fpsWindowStartNs = nowNs;
             Logger.info(String.format(
-                    "[Metal-LayerB f=%d] topNodeCount=%d firstDispatchSize=%d renderList.sectionCount=%d cmdGenDispatch=(%d,%d,%d) draws opaque=%d translucent=%d temporal=%d",
-                    this.metalFrame, topNodeCount, firstDispatchSize,
+                    "[Metal-LayerB f=%d] fps=%.1f topNodeCount=%d firstDispatchSize=%d renderList.sectionCount=%d cmdGenDispatch=(%d,%d,%d) draws opaque=%d translucent=%d temporal=%d",
+                    this.metalFrame, windowFps, topNodeCount, firstDispatchSize,
                     renderListSectionCount,
                     cmdGenDispatchX, cmdGenDispatchY, cmdGenDispatchZ,
                     opaqueDrawCount, translucentDrawCount, temporalOpaqueDrawCount));
+            // VOXY_FRAME_TIMING=1 companion line: per-frame averages of the
+            // three synchronous waits + the per-draw JNI loop over the same
+            // 600-frame window, so the 120fps work can rank batching vs ICB
+            // vs async against measured stall time instead of guesses.
+            if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
+                Logger.info(String.format(java.util.Locale.ROOT,
+                        "[Metal-TIMING f=%d] per-frame avg over 600: hotWait=%.2fms"
+                        + " drawFlushWait=%.2fms bridgeWait=%.2fms jniDrawLoop=%.2fms draws=%d",
+                        this.metalFrame,
+                        me.cortex.voxy.client.core.util.FrameTiming.hotReadbackNs / 600.0 / 1e6,
+                        me.cortex.voxy.client.core.util.FrameTiming.drawCallFlushNs / 600.0 / 1e6,
+                        me.cortex.voxy.client.core.util.FrameTiming.bridgeFlushNs / 600.0 / 1e6,
+                        me.cortex.voxy.client.core.util.FrameTiming.jniDrawLoopNs / 600.0 / 1e6,
+                        me.cortex.voxy.client.core.util.FrameTiming.jniDrawCount / 600));
+                me.cortex.voxy.client.core.util.FrameTiming.reset();
+            }
         }
 
         // 5) Render pass against bridge color + Voxy-owned depth. Clears both
@@ -950,7 +980,13 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                         this.metalDepthTransBridge.asGpuTexture(), fbw, fbh);
             }
         }
-        backend.submit();
+        if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
+            long tFT = System.nanoTime();
+            backend.submit();
+            me.cortex.voxy.client.core.util.FrameTiming.bridgeFlushNs += System.nanoTime() - tFT;
+        } else {
+            backend.submit();
+        }
         this.metalFrame++;
 
         // [Metal-VXPLANES] one-shot CPU read-back of the material g-buffer planes

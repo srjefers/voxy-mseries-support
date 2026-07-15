@@ -65,6 +65,10 @@ public final class VxIrisSideChannel {
     private int program;
     private int vao;
     private int uColour, uDepth, uDepthIsWindow;
+    // Abyss-fill depth pass (0 = unbuilt, -1 = build failed once, stay off).
+    private int abyssProgram;
+    private int aUColour, aUDepth, aUTransDepth, aUDepthIsWindow;
+    private int aUProj, aUProjInv, aUUpView, aUMaxDist, aUPush, aUSeaOffset;
     private int width, height;
     private boolean broken;
 
@@ -248,6 +252,213 @@ public final class VxIrisSideChannel {
         }
     }
 
+    /**
+     * ABYSS FILL depth half (VOXY_VX_ABYSS_FILL — see VxContractInjector's
+     * colour branch; the two condition chains MUST stay bit-identical): where
+     * the opaque bridge has NO LOD but the trans bridge carries an LOD
+     * water-surface depth, write a synthetic seabed depth into
+     * vxDepthTexOpaque so the pack composites the injected dark fill as a
+     * real LOD pixel. LOD depth never touches depthtex0
+     * (excludeLodsFromVanillaDepth), so this side channel is the ONLY way a
+     * fill pixel can pass the pack's {@code vxZ < 1.0} branch — colour
+     * without this depth gets stomped by the pack's sky composite (the
+     * injector gates its colour branch on this method returning true), depth
+     * without colour would composite stale colortex0 (why the conditions
+     * must match).
+     *
+     * Runs as a second draw into the already-resolved opaque FBO: NO clear,
+     * GL_ALWAYS — pixels holding real LOD depth discard via the LOD-present
+     * gate, so the main resolve's data is untouched. The synthetic depth is
+     * the water-surface view position pushed {@code push} blocks further
+     * along the view ray, reprojected: always behind the water surface,
+     * always in front of the far plane, and any real geometry drawn later
+     * wins the depth test (self-healing once LOD data arrives).
+     */
+    public boolean abyssDepth(int colourRectTex, int depthRectTex, int transDepthRectTex,
+                              int fbw, int fbh, boolean depthIsWindow,
+                              org.joml.Matrix4f proj, org.joml.Matrix4f projInv,
+                              org.joml.Vector3f upView, float maxDist, float push,
+                              float seaOffset) {
+        if (this.broken || this.fboOpaque == 0 || transDepthRectTex == 0 || this.vao == 0) {
+            return false;
+        }
+        if (this.abyssProgram == 0 && !this.buildAbyssProgram()) {
+            this.abyssProgram = -1;
+            Logger.warn("VxIrisSideChannel: abyss depth program failed to build — fill stays off");
+        }
+        if (this.abyssProgram <= 0) return false;
+
+        int prevDrawFb = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
+        int prevReadFb = glGetInteger(GL_READ_FRAMEBUFFER_BINDING);
+        int prevProgram = glGetInteger(GL_CURRENT_PROGRAM);
+        int prevVao = glGetInteger(GL_VERTEX_ARRAY_BINDING);
+        int prevActiveTex = glGetInteger(GL_ACTIVE_TEXTURE);
+        int[] prevViewport = new int[4];
+        glGetIntegerv(GL_VIEWPORT, prevViewport);
+        boolean prevDepthTest = glIsEnabled(GL_DEPTH_TEST);
+        int prevDepthFunc = glGetInteger(GL_DEPTH_FUNC);
+        boolean prevDepthMask = glGetBoolean(GL_DEPTH_WRITEMASK);
+        boolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
+        glActiveTexture(GL_TEXTURE0 + 2);
+        int prevTexRect2 = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
+        int prevSampler2 = glGetInteger(org.lwjgl.opengl.GL33C.GL_SAMPLER_BINDING);
+        glActiveTexture(GL_TEXTURE1);
+        int prevTexRect1 = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
+        int prevSampler1 = glGetInteger(org.lwjgl.opengl.GL33C.GL_SAMPLER_BINDING);
+        glActiveTexture(GL_TEXTURE0);
+        int prevTexRect0 = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
+        int prevSampler0 = glGetInteger(org.lwjgl.opengl.GL33C.GL_SAMPLER_BINDING);
+
+        try {
+            glBindFramebuffer(GL_FRAMEBUFFER, this.fboOpaque);
+            glDisable(GL_SCISSOR_TEST);
+            glViewport(0, 0, fbw, fbh);
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_ALWAYS);
+            glDepthMask(true);
+            // Deliberately NO glClear here — resolve() cleared and wrote the
+            // real LOD depth this frame already.
+
+            org.lwjgl.opengl.GL33C.glBindSampler(0, 0);
+            org.lwjgl.opengl.GL33C.glBindSampler(1, 0);
+            org.lwjgl.opengl.GL33C.glBindSampler(2, 0);
+            glUseProgram(this.abyssProgram);
+            glBindVertexArray(this.vao);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_RECTANGLE, colourRectTex);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_RECTANGLE, depthRectTex);
+            glActiveTexture(GL_TEXTURE0 + 2);
+            glBindTexture(GL_TEXTURE_RECTANGLE, transDepthRectTex);
+            glActiveTexture(GL_TEXTURE0);
+            glUniform1i(this.aUColour, 0);
+            glUniform1i(this.aUDepth, 1);
+            glUniform1i(this.aUTransDepth, 2);
+            glUniform1i(this.aUDepthIsWindow, depthIsWindow ? 1 : 0);
+            glUniformMatrix4fv(this.aUProj, false, proj.get(new float[16]));
+            glUniformMatrix4fv(this.aUProjInv, false, projInv.get(new float[16]));
+            glUniform3f(this.aUUpView, upView.x, upView.y, upView.z);
+            glUniform1f(this.aUMaxDist, maxDist);
+            glUniform1f(this.aUPush, push);
+            glUniform1f(this.aUSeaOffset, seaOffset);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            return true;
+        } finally {
+            glBindTexture(GL_TEXTURE_RECTANGLE, prevTexRect0);
+            org.lwjgl.opengl.GL33C.glBindSampler(0, prevSampler0);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_RECTANGLE, prevTexRect1);
+            org.lwjgl.opengl.GL33C.glBindSampler(1, prevSampler1);
+            glActiveTexture(GL_TEXTURE0 + 2);
+            glBindTexture(GL_TEXTURE_RECTANGLE, prevTexRect2);
+            org.lwjgl.opengl.GL33C.glBindSampler(2, prevSampler2);
+            glActiveTexture(prevActiveTex);
+            glUseProgram(prevProgram);
+            glBindVertexArray(prevVao);
+            if (prevDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+            glDepthFunc(prevDepthFunc);
+            glDepthMask(prevDepthMask);
+            if (prevScissor) glEnable(GL_SCISSOR_TEST);
+            glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFb);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFb);
+        }
+    }
+
+    private boolean buildAbyssProgram() {
+        String vs = """
+                #version 150 core
+                out vec2 vUV;
+                void main() {
+                    vec2 p = vec2((gl_VertexID & 1) * 2, (gl_VertexID & 2));
+                    vUV = p;
+                    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+                }
+                """;
+        String fs = """
+                #version 150 core
+                uniform sampler2DRect uColour;
+                uniform sampler2DRect uDepth;
+                uniform sampler2DRect uTransDepth;
+                uniform int uDepthIsWindow;
+                uniform mat4 uProj;
+                uniform mat4 uProjInv;
+                uniform vec3 uUpView;
+                uniform float uMaxDist;
+                uniform float uPush;
+                uniform float uSeaOffset;
+                in vec2 vUV;
+                void main() {
+                    ivec2 sz = textureSize(uDepth);
+                    vec2 texel = vec2(vUV.x * float(sz.x), (1.0 - vUV.y) * float(sz.y));
+                    float a = texture(uColour, texel).a;
+                    vec3 dEnc = texture(uDepth, texel).rgb;
+                    float d = dot(dEnc, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+                    // LOD present: the main resolve already wrote the real
+                    // depth this frame — keep it (conditions below mirror
+                    // VxContractInjector's abyss colour branch EXACTLY).
+                    if (!(a <= 0.001 || d <= 0.0 || d >= 0.9999999)) discard;
+                    vec3 pT = vec3(0.0);
+                    bool have = false;
+                    vec3 tEnc = texture(uTransDepth, texel).rgb;
+                    float dT = dot(tEnc, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+                    if (dT > 0.0 && dT < 0.9999995) {
+                        // Preferred: the LOD water-surface depth kept in the
+                        // trans bridge (the ghost cull preserves it at zero
+                        // alpha exactly for reconstruction).
+                        float zT = (uDepthIsWindow == 1) ? dT * 2.0 - 1.0 : dT;
+                        vec4 pT4 = uProjInv * vec4(vUV * 2.0 - 1.0, zT, 1.0);
+                        pT = pT4.xyz / pT4.w;
+                        have = true;
+                    } else if (uSeaOffset < -0.5) {
+                        // Analytic sea-plane fallback: during the first
+                        // seconds of join churn even the LOD WATER sections
+                        // haven't uploaded, so the trans bridge is empty at
+                        // exactly the pixels that pane out (the green-tint
+                        // probe: panes took no fill). Intersect the view ray
+                        // with the world sea-level plane instead — uSeaOffset
+                        // = seaLevel - cameraY in view-space up units, valid
+                        // only with the camera >0.5 blocks above the sea.
+                        vec4 r4 = uProjInv * vec4(vUV * 2.0 - 1.0, 0.0, 1.0);
+                        vec3 r = normalize(r4.xyz / r4.w);
+                        float ur = dot(r, uUpView);
+                        if (ur < -0.05) {
+                            pT = r * (uSeaOffset / ur);
+                            have = true;
+                        }
+                    }
+                    if (!have) discard;
+                    float len = length(pT);
+                    // Downward rays only, inside the trans near-cull ring
+                    // (beyond it the LOD water + analytic mirror own the look).
+                    if (len <= 1e-3 || dot(pT / len, uUpView) >= -0.05) discard;
+                    float horiz = length(pT - uUpView * dot(pT, uUpView));
+                    if (uMaxDist > 0.0 && horiz >= uMaxDist) discard;
+                    vec3 pF = pT * ((len + uPush) / len);
+                    vec4 q = uProj * vec4(pF, 1.0);
+                    if (q.w < 1e-6) discard;
+                    // Same window encoding the main resolve writes under the
+                    // NDC remap; 0.99999 cap keeps the fill below the pack's
+                    // vxZ < 1.0 gate and the far clear.
+                    gl_FragDepth = clamp((q.z / q.w) * 0.5 + 0.5, 0.0, 0.99999);
+                }
+                """;
+        int prog = compile(vs, fs, "VxIrisSideChannel.abyss");
+        if (prog == 0) return false;
+        this.abyssProgram = prog;
+        this.aUColour = glGetUniformLocation(prog, "uColour");
+        this.aUDepth = glGetUniformLocation(prog, "uDepth");
+        this.aUTransDepth = glGetUniformLocation(prog, "uTransDepth");
+        this.aUDepthIsWindow = glGetUniformLocation(prog, "uDepthIsWindow");
+        this.aUProj = glGetUniformLocation(prog, "uProj");
+        this.aUProjInv = glGetUniformLocation(prog, "uProjInv");
+        this.aUUpView = glGetUniformLocation(prog, "uUpView");
+        this.aUMaxDist = glGetUniformLocation(prog, "uMaxDist");
+        this.aUPush = glGetUniformLocation(prog, "uPush");
+        this.aUSeaOffset = glGetUniformLocation(prog, "uSeaOffset");
+        return true;
+    }
+
     private boolean ensureTransResources(int fbw, int fbh) {
         if (this.program == 0 && !this.buildProgram()) {
             return false;
@@ -424,10 +635,12 @@ public final class VxIrisSideChannel {
         this.depthTexTrans = 0;
         this.fboTrans = 0;
         if (this.program != 0) glDeleteProgram(this.program);
+        if (this.abyssProgram > 0) glDeleteProgram(this.abyssProgram);
         if (this.vao != 0) glDeleteVertexArrays(this.vao);
         this.depthTexOpaque = 0;
         this.fboOpaque = 0;
         this.program = 0;
+        this.abyssProgram = 0;
         this.vao = 0;
     }
 }

@@ -142,8 +142,14 @@ public abstract class MixinDefaultChunkRenderer extends ShaderChunkRenderer {
                         // the proven Phase-B inject (bridge colour + vxDepthTexOpaque, untouched
                         // vs dev); ONLY the translucent (water) layer runs voxy_translucent over
                         // its material g-buffer → colortex16, so water gets real BSL shading.
+                        // 4th arg (transDepthBridge, non-null by the branch guard): the
+                        // inject's seafloor water-column dim needs the LOD trans depth to
+                        // reconstruct the water column above each opaque pixel. transBridge
+                        // stays null, so the Phase-D passthrough (which needs BOTH) stays
+                        // off and colortex16 is still written only by resolveTranslucentOnly.
                         me.cortex.voxy.client.core.util.VxContractInjector.inject(viewport,
-                                pipeline.metalBridge(), pipeline.metalDepthBridge(), null, null);
+                                pipeline.metalBridge(), pipeline.metalDepthBridge(), null,
+                                pipeline.metalDepthTransBridge());
                         var irisPipe = net.irisshaders.iris.Iris.getPipelineManager().getPipelineNullable();
                         if (irisPipe instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline irp) {
                             int tP0 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans0());

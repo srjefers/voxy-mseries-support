@@ -111,8 +111,17 @@ public final class MetalVxResolvePass {
                 uniform sampler2DRect uVxMisc;
                 uniform sampler2DRect uVxDepth;
                 uniform int uVxDepthIsWindow;
-
                 """);
+        if (WATER_RING_PARITY || me.cortex.voxy.client.iris.VxFogCap.enabled()) {
+            // Live near-cull ring radius for the water ring parity injection
+            // AND the vx fog cap's live far-plane proxy (ring + margin ==
+            // rdBlocks). Declared only while a consumer env is on so killing
+            // both keeps the assembled shader text byte-identical
+            // (kill-switch contract). Unused in the opaque program ->
+            // optimized out -> location -1 (guarded).
+            sb.append("uniform float uVxRingCull;\n");
+        }
+        sb.append('\n');
 
         sb.append(PARAMS_STRUCT).append('\n');
 
@@ -248,6 +257,202 @@ public final class MetalVxResolvePass {
                     ? "DISABLED (SimpleReflection call replaced, water mirror = analytic sky+clouds)"
                     : "rewrite FAILED (SimpleReflection needle not found — pack text drifted, SSR still live)")
                     + "; VOXY_VX_NO_SSR=0 restores the pack's SSR");
+        }
+
+        // Near-fallback mirror dim (VOXY_VX_NEAR_MIRROR_DIM, =1 disables). The
+        // masked near-cull (VOXY_TRANS_NEAR_CULL_MASKED) keeps LOD water INSIDE
+        // the MC render ring over Sodium sections that aren't built yet; with
+        // SSR off those pixels take the analytic sky arm at full strength plus
+        // the water sky-light MAX above — a flat bright sky-mirror tone that
+        // reads as pale gray patches against BSL's near water. Dim skyReflection
+        // for pixels whose view distance is inside the near-cull radius so the
+        // kept fallback approximates the surrounding BSL tone; full strength
+        // returns past the ring where LOD water is the only water. Anchored on
+        // the final sky/SSR mix, where both skyReflection and viewPos (decoded
+        // LOD depth via vx_fragCoord) are in scope. The cull distance mirrors
+        // MDICSectionRenderer's voxyLodParams2.x computation but is BAKED at
+        // shader build — a render-distance change mid-session won't retune the
+        // ramp until the vx programs rebuild (shader reload / relaunch).
+        if (translucent) {
+            String nearCullEnv = System.getenv("VOXY_TRANS_NEAR_CULL");
+            boolean nearCullOn = nearCullEnv == null || !"0".equals(nearCullEnv.trim());
+            // Round-9 water ring parity: decide injectability FIRST (needle presence
+            // included) so pack-text drift falls back to the shipped mirror dim
+            // instead of silently disabling BOTH dims (house inert-on-drift rule).
+            // Anchor = the pack's final sqrt encode: unique in BSL v10.1.3
+            // voxy_translucent (:401), inside the inner block where water/viewPos/
+            // worldPos/fresnel/albedo are all live, after the fresnel mix and Fog.
+            // Iris pre-expands every #if before we see the text, so under
+            // ALPHA_BLEND!=0 the line is textually ABSENT -> loud FAILED here.
+            String parityNeedle = "albedo.rgb = sqrt(max(albedo.rgb, vec3(0.0)));";
+            boolean parityWanted = WATER_RING_PARITY && nearCullOn
+                    && (WATER_RING_DIM < 1.0f || WATER_RING_ALPHA > 0.0f);
+            boolean parityInjectable = parityWanted && patchText.contains(parityNeedle);
+            if (parityWanted && !parityInjectable) {
+                Logger.warn("[Metal-LODTEST] vx water ring parity rewrite FAILED"
+                        + " (sqrt-encode anchor not found — pack text drifted, or the pack"
+                        + " runs ALPHA_BLEND!=0 and Iris preprocessed the line away);"
+                        + " VOXY_VX_WATER_RING_* inert, shipped mirror dim resumes");
+            }
+            if (!nearCullOn || NEAR_MIRROR_DIM >= 1.0f || parityInjectable) {
+                Logger.info("[Metal-LODTEST] vx near-fallback mirror dim OFF ("
+                        + (parityInjectable
+                            ? "subsumed by water ring parity — one dim inside the ring;"
+                              + " VOXY_VX_WATER_RING_PARITY=0 restores"
+                            : (nearCullOn
+                                ? "VOXY_VX_NEAR_MIRROR_DIM>=1"
+                                : "near-cull disabled, no fallback ring")
+                              + "); default dims the kept-fallback ring's sky mirror"
+                              + " to a perceived 0.45")
+                        + (parityInjectable ? ")" : ""));
+            } else {
+                String needle = "reflection.rgb = max(mix(skyReflection, reflection.rgb, reflection.a), vec3(0.0));";
+                if (patchText.contains(needle)) {
+                    // Same margin default as MDICSectionRenderer.TRANS_NEAR_CULL_MARGIN
+                    // (16 in XZ mode, 48 for the legacy slant metric).
+                    float margin = parseEnvFloat("VOXY_TRANS_NEAR_CULL_MARGIN",
+                            !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_XZ")) ? 16f : 48f);
+                    float rdBlocks;
+                    try {
+                        rdBlocks = Math.max(net.minecraft.client.Minecraft.getInstance()
+                                .gameRenderer.getRenderDistance(), 32f);
+                    } catch (Throwable t) {
+                        rdBlocks = 192f;
+                    }
+                    float cull = Math.max(rdBlocks - margin, 64f);
+                    float dim = Math.max(NEAR_MIRROR_DIM, 0.0f);
+                    // V2 math (VOXY_VX_MIRROR_DIM_V2=0 reverts for A/B): the dim
+                    // multiplies LINEAR light but voxy_translucent sqrt-encodes
+                    // the final colour (ALPHA_BLEND==0), so a linear 0.20 was
+                    // perceived as ~0.45 — inject dim^2 so the env value means
+                    // the PERCEIVED dim. And most kept-fallback water lives in
+                    // the outer band just inside the cull radius (outer-ring
+                    // Sodium sections rarely build), which the old 0.75*cull
+                    // ramp start had already mostly released — hold full
+                    // strength to 0.95*cull and only release in the last ~5%
+                    // to avoid a hard pop at the cull boundary.
+                    float injectedDim = MIRROR_DIM_V2 ? dim * dim : dim;
+                    float rampStart = (MIRROR_DIM_V2 ? 0.95f : 0.75f) * cull;
+                    // Locale.ROOT: a comma decimal separator would emit broken GLSL.
+                    patchText = patchText.replace(needle, String.format(java.util.Locale.ROOT,
+                            "skyReflection *= mix(%.4f, 1.0, smoothstep(%.1f, %.1f, length(viewPos))); ",
+                            injectedDim, rampStart, cull) + needle);
+                    Logger.info(String.format(java.util.Locale.ROOT,
+                            "[Metal-LODTEST] vx near-fallback mirror dim ON (%s: skyReflection *= %.4f"
+                            + " linear = ~%.2f perceived after the pack's sqrt encode, ramp %.0f..%.0f"
+                            + " blocks; baked at shader build, RD change needs shader reload);"
+                            + " VOXY_VX_NEAR_MIRROR_DIM=1 disables, VOXY_VX_MIRROR_DIM_V2=0 reverts"
+                            + " to the old linear/0.75-ramp math",
+                            MIRROR_DIM_V2 ? "V2 perceptual" : "V1 linear",
+                            injectedDim, Math.sqrt(injectedDim), rampStart, cull));
+                } else {
+                    Logger.warn("[Metal-LODTEST] vx near-fallback mirror dim SKIPPED"
+                            + " (reflection-mix anchor not found — pack text drifted; patch not applied);"
+                            + " VOXY_VX_NEAR_MIRROR_DIM inert");
+                }
+            }
+            if (parityInjectable) {
+                // Metric must match quads.frag's near-cull metric (:212-218) /
+                // MDICSectionRenderer statics (:234-247): RADIAL is gated on XZ.
+                // worldPos is BSL camera-relative player space (GetWaterNormal
+                // re-adds cameraPosition), so length(worldPos.xz) == the emitter's
+                // radial XZ distance — unlike the mirror dim's slant length(viewPos),
+                // which released early at aerial angles.
+                boolean mXz = !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_XZ"));
+                boolean mRadial = mXz && !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_RADIAL"));
+                String metric = !mXz ? "length(viewPos)"
+                        : (mRadial ? "length(worldPos.xz)"
+                                   : "max(abs(worldPos.x), abs(worldPos.z))");
+                float dim = Math.min(Math.max(WATER_RING_DIM, 0.05f), 1.0f);
+                float dim2 = dim * dim; // env value = PERCEIVED (pack sqrt-encodes after)
+                float aTgt = Math.min(WATER_RING_ALPHA, 0.98f);
+                float ramp = Math.min(Math.max(WATER_RING_RAMP, 0.5f), 0.999f);
+                StringBuilder inj = new StringBuilder();
+                // Locale.ROOT: a comma decimal separator would emit broken GLSL.
+                inj.append(String.format(java.util.Locale.ROOT,
+                        "if (water > 0.5) { float vxRingT = 1.0 - smoothstep(uVxRingCull * %.3f, uVxRingCull, %s); ",
+                        ramp, metric));
+                if (dim < 1.0f) {
+                    String dimExpr = String.format(java.util.Locale.ROOT, "%.4f", dim2);
+                    if (WATER_RING_FRESNEL) {
+                        // Release the dim as fresnel rises: full strength top-down,
+                        // bright mirror preserved at grazing. fresnel is in scope
+                        // (inner block, post 0.98+0.02 remap when REFLECTION>0).
+                        dimExpr = "mix(" + dimExpr + ", 1.0, clamp((fresnel - 0.05) * 4.0, 0.0, 1.0))";
+                    }
+                    inj.append("albedo.rgb *= mix(1.0, ").append(dimExpr).append(", vxRingT); ");
+                }
+                if (aTgt > 0.0f) {
+                    inj.append(String.format(java.util.Locale.ROOT,
+                            "albedo.a = mix(albedo.a, max(albedo.a, %.4f), vxRingT); ", aTgt));
+                }
+                if (WATER_RING_DEBUG) {
+                    inj.append("albedo.rgb = mix(albedo.rgb, vec3(1.0, 0.0, 0.5), 0.5 * vxRingT); ");
+                    // Positive control: far LOD water is ALWAYS the translucent
+                    // resolve, so if the ring never engages (no magenta) but the
+                    // injection is live, everything beyond the ring reads cyan.
+                    // No cyan anywhere = the injected code isn't running at all.
+                    inj.append("albedo.rgb = mix(albedo.rgb, vec3(0.0, 1.0, 1.0), 0.35 * (1.0 - vxRingT)); ");
+                }
+                inj.append("} ");
+                patchText = patchText.replace(parityNeedle, inj + parityNeedle);
+                Logger.info(String.format(java.util.Locale.ROOT,
+                        "[Metal-LODTEST] vx water ring parity ON (water dim %.2f perceived -> *= %.4f"
+                        + " linear%s, alpha lift -> max(a, %.2f), metric %s, ramp %.2f*cull..cull,"
+                        + " cull = LIVE uVxRingCull per frame — RD changes retune without reload);"
+                        + " VOXY_VX_WATER_RING_PARITY=0 kills (mirror dim resumes);"
+                        + " _DIM/_ALPHA/_RAMP tune — if in-ring water reads TOO DARK at grazing/sunset"
+                        + " RAISE _DIM toward 1.0; _DEBUG=1 magenta-tints engagement",
+                        dim, dim2, WATER_RING_FRESNEL ? " with fresnel release" : "",
+                        aTgt, metric, ramp));
+            }
+
+            // vx fog cap, LOD-water half (see VxFogCap for the deferred1/opaque
+            // half and the weather-A/B root cause): voxy_translucent applies the
+            // pack's Fog() to LOD water with the same rain/night-scaled density
+            // that washed the far opaque ring. Clamp the view position Fog sees
+            // to the vanilla far plane (uVxRingCull + near-cull margin ==
+            // rdBlocks, live per frame) so LOD water never fogs harder than the
+            // farthest real chunk. VOXY_VX_FOG_CAP=0 keeps the text byte-identical.
+            if (me.cortex.voxy.client.iris.VxFogCap.enabled()) {
+                String fogNeedle = "Fog(albedo.rgb, viewPos);";
+                if (patchText.contains(fogNeedle)) {
+                    // Locale.ROOT: a comma decimal separator would emit broken GLSL.
+                    patchText = patchText.replace(fogNeedle, String.format(java.util.Locale.ROOT,
+                            "{ vec3 voxyFogPosT = viewPos; float voxyFogLenT = length(voxyFogPosT);"
+                            + " float voxyFogMaxT = max(uVxRingCull + 16.0, 64.0) * %.3f;"
+                            + " if (voxyFogLenT > voxyFogMaxT) voxyFogPosT *= voxyFogMaxT / voxyFogLenT;"
+                            + " Fog(albedo.rgb, voxyFogPosT); }",
+                            me.cortex.voxy.client.iris.VxFogCap.capFactor()));
+                    Logger.info(String.format(java.util.Locale.ROOT,
+                            "[Metal-LODTEST] vx fog cap ON for LOD water (voxy_translucent Fog"
+                            + " clamped to %.2f*(uVxRingCull+16) live blocks);"
+                            + " VOXY_VX_FOG_CAP=0 reverts", me.cortex.voxy.client.iris.VxFogCap.capFactor()));
+                } else {
+                    Logger.warn("[Metal-LODTEST] vx fog cap FAILED for LOD water (Fog anchor not"
+                            + " found in voxy_translucent — pack text drifted); cap inert there");
+                }
+            }
+        }
+
+        // Probe arm (VOXY_VX_WATER_RING_DEBUG=1 only, no behavior otherwise):
+        // yellow-tint water customIds that reach the OPAQUE resolve. The parity
+        // fix assumes the pale near quads are kept-fallback TRANSLUCENT water;
+        // if they light up yellow instead, they were classified into the opaque
+        // LOD layer and voxy_translucent (parity included) never touches them.
+        if (!translucent && WATER_RING_DEBUG) {
+            String needle = "albedo.rgb = sqrt(max(albedo.rgb, vec3(0.0)));";
+            if (patchText.contains(needle)) {
+                patchText = patchText.replace(needle,
+                        "if (blockID == 200 || blockID == 204) {"
+                        + " albedo.rgb = mix(albedo.rgb, vec3(1.0, 1.0, 0.0), 0.6); } " + needle);
+                Logger.info("[Metal-LODTEST] vx ring parity DEBUG: opaque-resolve water tint"
+                        + " YELLOW armed (any yellow in-game = water customId classified into"
+                        + " the OPAQUE LOD layer, outside voxy_translucent/parity reach)");
+            } else {
+                Logger.warn("[Metal-LODTEST] vx ring parity DEBUG: opaque sqrt-encode anchor"
+                        + " not found — yellow probe inert");
+            }
         }
 
         // Diagnostic: with SSR off, LOD water is still dark at grazing angles
@@ -527,6 +732,10 @@ public final class MetalVxResolvePass {
     private static final class Prog {
         int prog;
         int uDepthIsWindow;
+        // Water ring parity live radius; -1 for the opaque program / PARITY=0 /
+        // needle-miss builds (guarded at use). Prog is destroyed and rebuilt by
+        // the pipeline-generation path, so no reset() changes are needed.
+        int uRingCull = -1;
         int samplerCount;
         int ubo, uboSize;
         long uboScratch;
@@ -573,6 +782,85 @@ public final class MetalVxResolvePass {
     private static final boolean SAMPLER_FIX = !"0".equals(System.getenv("VOXY_VX_SAMPLER_FIX"));
     private static final float[] TRANS_CLEAR_ZERO = new float[4];
 
+    // Sky-mirror dim factor for LOD water kept as near fallback inside the
+    // masked near-cull ring — see the anchor patch in assembleFragment.
+    // 1 (or >=1) disables the dim entirely. With V2 (default) the value is
+    // PERCEIVED dim (the square is what gets injected, cancelling the pack's
+    // final sqrt encode).
+    private static final float NEAR_MIRROR_DIM = parseEnvFloat("VOXY_VX_NEAR_MIRROR_DIM", 0.45f);
+
+    // VOXY_VX_MIRROR_DIM_V2=0 reverts the near-fallback mirror dim to the old
+    // math (linear factor, ramp start at 0.75*cull) for A/B. The old math had
+    // two verified defects: the pack's ALPHA_BLEND==0 sqrt encode halved the
+    // dim's perceived strength, and the 0.75*cull ramp start released the dim
+    // across the outer band where most kept-fallback water actually lives.
+    private static final boolean MIRROR_DIM_V2 = !"0".equals(System.getenv("VOXY_VX_MIRROR_DIM_V2"));
+
+    // ---- Round-9 water ring parity (pale near-fallback water quads) ----
+    // Inside the near-cull ring the ONLY water pixels this resolve shades are the
+    // kept-fallback quads: ghost-culled water over BUILT sections emits alpha 0 and
+    // dies at the host's vxAlbedo.a<=0.001 discard, and real BSL water is
+    // gbuffers_water, never this pass — so a water+ring gate selects EXACTLY the
+    // pale quads with no per-pixel flag. The pale composite is 0.706*surface +
+    // 0.294*floor: the whole-pixel dim reaches 100% of the surface at EVERY angle
+    // (the mirror dim was fresnel-capped to <=10% top-down — the exhausted lever),
+    // and the alpha lift cuts the bright Mipper-floor bleed from ~29% to ~15%
+    // (~= real water's 29% of a floor that is ~2x darker). The fallback surface
+    // math is near-identical to gbuffers_water (waves + GGX both present in
+    // voxy_translucent), so the ALPHA LIFT is the primary lever and the dim mainly
+    // compensates the un-dimmable residual floor bleed.
+    // VOXY_VX_WATER_RING_PARITY=0 kills everything (mirror dim resumes; assembled
+    // shader text byte-identical to today).
+    private static final boolean WATER_RING_PARITY =
+            !"0".equals(System.getenv("VOXY_VX_WATER_RING_PARITY"));
+    // PERCEIVED whole-pixel dim on in-ring LOD water (injected SQUARED into linear
+    // colour to cancel the pack's ALPHA_BLEND==0 sqrt encode — the c0127d91 V2
+    // lesson). >=1 disables the rgb dim (alpha-lift-only mode). TUNING DIRECTION:
+    // if in-ring water reads TOO DARK at grazing/sunset, RAISE this toward 1.0
+    // (less dim) — NOT lower.
+    private static final float WATER_RING_DIM = parseEnvFloat("VOXY_VX_WATER_RING_DIM", 0.75f);
+    // In-ring alpha floor via max(albedo.a, tgt) so the grazing fresnel lift is
+    // never reduced. <=0 disables (dim-only mode).
+    private static final float WATER_RING_ALPHA = parseEnvFloat("VOXY_VX_WATER_RING_ALPHA", 0.85f);
+    // Ramp start as a fraction of the live cull radius. Pre-agreed graded response
+    // to a residual pale rim in the 471..496 outer band: 0.90 (slight seam risk).
+    private static final float WATER_RING_RAMP = parseEnvFloat("VOXY_VX_WATER_RING_RAMP", 0.95f);
+    // Optional: release the rgb dim as fresnel rises (full strength top-down where
+    // the bug lives; restores the bright mirror at grazing). Default OFF.
+    private static final boolean WATER_RING_FRESNEL = "1".equals(System.getenv("VOXY_VX_WATER_RING_FRESNEL"));
+    // Magenta engagement tint (VOXY_VX_SEAFLOOR_DEBUG house style): one user run
+    // distinguishes "never engages" from "engages but insufficient".
+    private static final boolean WATER_RING_DEBUG = "1".equals(System.getenv("VOXY_VX_WATER_RING_DEBUG"));
+    // Ring margin parsed once (env is process-constant); RD is read per frame.
+    private static final float RING_MARGIN = parseEnvFloat("VOXY_TRANS_NEAR_CULL_MARGIN",
+            !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_XZ")) ? 16f : 48f);
+
+    /** LIVE near-cull ring radius; mirrors MDICSectionRenderer's voxyLodParams2.x
+     *  (max(max(rd,32) - margin, 64) = 496 at RD 32) so a mid-session render-
+     *  distance change retunes the parity ramp the same frame — the mirror dim's
+     *  documented baked-radius staleness defect does not recur here. Any future
+     *  change to MDIC's formula must be mirrored here (intentionally identical). */
+    private static float ringCullNow() {
+        float rdBlocks;
+        try {
+            rdBlocks = Math.max(net.minecraft.client.Minecraft.getInstance()
+                    .gameRenderer.getRenderDistance(), 32f);
+        } catch (Throwable t) {
+            rdBlocks = 192f;
+        }
+        return Math.max(rdBlocks - RING_MARGIN, 64f);
+    }
+
+    private static float parseEnvFloat(String name, float def) {
+        String v = System.getenv(name);
+        if (v == null || v.isBlank()) return def;
+        try {
+            return Float.parseFloat(v.trim());
+        } catch (NumberFormatException e) {
+            return def;
+        }
+    }
+
     private static int ct5AltTexture(net.irisshaders.iris.pipeline.IrisRenderingPipeline ipipe) {
         if (!SSR_ALT) return 0;
         try {
@@ -588,6 +876,80 @@ public final class MetalVxResolvePass {
     private static Prog opaque;
     private static Prog trans;
     private static int resolveVao;
+
+    // ---- Iris pipeline recreation handling (VOXY_VX_RESOLVE_REBUILD=0 reverts) ----
+    // The build is keyed to ONE Iris pipeline generation: the GL programs embed
+    // that generation's patch text/option set, and uboScratch is nmemAlloc-ed at
+    // build time sized for that generation's uniform layout. Iris recreates its
+    // pipeline on EVERY world rejoin ("Reloading pipeline on dimension change")
+    // and on shader option toggles; each recreation mints a fresh
+    // IrisVoxyRenderPipelineData (MixinIrisRenderingPipeline ctor hook). Running
+    // the old build against a new generation means stale programs at best and a
+    // native scratch OVERRUN at worst — runOne feeds the CURRENT data's
+    // getUniforms().updater() the OLD-size allocation, so a larger new layout is
+    // heap corruption. Track the identities the build ran against and destroy +
+    // lazily rebuild when either changes (both resolve entry points run on the
+    // render thread with the GL context current, so destruction here is safe).
+    private static final boolean REBUILD_ON_PIPELINE_CHANGE =
+            !"0".equals(System.getenv("VOXY_VX_RESOLVE_REBUILD"));
+    private static IrisVoxyRenderPipelineData builtData;
+    private static Object builtIrisPipeline;
+
+    private static void checkPipelineGeneration(IrisVoxyRenderPipelineData data, Object ipipe) {
+        if (!REBUILD_ON_PIPELINE_CHANGE) return;
+        if (buildAttempted && (builtData != data || builtIrisPipeline != ipipe)) {
+            Logger.info("[Metal-LODTEST] vx resolve: Iris pipeline recreated (dataChanged="
+                    + (builtData != data) + " irisChanged=" + (builtIrisPipeline != ipipe)
+                    + ") — destroying the stale build and rebuilding against the live pipeline;"
+                    + " VOXY_VX_RESOLVE_REBUILD=0 reverts to the old never-reset behaviour");
+            reset();
+        }
+        builtData = data;
+        builtIrisPipeline = ipipe;
+    }
+
+    /**
+     * Destroy everything build()/the lazy debug paths created — GL programs,
+     * FBOs, the UBO + its native scratch, the VAO — and clear the static build
+     * state so the next resolve frame rebuilds against the live Iris pipeline.
+     * Must run on the render thread with a GL context current. No-op when
+     * nothing was ever built (the GL backend never reaches this class's build
+     * paths) and when VOXY_VX_RESOLVE_REBUILD=0.
+     */
+    public static void reset() {
+        if (!REBUILD_ON_PIPELINE_CHANGE) return;
+        boolean hadBuild = buildAttempted || debugProg != -1 || resolveVao != 0;
+        if (opaque != null) { freeProg(opaque); opaque = null; }
+        if (trans != null) { freeProg(trans); trans = null; }
+        if (resolveVao != 0) { glDeleteVertexArrays(resolveVao); resolveVao = 0; }
+        if (debugProg > 0) glDeleteProgram(debugProg);
+        debugProg = -1; // lazy-compile sentinel — runDebug rebuilds on demand
+        if (debugFbo != 0) { glDeleteFramebuffers(debugFbo); debugFbo = 0; }
+        debugAttached = new int[0];
+        if (aoReadFbo != 0) { glDeleteFramebuffers(aoReadFbo); aoReadFbo = 0; }
+        if (planeReadFbo != 0) { glDeleteFramebuffers(planeReadFbo); planeReadFbo = 0; }
+        if (ct5ReadFbo != 0) { glDeleteFramebuffers(ct5ReadFbo); ct5ReadFbo = 0; }
+        buildAttempted = false;
+        buildOk = false;
+        builtData = null;
+        builtIrisPipeline = null;
+        if (hadBuild) {
+            Logger.info("[Metal-LODTEST] vx resolve reset: stale GL programs/FBOs/UBO scratch destroyed;"
+                    + " next contract frame rebuilds (expect the vx resolve marker lines to re-print)");
+        }
+    }
+
+    private static void freeProg(Prog p) {
+        if (p.prog != 0) glDeleteProgram(p.prog);
+        if (p.ubo != 0) glDeleteBuffers(p.ubo);
+        if (p.fbo != 0) glDeleteFramebuffers(p.fbo);
+        if (p.uboScratch != 0) org.lwjgl.system.MemoryUtil.nmemFree(p.uboScratch);
+        p.prog = 0;
+        p.ubo = 0;
+        p.fbo = 0;
+        p.uboScratch = 0;
+        p.attached = new int[0];
+    }
 
     // Diagnostic (VOXY_VX_DUMP_OUT=1): objectively measure what BSL's resolve actually
     // produces. gbufferData0 here is the LIT albedo (this BSL voxy program applies
@@ -682,6 +1044,18 @@ public final class MetalVxResolvePass {
             glUniform1i(p.uDepthIsWindow,
                     me.cortex.voxy.client.core.rendering.util.MetalMvpUtil.METAL_NDC_REMAP ? 1 : 0);
         }
+        // Water ring parity: location fetched once per build, value uploaded per
+        // frame in runOne (the radius is live).
+        p.uRingCull = glGetUniformLocation(prog, "uVxRingCull");
+        if (WATER_RING_PARITY && translucent) {
+            // loc=-1 on the LIVE translucent build means the injected code (the
+            // uniform's only consumer) was compiled out — the parity is dead
+            // regardless of what the assembly-time ON log claimed.
+            Logger.info(String.format(java.util.Locale.ROOT,
+                    "[Metal-LODTEST] vx ring parity runtime: translucent uVxRingCull loc=%d"
+                    + " (>=0 means the injected ring code is live in the linked program),"
+                    + " first-frame cull=%.1f blocks", p.uRingCull, ringCullNow()));
+        }
         // Pack samplers: assign units 6.. in the ImageSet's bindingFunction order
         // (Iris's addGbufferOrShadowSamplers order), NOT voxy.json/samplerDecls order —
         // otherwise every pack sampler lands on the wrong unit and BSL reads the wrong
@@ -734,6 +1108,7 @@ public final class MetalVxResolvePass {
                                int oP0, int oP1, int oP2, int opaqueDepthRect,
                                int tP0, int tP1, int tP2, int transDepthRect,
                                int fbw, int fbh) {
+        checkPipelineGeneration(data, ipipe);
         if (!build(data)) return;
         if (oP0 == 0 || opaqueDepthRect == 0) return;
         if (DUMP_OUT) dumpFrame++;
@@ -799,6 +1174,7 @@ public final class MetalVxResolvePass {
                                net.irisshaders.iris.pipeline.IrisRenderingPipeline ipipe,
                                int tP0, int tP1, int tP2, int transDepthRect,
                                int fbw, int fbh) {
+        checkPipelineGeneration(data, ipipe);
         if (!build(data)) return;
         if (trans == null || tP0 == 0 || transDepthRect == 0) return;
         var sc = me.cortex.voxy.client.core.util.VxIrisSideChannel.getOrCreate();
@@ -994,6 +1370,12 @@ public final class MetalVxResolvePass {
             glClearBufferfv(GL_COLOR, 0, TRANS_CLEAR_ZERO);
         }
         glUseProgram(p.prog);
+        if (p.uRingCull >= 0) {
+            // LIVE near-cull ring radius (mirrors MDICSectionRenderer's
+            // voxyLodParams2.x): per-frame, so a mid-session render-distance
+            // change retunes the parity ramp immediately (no shader reload).
+            glUniform1f(p.uRingCull, ringCullNow());
+        }
         glBindVertexArray(resolveVao);
         glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_RECTANGLE, plane0);
         glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_RECTANGLE, plane1);

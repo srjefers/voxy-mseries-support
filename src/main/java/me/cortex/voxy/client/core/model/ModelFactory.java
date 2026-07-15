@@ -33,6 +33,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.world.level.block.VegetationBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.lighting.LevelLightEngine;
@@ -316,6 +317,10 @@ public class ModelFactory {
             this.waterAnimator.tick();
         }
 
+        // Rejoin-gray forensics: sentinel re-check must run every tick, even
+        // when no uploads are pending (it hunts post-hoc scribbling).
+        AtlasVerify.tick(this.storage.textures);
+
         var upload = this.uploadResults.poll();
         if (upload==null) return;
 
@@ -384,6 +389,10 @@ public class ModelFactory {
                 atlas.uploadSubImage2D(lvl, X >> lvl, Y >> lvl, (MODEL_TEXTURE_SIZE*3) >> lvl, (MODEL_TEXTURE_SIZE*2) >> lvl, GL_RGBA, GL_UNSIGNED_BYTE, cAddr);
                 cAddr += (MODEL_TEXTURE_SIZE*MODEL_TEXTURE_SIZE*3*2*4)>>(lvl<<1);
             }
+
+            // Rejoin-gray forensics (VOXY_ATLAS_VERIFY): read the cell straight
+            // back out of the MTLTexture and compare with what was just written.
+            AtlasVerify.onUpload(atlas, this.modelId, this.texture.address, this.waterAnimFaces != 0);
 
             this.modelId = -1;
         }
@@ -599,6 +608,17 @@ public class ModelFactory {
         metadata |= isFluid?16:0;//Is a fluid
 
         metadata |= cullsSame?32:0;
+
+        // Cross-model vegetation (VegetationBlock: grass/flowers/saplings/ferns on
+        // 1.21.11 — BushBlock is now the decorative bush block) has no UP/DOWN bake
+        // and the mesher scales its side quads to the full 2^L cell, so a single
+        // blade that wins the Mipper's representative-voxel selection becomes a
+        // hollow green cube shell at distance. Flag it (128 → bit 55 after the
+        // face-loop shift; bits 48-54 are taken) so RenderDataFactory can treat far
+        // plant voxels as air. Waterlogged plants are excluded: culling the voxel
+        // would also cull its fluid overlay (containsFluid rides the same entry).
+        metadata |= ((!isFluid) && blockState.getFluidState().isEmpty()
+                && blockState.getBlock() instanceof VegetationBlock)?128:0;
 
         boolean fullyOpaque = true;
 
