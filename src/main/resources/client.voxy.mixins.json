@@ -13,6 +13,7 @@
     "iris.MixinLevelRenderer",
     "iris.MixinMatrixUniforms",
     "iris.MixinPackRenderTargetDirectives",
+    "iris.MixinIncludeProcessor",
     "iris.MixinProgramSet",
     "iris.MixinShaderPackSourceNames",
     "iris.MixinStandardMacros",

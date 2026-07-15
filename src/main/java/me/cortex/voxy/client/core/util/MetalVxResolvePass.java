@@ -112,11 +112,13 @@ public final class MetalVxResolvePass {
                 uniform sampler2DRect uVxDepth;
                 uniform int uVxDepthIsWindow;
                 """);
-        if (WATER_RING_PARITY) {
-            // Live near-cull ring radius for the water ring parity injection.
-            // Declared only while the master env is on so VOXY_VX_WATER_RING_PARITY=0
-            // keeps the assembled shader text byte-identical (kill-switch contract).
-            // Unused in the opaque program -> optimized out -> location -1 (guarded).
+        if (WATER_RING_PARITY || me.cortex.voxy.client.iris.VxFogCap.enabled()) {
+            // Live near-cull ring radius for the water ring parity injection
+            // AND the vx fog cap's live far-plane proxy (ring + margin ==
+            // rdBlocks). Declared only while a consumer env is on so killing
+            // both keeps the assembled shader text byte-identical
+            // (kill-switch contract). Unused in the opaque program ->
+            // optimized out -> location -1 (guarded).
             sb.append("uniform float uVxRingCull;\n");
         }
         sb.append('\n');
@@ -403,6 +405,33 @@ public final class MetalVxResolvePass {
                         + " RAISE _DIM toward 1.0; _DEBUG=1 magenta-tints engagement",
                         dim, dim2, WATER_RING_FRESNEL ? " with fresnel release" : "",
                         aTgt, metric, ramp));
+            }
+
+            // vx fog cap, LOD-water half (see VxFogCap for the deferred1/opaque
+            // half and the weather-A/B root cause): voxy_translucent applies the
+            // pack's Fog() to LOD water with the same rain/night-scaled density
+            // that washed the far opaque ring. Clamp the view position Fog sees
+            // to the vanilla far plane (uVxRingCull + near-cull margin ==
+            // rdBlocks, live per frame) so LOD water never fogs harder than the
+            // farthest real chunk. VOXY_VX_FOG_CAP=0 keeps the text byte-identical.
+            if (me.cortex.voxy.client.iris.VxFogCap.enabled()) {
+                String fogNeedle = "Fog(albedo.rgb, viewPos);";
+                if (patchText.contains(fogNeedle)) {
+                    // Locale.ROOT: a comma decimal separator would emit broken GLSL.
+                    patchText = patchText.replace(fogNeedle, String.format(java.util.Locale.ROOT,
+                            "{ vec3 voxyFogPosT = viewPos; float voxyFogLenT = length(voxyFogPosT);"
+                            + " float voxyFogMaxT = max(uVxRingCull + 16.0, 64.0) * %.3f;"
+                            + " if (voxyFogLenT > voxyFogMaxT) voxyFogPosT *= voxyFogMaxT / voxyFogLenT;"
+                            + " Fog(albedo.rgb, voxyFogPosT); }",
+                            me.cortex.voxy.client.iris.VxFogCap.capFactor()));
+                    Logger.info(String.format(java.util.Locale.ROOT,
+                            "[Metal-LODTEST] vx fog cap ON for LOD water (voxy_translucent Fog"
+                            + " clamped to %.2f*(uVxRingCull+16) live blocks);"
+                            + " VOXY_VX_FOG_CAP=0 reverts", me.cortex.voxy.client.iris.VxFogCap.capFactor()));
+                } else {
+                    Logger.warn("[Metal-LODTEST] vx fog cap FAILED for LOD water (Fog anchor not"
+                            + " found in voxy_translucent — pack text drifted); cap inert there");
+                }
             }
         }
 

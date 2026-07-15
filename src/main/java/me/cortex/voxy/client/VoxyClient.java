@@ -230,6 +230,45 @@ public class VoxyClient implements ClientModInitializer {
             Logger.info("VOXY_DEBUG_REJOIN active: leave+rejoin after " + rejoinSecs + "s in-world");
         }
 
+        // VOXY_DEBUG_CMD="15:time set noon;60:weather rain;120:weather clear":
+        // run server commands at fixed seconds-after-join. Diagnostic-only —
+        // lets automated runs A/B weather/time states (the washed far-LOD
+        // ring investigation) without cheats enabled or menu interaction.
+        // Executed through the integrated server's own command source, on the
+        // server thread, so player permissions don't apply.
+        String dbgCmds = System.getenv("VOXY_DEBUG_CMD");
+        if (dbgCmds != null && !dbgCmds.isBlank()) {
+            record TimedCmd(long delayNanos, String cmd) {}
+            java.util.List<TimedCmd> cmds = new java.util.ArrayList<>();
+            for (String part : dbgCmds.split(";")) {
+                int colon = part.indexOf(':');
+                if (colon <= 0) continue;
+                try {
+                    cmds.add(new TimedCmd(Long.parseLong(part.substring(0, colon).trim()) * 1_000_000_000L,
+                            part.substring(colon + 1).trim()));
+                } catch (NumberFormatException ignored) {}
+            }
+            final long[] joinedAt = {-1};
+            final boolean[] fired = new boolean[cmds.size()];
+            net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(client -> {
+                if (client.level == null) { joinedAt[0] = -1; java.util.Arrays.fill(fired, false); return; }
+                if (joinedAt[0] < 0) joinedAt[0] = System.nanoTime();
+                long elapsed = System.nanoTime() - joinedAt[0];
+                var server = client.getSingleplayerServer();
+                if (server == null) return;
+                for (int i = 0; i < cmds.size(); i++) {
+                    if (!fired[i] && elapsed >= cmds.get(i).delayNanos()) {
+                        fired[i] = true;
+                        String cmd = cmds.get(i).cmd();
+                        Logger.info("[VOXY_DEBUG_CMD] running: /" + cmd);
+                        server.execute(() -> server.getCommands().performPrefixedCommand(
+                                server.createCommandSourceStack(), cmd));
+                    }
+                }
+            });
+            Logger.info("VOXY_DEBUG_CMD active: " + cmds.size() + " scheduled commands");
+        }
+
         FabricLoader.getInstance()
                 .getEntrypoints("frex_flawless_frames", Consumer.class)
                 .forEach(api -> ((Consumer<Function<String,Consumer<Boolean>>>)api).accept(name->active->{if (active) {
