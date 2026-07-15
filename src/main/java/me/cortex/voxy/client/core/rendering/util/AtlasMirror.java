@@ -160,7 +160,36 @@ public final class AtlasMirror {
                 GL_RGBA, GL_UNSIGNED_BYTE, this.stagingAddr);
         this.lastSyncedGlId = mcAtlasGlId;
         this.warmupSyncCount++;
+        logWarmupStats(mcAtlasGlId);
         return this.mirror;
+    }
+
+    /**
+     * Rejoin-gray forensics: quantify what the bake SOURCE actually read.
+     * A not-yet-ready MC atlas reads back as the pure-grey 0x515151
+     * placeholder — if a rejoin session freezes onto that, every bake of the
+     * session is grey (hypothesis H3). Per-sync lines only under
+     * VOXY_ATLAS_VERIFY; the FINAL warmup sync (the state the mirror freezes
+     * on) always logs one line so unattended user runs still carry the fact.
+     */
+    private void logWarmupStats(int mcAtlasGlId) {
+        boolean lastWarmup = this.warmupSyncCount == WARMUP_MAX_SYNCS;
+        if (!lastWarmup && !me.cortex.voxy.client.core.model.AtlasVerify.enabled()) return;
+        long pixels = (long) this.width * this.height;
+        int step = 61; // prime stride — samples ~1/61 of the atlas
+        long sampled = 0, grey = 0, opaque = 0;
+        for (long i = 0; i < pixels; i += step) {
+            int px = org.lwjgl.system.MemoryUtil.memGetInt(this.stagingAddr + i * 4L);
+            int r = px & 0xFF, g = (px >> 8) & 0xFF, b = (px >> 16) & 0xFF, a = (px >>> 24);
+            if (a != 0) opaque++;
+            if (Math.abs(r - 0x51) <= 6 && Math.abs(g - 0x51) <= 6 && Math.abs(b - 0x51) <= 6) grey++;
+            sampled++;
+        }
+        me.cortex.voxy.common.Logger.info(String.format(java.util.Locale.ROOT,
+                "[Metal-MIRROR] warmup sync#%d%s glId=%d %dx%d greyPct=%.1f opaquePct=%.1f",
+                this.warmupSyncCount, lastWarmup ? " (FROZEN)" : "", mcAtlasGlId,
+                this.width, this.height,
+                100.0 * grey / Math.max(1, sampled), 100.0 * opaque / Math.max(1, sampled)));
     }
 
     public IGpuTexture texture() { return this.mirror; }

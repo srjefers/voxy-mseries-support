@@ -46,6 +46,13 @@ public class ModelStore {
                         ModelFactory.MODEL_TEXTURE_SIZE*3*256,
                         ModelFactory.MODEL_TEXTURE_SIZE*2*256)
                 .name("ModelTextures");
+        // Rejoin-gray forensics: the native handle identity is the whole
+        // question (which MTLTexture does each session write/sample, and do
+        // pointer values get recycled across teardowns). One line per store.
+        if (this.textures instanceof me.cortex.voxy.client.core.metal.MetalTexture mt) {
+            me.cortex.voxy.common.Logger.info(String.format(java.util.Locale.ROOT,
+                    "[Metal-ATLASLIFE] model atlas CREATED handle=0x%x id=%d", mt.getHandle(), mt.id()));
+        }
         zeroInitAtlas();
 
 
@@ -121,6 +128,10 @@ public class ModelStore {
     }
 
     public void free() {
+        if (this.textures instanceof me.cortex.voxy.client.core.metal.MetalTexture mt) {
+            me.cortex.voxy.common.Logger.info(String.format(java.util.Locale.ROOT,
+                    "[Metal-ATLASLIFE] model atlas FREED handle=0x%x id=%d", mt.getHandle(), mt.id()));
+        }
         this.modelBuffer.free();
         this.modelColourBuffer.free();
         this.textures.free();
@@ -148,5 +159,14 @@ public class ModelStore {
         encoder.setBuffer(colourBindingIndex, this.modelColourBuffer, 0);
         encoder.setTexture(atlasBindingIndex, this.textures);
         encoder.setSampler(atlasBindingIndex, this.atlasSampler);
+        // Rejoin-gray forensics (VOXY_ATLAS_VERIFY): confirm the DRAW binds
+        // the same native texture the uploads verified against.
+        if (AtlasVerify.enabled() && (this.bindLogCounter++ % 1200) == 0
+                && this.textures instanceof me.cortex.voxy.client.core.metal.MetalTexture mt) {
+            me.cortex.voxy.common.Logger.info(String.format(java.util.Locale.ROOT,
+                    "[Metal-ATLASLIFE] bind atlas handle=0x%x id=%d", mt.getHandle(), mt.id()));
+        }
     }
+
+    private int bindLogCounter;
 }

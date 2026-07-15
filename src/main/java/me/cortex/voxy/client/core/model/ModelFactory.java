@@ -317,6 +317,10 @@ public class ModelFactory {
             this.waterAnimator.tick();
         }
 
+        // Rejoin-gray forensics: sentinel re-check must run every tick, even
+        // when no uploads are pending (it hunts post-hoc scribbling).
+        AtlasVerify.tick(this.storage.textures);
+
         var upload = this.uploadResults.poll();
         if (upload==null) return;
 
@@ -385,6 +389,10 @@ public class ModelFactory {
                 atlas.uploadSubImage2D(lvl, X >> lvl, Y >> lvl, (MODEL_TEXTURE_SIZE*3) >> lvl, (MODEL_TEXTURE_SIZE*2) >> lvl, GL_RGBA, GL_UNSIGNED_BYTE, cAddr);
                 cAddr += (MODEL_TEXTURE_SIZE*MODEL_TEXTURE_SIZE*3*2*4)>>(lvl<<1);
             }
+
+            // Rejoin-gray forensics (VOXY_ATLAS_VERIFY): read the cell straight
+            // back out of the MTLTexture and compare with what was just written.
+            AtlasVerify.onUpload(atlas, this.modelId, this.texture.address, this.waterAnimFaces != 0);
 
             this.modelId = -1;
         }

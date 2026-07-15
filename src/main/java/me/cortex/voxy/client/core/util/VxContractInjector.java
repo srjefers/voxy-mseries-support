@@ -305,6 +305,22 @@ public final class VxContractInjector {
         if (pipeData == null) {
             return false;
         }
+        // Rejoin fix (2026-07-15): Iris DESTROYS and recreates its pipeline on
+        // world rejoin ("Reloading pipeline on dimension change") and GL hands
+        // the new pipeline the SAME texture names the old one used. The
+        // ensure*Fbo helpers below dedupe re-attachment by NAME equality, so
+        // after a rejoin our FBOs kept feeding LOD colour into the OLD
+        // pipeline's DELETED colortex objects (kept alive as zombies by the
+        // FBO attachment — silently framebuffer-complete on Apple GL) while
+        // the pack composited its new same-named textures: vx depth/relief
+        // present, colour never arrives => every LOD washed pale sky-colour
+        // on rejoin (probes proved the model atlas itself was byte-perfect).
+        // Key attachment freshness on pipeline IDENTITY, not texture names.
+        // VOXY_VX_FBO_REBIND=0 reverts.
+        if (FBO_REBIND && (boundPipeline == null || boundPipeline.get() != pipeline)) {
+            resetPipelineFbos(boundPipeline == null ? "first pipeline" : "Iris pipeline recreated");
+            boundPipeline = new java.lang.ref.WeakReference<>(pipeline);
+        }
         // Re-resolve the pack colortex ids with the CURRENT flip state every
         // frame — the build-time snapshot goes stale when Iris's buffer-flip
         // parity changes with frame composition (hand on/off, F1), making
@@ -621,6 +637,27 @@ public final class VxContractInjector {
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFb);
             glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFb);
         }
+    }
+
+    /** Rejoin fix — see inject0. Attachment caches are only valid within ONE
+     *  Iris pipeline generation; texture-name equality can't tell generations
+     *  apart because GL reuses deleted names. Weak ref so a destroyed
+     *  pipeline isn't retained by the latch. */
+    private static final boolean FBO_REBIND = !"0".equals(System.getenv("VOXY_VX_FBO_REBIND"));
+    private static java.lang.ref.WeakReference<Object> boundPipeline;
+
+    /** Drop every FBO whose attachments were made under a previous Iris
+     *  pipeline. DELETING them (not just re-attaching) also releases the
+     *  zombie colortex objects the old attachments kept alive. */
+    private static void resetPipelineFbos(String why) {
+        if (colorFbo != 0) { glDeleteFramebuffers(colorFbo); colorFbo = 0; }
+        attachedTargets = new int[0];
+        if (transFbo != 0) { glDeleteFramebuffers(transFbo); transFbo = 0; }
+        transAttachedTarget = -1;
+        if (rsFbo != 0) { glDeleteFramebuffers(rsFbo); rsFbo = 0; }
+        rsAttached = new int[0];
+        Logger.info("VxContractInjector: pack FBOs reset (" + why
+                + ") — attachments will rebind to the live pipeline's targets");
     }
 
     /**
