@@ -393,6 +393,23 @@ public final class MetalNative {
             long indexBuffer, long indexBufferOffset,
             long indirectBuffer, long indirectOffset);
 
+    /**
+     * Batched form of {@link #mtlRenderEncoderDrawIndexedPrimitivesIndirect}:
+     * issues {@code commandCount} indirect indexed draws at
+     * {@code firstCommandOffset + i * stride} inside one native loop and one
+     * autoreleasepool, instead of two JNI crossings per draw. Before each draw,
+     * if {@code indirectContentsPtr} is non-zero, reads the command's
+     * baseInstance (uint32 at +16) from that CPU-visible pointer and pushes it
+     * as a 16-byte vertex uniform at {@code biBindingIndex} via setVertexBytes
+     * (the Metal [[base_instance]] workaround). Same per-draw calls, same order
+     * as the Java loop in MetalRenderEncoder.drawIndexedIndirect.
+     */
+    public static native void mtlRenderEncoderDrawIndexedIndirectBatch(
+            long encoder, int primitiveType, int indexType,
+            long indexBuffer, long indexBufferOffset,
+            long indirectBuffer, long indirectContentsPtr,
+            long firstCommandOffset, int commandCount, int stride, int biBindingIndex);
+
     // --- Pipeline static state: depth-stencil + blend + raster ---
 
     /** Configures color attachment N's blend state on a render pipeline descriptor. */

@@ -300,6 +300,55 @@ Java_me_cortex_voxy_client_core_metal_MetalNative_mtlRenderEncoderDrawIndexedPri
     }
 }
 
+// Batched indirect draw loop (lever D / L3, 2026-09-25).
+//
+// Metal has no multi-draw-indirect, so MDIC issues one indirect draw per
+// command. The Java loop in MetalRenderEncoder.drawIndexedIndirect paid two
+// JNI crossings per draw (setVertexBytes for the baseInstance workaround +
+// drawIndexedPrimitives:indirectBuffer:), each entering its own
+// @autoreleasepool — ~40k crossings/frame at 20k draws, 0.9-1.8 ms/frame of
+// pure marshalling. This entry point runs the identical per-draw sequence,
+// in the identical order, natively under a single @autoreleasepool.
+//
+// indirectContentsPtr is the CPU-visible contents pointer of the (Shared
+// storage) indirect buffer; 0 skips the baseInstance push exactly like the
+// Java loop does for non-Metal buffers. The baseInstance is read from the
+// DrawElementsIndirectCommand at +16 (count, instanceCount, firstIndex,
+// baseVertex, baseInstance) and pushed as a 16-byte std140 uniform at
+// vertex binding biBindingIndex (VoxyMetalPerDrawUBO — see the
+// VOXY_METAL_BI_FIX note in MetalRenderEncoder).
+extern "C" JNIEXPORT void JNICALL
+Java_me_cortex_voxy_client_core_metal_MetalNative_mtlRenderEncoderDrawIndexedIndirectBatch(
+        JNIEnv *, jclass, jlong encoderHandle, jint primitiveType, jint indexType,
+        jlong indexBufferHandle, jlong indexBufferOffset,
+        jlong indirectBufferHandle, jlong indirectContentsPtr,
+        jlong firstCommandOffset, jint commandCount, jint stride, jint biBindingIndex) {
+    @autoreleasepool {
+        if (encoderHandle == 0 || indexBufferHandle == 0 || indirectBufferHandle == 0) return;
+        if (commandCount <= 0 || stride <= 0) return;
+        id<MTLRenderCommandEncoder> encoder = voxy_handle_cast<id<MTLRenderCommandEncoder>>(encoderHandle);
+        id<MTLBuffer> indexBuffer = voxy_handle_cast<id<MTLBuffer>>(indexBufferHandle);
+        id<MTLBuffer> indirectBuffer = voxy_handle_cast<id<MTLBuffer>>(indirectBufferHandle);
+        const uint8_t *contents = (const uint8_t *)indirectContentsPtr;
+        uint32_t perDraw[4] = {0, 0, 0, 0};
+        for (jint i = 0; i < commandCount; i++) {
+            NSUInteger cmdOffset = (NSUInteger)firstCommandOffset + (NSUInteger)i * (NSUInteger)stride;
+            if (contents != nullptr) {
+                uint32_t baseInstance;
+                memcpy(&baseInstance, contents + cmdOffset + 16, sizeof(baseInstance));
+                perDraw[0] = baseInstance;
+                [encoder setVertexBytes:perDraw length:sizeof(perDraw) atIndex:(NSUInteger)biBindingIndex];
+            }
+            [encoder drawIndexedPrimitives:(MTLPrimitiveType)primitiveType
+                                 indexType:(MTLIndexType)indexType
+                               indexBuffer:indexBuffer
+                         indexBufferOffset:(NSUInteger)indexBufferOffset
+                            indirectBuffer:indirectBuffer
+                      indirectBufferOffset:cmdOffset];
+        }
+    }
+}
+
 // -------- Blit encoder readback (M5) --------
 
 extern "C" JNIEXPORT void JNICALL
