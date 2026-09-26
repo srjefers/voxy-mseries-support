@@ -49,6 +49,19 @@ import static org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER;
 import static org.lwjgl.opengl.GL43C.GL_SHADER_STORAGE_BUFFER_BINDING;
 
 public class VoxyRenderSystem {
+    //Upstream 27f82dda doubled the render-distance tracker's processing budget (20 -> 40 top-level node
+    // add/removes per rendered frame — setCenterAndProcess runs in renderOpaque; upstream gives no
+    // rationale). The fork applies it only together with the
+    // 19-bit request ids (6a691211) so the faster ring cannot exhaust the request space.
+    // VOXY_RD_PROCESS_RATE=20 restores pre-sync.
+    private static final int RD_PROCESS_RATE = parseRdRate();
+    private static int parseRdRate() {
+        int r = 40;
+        String v = System.getenv("VOXY_RD_PROCESS_RATE");
+        if (v != null && !v.isBlank()) { try { r = Math.max(1, Integer.parseInt(v.trim())); } catch (NumberFormatException ignored) {} }
+        Logger.info("[Voxy-SYNC] render-distance process rate: " + r + "/frame (upstream 27f82dda; VOXY_RD_PROCESS_RATE=20 restores pre-sync)");
+        return r;
+    }
     private final WorldEngine worldIn;
 
 
@@ -234,7 +247,7 @@ public class VoxyRenderSystem {
                     maxSec = 7;
                 }
 
-                this.renderDistanceTracker = new RenderDistanceTracker(20,
+                this.renderDistanceTracker = new RenderDistanceTracker(RD_PROCESS_RATE,//upstream 27f82dda: 40 (was 20); VOXY_RD_PROCESS_RATE tunes
                         minSec,
                         maxSec,
                         this.nodeManager::addTopLevel,
