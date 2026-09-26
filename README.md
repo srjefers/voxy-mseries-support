@@ -86,9 +86,10 @@ Without `-Dvoxy.forceMetal=true` (or the environment variable
 - Graphics settings follow the chip and `-Xmx` follows the memory, so read
   each row on its own (for example, a base M2 with 24 GB uses the Minimum
   graphics rows and `-Xmx6G`).
-- **8 GB Macs are not supported.** An untested experiment:
-  `-Dvoxy.geometryBufferSizeOverrideMB=512 -Xmx3G`, Minecraft render
-  distance 8 or less, no shader pack.
+- **8 GB Macs are not supported.** An untested experiment: `-Xmx3G`, Voxy
+  render distance 256 chunks or less, Minecraft render distance 8 or less, no
+  shader pack. Leave the geometry arena at its 1 GB default (see the last
+  point below).
 - The Tested memory figure was measured before the geometry arena was
   sized from RAM (commit `5b947233`); expect about 1 GB less on a 48 GB Mac
   now†.
@@ -105,7 +106,9 @@ large drop. Other chips have not been measured†.
 **Disk:** Voxy stores LODs only for terrain you explored, pre-generated or
 imported, at about 5–11 KB per chunk (211 MB for 36,800 chunks measured).
 Singleplayer data lives in `<world>/voxy/`, multiplayer data in
-`.voxy/saves/`.
+`.voxy/saves/`. Importing a Distant Horizons database needs the SQLite
+driver, which Distant Horizons itself provides; without it the import command
+does not appear.
 
 ### Why Activity Monitor shows much more than F3: unified memory
 
@@ -130,8 +133,10 @@ Minecraft's Java heap:
   heap is a GB the GPU cannot use. Voxy's GPU memory is wired while in use, so
   it cannot be swapped out either.
 - `-Dvoxy.geometryBufferSizeOverrideMB=<MB>` sets the geometry arena
-  explicitly. A smaller arena makes far LODs coarser once it fills up; it does
-  not crash.
+  explicitly. Voxy starts evicting far LOD detail when less than 256 MB of the
+  arena is free, so an arena below about 768 MB evicts all the time and far
+  LODs pop in and out. A full or fragmented arena delays new LODs instead of
+  crashing.
 
 ## What works (alpha)
 
