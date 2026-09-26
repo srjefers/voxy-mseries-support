@@ -145,7 +145,7 @@ public class RenderDataFactory {
 
             //Lower 26 bits can be auxiliary data since that is where quad position information goes;
             int auxData = (int) (data&((1<<26)-1));
-            data &= ~((1<<26)-1);
+            data &= ~((1L<<26)-1);
 
             int axisSide = auxData&1;
             int type = (auxData>>1)&3;//Translucent, double side, directional
