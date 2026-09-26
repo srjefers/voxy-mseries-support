@@ -49,6 +49,7 @@ The loop that produced every fix in this port:
 | `[Metal-VXTIMING]` | `VOXY_FRAME_TIMING=1` (close F3 while sampling — vanilla's GPU-utilization timer owns `GL_TIME_ELAPSED`; skipped frames print as `gpuSkippedForeign=`): same window, GL side — per-pass `gpuAvg/gpuMax\|cpuAvg/cpuMax` ms for the vx-contract passes (scOpaque/scTrans/scAbyss, inject*, resolve*, acquire, composite, lightmap; GPU via async `GL_TIME_ELAPSED`) + `lodCoverage=` (% of framebuffer pixels that are opaque LOD, from a `GL_SAMPLES_PASSED` query). One-shot `GL-side vx pass timing ON` line at first frame |
 | `[Metal] lightmap sync throttled to <mode>` | (`lightmapSync` ms on `[Metal-TIMING]` is CPU wall time *including* the GL drain the readback forces; under the throttle `ms each` rises while `ms/frame` falls — judge the win by `[Metal-LayerB] fps`, A vs B at the same spot.) One-shot: whether the MC-lightmap readback runs only on lightmap rewrites (`lightmap-version`, default) or every frame (`VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1`); `[Metal-LayerB]` carries `lightmapSync=<run>/<skipped>` per window, `[Metal-TIMING]` its ms |
 | `[Metal-RESYNC]` | One-shot: IOSurface GL re-specification mode (`ONCE` per bridge per Metal frame, or `EVERY` acquire under `VOXY_BRIDGE_RESYNC=every`); `[Metal-TIMING]` carries `resync=N/frame (skipped M/frame) resyncCost=` |
+| `[Voxy-SYNC]` | One-shot at class load: state of each upstream-sync kill switch (`mesher face-occlusion predicate`, `mip block-light packing`, `Iris shader define`) — see `docs/UPSTREAM-SYNC.md` |
 | `IOSurfaceBridgeCompositor` | Composite mode (blit vs shader) and target FBO |
 
 ## Key environment variables
@@ -70,6 +71,9 @@ development:
 | `VOXY_BRIDGE_RESYNC=every` | Kill switch: re-specify IOSurfaces into GL on every acquire (pre-lever-C); default `once` per bridge per Metal frame |
 | `VOXY_FOG_SMOOTH_MS` | Fog colour smoothing constant (0 disables) |
 | `VOXY_METAL_DRAW_BATCH=0` | Kill switch: per-draw Java JNI indirect loop instead of the native batch (A/B on `[Metal-TIMING] jniDrawLoop`) |
+| `VOXY_MESH_FACE_OCCLUDE=0` | Kill switch: pre-sync non-opaque face predicate (before upstream 6212d95c/514d0a0e/89b3dacc). A/B fences, panes, leaves, stairs at LOD 0-2; marker `[Voxy-SYNC] mesher face-occlusion predicate` |
+| `VOXY_MIP_BLOCKLIGHT_FIX=0` | Kill switch: pre-sync Mipper block-light packing (upstream 0eb618d1 fixed block light lost at every mip level ≥ 1). Stored mips only refresh on re-import; marker `[Voxy-SYNC] mip block-light packing` |
+| `VOXY_SHADER_DEFINE_VERSION=N` | Iris define emitted to packs: `#define VOXY N` (default 1, upstream 13230c27 contract v1); `0` restores the bare `#define VOXY`. Marker `[Voxy-SYNC] Iris shader define` |
 | `VOXY_FRAME_TIMING=1` | Per-stage frame cost probe: `[Metal-TIMING]` (Metal-side waits) + `[Metal-VXTIMING]` (GL-side vx passes, async timer queries). Zero cost when unset |
 | `VOXY_VX_TIMING=0` | Kill switch: with `VOXY_FRAME_TIMING=1`, keep only `[Metal-TIMING]` (no GL queries, no VXTIMING line) — pre-probe behaviour |
 | `VOXY_VX_TIMING_GPU=0` | `[Metal-VXTIMING]` CPU brackets only, no `GL_TIME_ELAPSED`/`GL_SAMPLES_PASSED` queries |
