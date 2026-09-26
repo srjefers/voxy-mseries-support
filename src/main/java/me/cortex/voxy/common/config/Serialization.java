@@ -101,7 +101,7 @@ public class Serialization {
         int count = 0;
         outer:
         for (var clzName : clazzs) {
-            if (!clzName.toLowerCase().contains("config")) {
+            if (!clzName.toLowerCase(Locale.ROOT).contains("config")) {
                 continue;//Only load classes that contain the word config
             }
             if (clzName.contains("mixin")) {

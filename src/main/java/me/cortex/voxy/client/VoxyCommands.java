@@ -26,6 +26,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 
 
@@ -203,7 +204,7 @@ public class VoxyCommands {
 
         var name = ctx.getArgument("world_name", String.class);
         var file = new File("saves").toPath().resolve(name);
-        name = name.toLowerCase();
+        name = name.toLowerCase(Locale.ROOT);
         if (name.endsWith("/")) {
             name = name.substring(0, name.length()-1);
         }
