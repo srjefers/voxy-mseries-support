@@ -63,6 +63,13 @@ uint makeQuadFlags(uint faceData, uint modelId, ivec2 quadSize, const in BlockMo
     flags |= faceTintState(faceData)<<2;
     flags |= face<<4;//Face
 
+    #ifdef VOXY_LOD_PLANT_EDGEFADE
+    //Fork (Metal only, never defined on GL): bit 7 = plant cross model, for quads.frag's edge-on
+    // plane fade. The fragment stage only has the model buffer in the PATCHED_SHADER path, so the
+    // vertex stage (which always has it) forwards the flag in this unused bit.
+    flags |= uint(modelIsPlantCross(model))<<7;
+    #endif
+
     return flags;
 }
 

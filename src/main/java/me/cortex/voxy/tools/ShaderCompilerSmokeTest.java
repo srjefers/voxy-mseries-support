@@ -201,6 +201,8 @@ public final class ShaderCompilerSmokeTest {
                         "lod/gl46/quads.frag (Phase C material g-buffer — translucent)",
                         me.cortex.voxy.client.core.util.MetalVxGbufferEmitter.SOURCE),
         };
+        java.util.List<ShaderCase> all = new java.util.ArrayList<>(java.util.Arrays.asList(cases));
+        all.addAll(liveMdicCases());
 
         int passSpv = 0, failSpv = 0, passMsl = 0, failMsl = 0;
         StringBuilder failures = new StringBuilder();
@@ -208,7 +210,18 @@ public final class ShaderCompilerSmokeTest {
         // assetsBase is the directory CONTAINING `assets/`, i.e. the resource root
         // (src/main/resources). expand() prepends "assets/" + namespace + "/shaders/".
         Path assetsBase = root.getParent().getParent().getParent();
-        for (ShaderCase c : cases) {
+        // Optional last step: compile the MSL into a Metal library (MSL 3.0 pinned by the dylib), which
+        // catches MSL-level errors the transpile alone cannot. Skipped when the dylib is not available.
+        long metalDevice = 0;
+        int passLib = 0, failLib = 0;
+        try {
+            if (me.cortex.voxy.client.core.metal.MetalNative.load()) {
+                metalDevice = me.cortex.voxy.client.core.metal.MetalNative.mtlCreateSystemDefaultDevice();
+            }
+        } catch (Throwable t) {
+            metalDevice = 0;
+        }
+        for (ShaderCase c : all) {
             String src = expandImports(root.resolve(c.relPath), assetsBase);
             if (c.append() != null) src = src + c.append();
             RuntimeShaderCompiler.Result spvResult;
@@ -227,6 +240,18 @@ public final class ShaderCompilerSmokeTest {
                 int mslLen = mslResult.mslSource() == null ? 0 : mslResult.mslSource().length();
                 System.out.printf("PASS msl  %5d ch %s%n", mslLen, c.label);
                 passMsl++;
+                if (metalDevice != 0 && mslResult.mslSource() != null) {
+                    long lib = me.cortex.voxy.client.core.metal.MetalNative.mtlDeviceNewLibraryWithSource(metalDevice, mslResult.mslSource());
+                    if (lib != 0) {
+                        me.cortex.voxy.client.core.metal.MetalNative.mtlRelease(lib);
+                        passLib++;
+                    } else {
+                        System.out.printf("FAIL lib             %s%n", c.label);
+                        failures.append("  ").append(c.label).append(" [METAL LIB]: ")
+                                .append(me.cortex.voxy.client.core.metal.MetalNative.mtlGetLastCompileError()).append('\n');
+                        failLib++;
+                    }
+                }
             } catch (Throwable t) {
                 System.out.printf("FAIL msl             %s%n", c.label);
                 failures.append("  ").append(c.label).append(" [MSL]: ").append(t.getMessage()).append('\n');
@@ -235,13 +260,83 @@ public final class ShaderCompilerSmokeTest {
         }
         long ms = (System.nanoTime() - start) / 1_000_000;
         System.out.println();
-        System.out.printf("=== SPV: %d/%d  MSL: %d/%d  in %d ms ===%n",
-                passSpv, passSpv + failSpv, passMsl, passMsl + failMsl, ms);
+        System.out.printf("=== SPV: %d/%d  MSL: %d/%d  METAL LIB: %s  in %d ms ===%n",
+                passSpv, passSpv + failSpv, passMsl, passMsl + failMsl,
+                metalDevice != 0 ? (passLib + "/" + (passLib + failLib)) : "skipped (no dylib)", ms);
         if (failures.length() > 0) {
             System.out.println("Failures:");
             System.out.println(failures);
             System.exit(1);
         }
+    }
+
+    /**
+     * The MDIC terrain pipelines with the define sets the Metal backend builds BY DEFAULT today
+     * (MDICSectionRenderer, Metal branch, no env overrides), vertex and fragment, with and without a
+     * shader pack. The older hand-written cases above predate most of these defines, which let a
+     * fragment-only reference to the model buffer ship: without a pack the opaque pipeline did not
+     * compile and every world join crashed (2026-09-26). Keep this in sync with MDICSectionRenderer.
+     */
+    private static java.util.List<ShaderCase> liveMdicCases() {
+        Map<String, String> common = new java.util.LinkedHashMap<>();
+        common.put("NO_SHADE_FACE_TINT", "1.0f");
+        common.put("UP_FACE_TINT", "1.0f");
+        common.put("DOWN_FACE_TINT", "0.5f");
+        common.put("Z_AXIS_FACE_TINT", "0.8f");
+        common.put("X_AXIS_FACE_TINT", "0.6f");
+        common.put("VOXY_METAL_BOUND_SSBO", "");
+        common.put("VOXY_LOD_FIXED_MIP", "");
+        common.put("VOXY_LOD_DIST_MIP", "");
+        common.put("VOXY_ATLAS_MAX_LOD", "3.0");
+        common.put("VOXY_LOD_DIST_MIP_BIAS", "0.0000");
+        common.put("VOXY_LOD_ABS_INDENT", "");
+        common.put("VOXY_WLOG_TINT_FIX", "");
+        common.put("VOXY_METAL_BI_FIX", "");
+
+        Map<String, String> opaque = new java.util.LinkedHashMap<>(common);
+        opaque.put("VOXY_FORCE_OPAQUE_ALPHA", "");
+        opaque.put("VOXY_LOD_MIP_DISCARD", "");
+        opaque.put("VOXY_LOD_MIP_DISCARD_ALPHA", "0.5000");
+        opaque.put("VOXY_LOD_PLANT_EDGEFADE", "");
+        opaque.put("VOXY_LOD_PLANT_EDGE_ANISO", "3.0000");
+
+        Map<String, String> translucent = new java.util.LinkedHashMap<>(common);
+        translucent.put("TRANSLUCENT", "");
+        translucent.put("VOXY_WATER_FAR_ALPHA", "");
+        translucent.put("VOXY_TRANS_NEAR_CULL", "");
+        translucent.put("VOXY_TRANS_NEAR_CULL_XZ", "");
+        translucent.put("VOXY_TRANS_NEAR_CULL_RADIAL", "");
+        translucent.put("VOXY_TRANS_NEAR_CULL_MASKED", "");
+        translucent.put("VOXY_TRANS_NEAR_CULL_GHOST", "");
+        translucent.put("VOXY_WATER_DEPTH_BIAS", "0");
+
+        // No shader pack: env fog on, LOD brightness compensation.
+        Map<String, String> opaqueNoPack = new java.util.LinkedHashMap<>(opaque);
+        opaqueNoPack.put("USE_ENV_FOG", "");
+        opaqueNoPack.put("VOXY_LOD_BRIGHTNESS", "0.9200");
+        Map<String, String> transNoPack = new java.util.LinkedHashMap<>(translucent);
+        transNoPack.put("USE_ENV_FOG", "");
+        // Shader pack (vx contract): both layers go through the material g-buffer emitter.
+        Map<String, String> opaquePack = new java.util.LinkedHashMap<>(opaque);
+        opaquePack.put("PATCHED_SHADER", "");
+        opaquePack.put("VOXY_VX_GBUFFER", "");
+        Map<String, String> transPack = new java.util.LinkedHashMap<>(translucent);
+        transPack.put("PATCHED_SHADER", "");
+        transPack.put("VOXY_VX_GBUFFER", "");
+
+        String emitter = me.cortex.voxy.client.core.util.MetalVxGbufferEmitter.SOURCE;
+        var V = RuntimeShaderCompiler.Stage.VERTEX;
+        var F = RuntimeShaderCompiler.Stage.FRAGMENT;
+        java.util.List<ShaderCase> out = new java.util.ArrayList<>();
+        out.add(new ShaderCase("lod/gl46/quads3.vert", V, opaqueNoPack, "MDIC live default: no pack, opaque (vert)"));
+        out.add(new ShaderCase("lod/gl46/quads.frag", F, opaqueNoPack, "MDIC live default: no pack, opaque (frag)"));
+        out.add(new ShaderCase("lod/gl46/quads3.vert", V, transNoPack, "MDIC live default: no pack, translucent (vert)"));
+        out.add(new ShaderCase("lod/gl46/quads.frag", F, transNoPack, "MDIC live default: no pack, translucent (frag)"));
+        out.add(new ShaderCase("lod/gl46/quads3.vert", V, opaquePack, "MDIC live default: shader pack, opaque (vert)"));
+        out.add(new ShaderCase("lod/gl46/quads.frag", F, opaquePack, "MDIC live default: shader pack, opaque (frag)", emitter));
+        out.add(new ShaderCase("lod/gl46/quads3.vert", V, transPack, "MDIC live default: shader pack, translucent (vert)"));
+        out.add(new ShaderCase("lod/gl46/quads.frag", F, transPack, "MDIC live default: shader pack, translucent (frag)", emitter));
+        return out;
     }
 
     /** Resolve Voxy's #import &lt;ns:path&gt; directives recursively against the assets root. */

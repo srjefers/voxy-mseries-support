@@ -508,7 +508,10 @@ void main() {
     // ~1 along the other), so drop plant fragments whose footprint anisotropy
     // exceeds VOXY_LOD_PLANT_EDGE_ANISO (default 3: gone past ~20 deg off an
     // axis, kept at 30+). Face-on and 45-degree planes stay (aniso <= 1.5).
-    if (modelIsPlantCross(modelData[interData.x>>16])) {
+    // Plant-cross flag = interData.x bit 7, set by quad_util's makeQuadFlags under the same define.
+    // (Reading modelData here compiled only in the PATCHED_SHADER path: without a shader pack the
+    // opaque pipeline failed to build and every world join crashed.)
+    if (((interData.x >> 7u) & 1u) != 0u) {
         float voxyLx = length(voxyTexDx);
         float voxyLy = length(voxyTexDy);
         float voxyAniso = max(voxyLx, voxyLy) / max(min(voxyLx, voxyLy), 1e-7);
