@@ -71,11 +71,12 @@ development:
 | `VOXY_BRIDGE_RESYNC=every` | Kill switch: re-specify IOSurfaces into GL on every acquire (pre-lever-C); default `once` per bridge per Metal frame |
 | `VOXY_FOG_SMOOTH_MS` | Fog colour smoothing constant (0 disables) |
 | `VOXY_METAL_DRAW_BATCH=0` | Kill switch: per-draw Java JNI indirect loop instead of the native batch (A/B on `[Metal-TIMING] jniDrawLoop`) |
+| `VOXY_MESH_XFACE_FIX=0` | Kill switch: pre-sync swapped -x/+x face-occlusion indices at section borders (upstream 1f985ce6) |
 | `VOXY_MESH_FACE_OCCLUDE=0` | Kill switch: pre-sync non-opaque face predicate (before upstream 6212d95c/514d0a0e/89b3dacc). A/B fences, panes, leaves, stairs at LOD 0-2; marker `[Voxy-SYNC] mesher face-occlusion predicate` |
 | `VOXY_MIP_BLOCKLIGHT_FIX=0` | Kill switch: pre-sync Mipper block-light packing (upstream 0eb618d1 fixed block light lost at every mip level ≥ 1). Stored mips only refresh on re-import; marker `[Voxy-SYNC] mip block-light packing` |
 | `VOXY_SHADER_DEFINE_VERSION=N` | Iris define emitted to packs: `#define VOXY N` (default 1, upstream 13230c27 contract v1); `0` restores the bare `#define VOXY`. Marker `[Voxy-SYNC] Iris shader define` |
 | `VOXY_SYNC_UNDEFINED_SKYLIGHT=0` | Kill switch: fill not-in-storage sections with sky light 0 again (pre upstream 47053483; dark patches next to unstored sections) |
-| `VOXY_SECTION_FREE_ASSERT=0` | Downgrade the "Section freed while marked as dirty or in the save queue" assertion (upstream c7166d3f/c2dca44e) from a crash to a log line |
+| `VOXY_SECTION_FREE_ASSERT=1` | Make the "Section freed while marked as dirty or in the save queue" check (upstream c7166d3f/c2dca44e) throw like upstream; fork default logs because the check runs inside the tracker stripe lock |
 | `VOXY_SYNC_CHUNK_POS_CHECK=0` | Kill switch: skip the chunk-ring slot position check (upstream 6189ee38) in `voxy$cheekyGetChunk` |
 | `VOXY_NODE_UPLOAD_CAP_KB=N` | Geometry uploaded per async-node-manager run (default 1000 KB, upstream 36f85026 frame-spike smoothing); `0` = uncapped (pre-sync). Marker `[Voxy-SYNC] async node upload cap` |
 | `VOXY_GEOMETRY_ALLOC_ALIGN=1024` | Restore the 1024-element geometry allocation granule (upstream 72b3ade6 uses 128, ~20% less geometry memory). Marker `[Voxy-SYNC] geometry allocation granule` |
