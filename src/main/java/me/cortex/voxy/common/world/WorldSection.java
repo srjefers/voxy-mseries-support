@@ -17,7 +17,7 @@ public final class WorldSection {
     // runs inside ActiveSectionTracker's stripe write lock with no try/finally — a throw there
     // leaks the StampedLock and stalls every later acquire on that stripe (~1/64 of all keys).
     // VOXY_SECTION_FREE_ASSERT=1 restores the upstream throw for diagnosis.
-    private static final boolean FREE_ASSERT = "1".equals(System.getenv("VOXY_SECTION_FREE_ASSERT"));
+    static final boolean FREE_ASSERT = "1".equals(System.getenv("VOXY_SECTION_FREE_ASSERT"));
     public static final int SECTION_VOLUME = 32*32*32;
     public static final boolean VERIFY_WORLD_SECTION_EXECUTION = VoxyCommon.isVerificationFlagOn("verifyWorldSectionExecution");
 
@@ -175,7 +175,12 @@ public final class WorldSection {
             if (FREE_ASSERT) {
                 throw new IllegalStateException(msg);
             }
-            me.cortex.voxy.common.Logger.error(msg);//default: log (VOXY_SECTION_FREE_ASSERT=1 throws like upstream)
+            //default (log mode): refuse to free it. Freeing would lose the write, and the thread that dirtied it
+            // would then find a freed-but-dirty section on its own unload. Nobody can acquire a section at
+            // state 0, so restoring the live state is race-free; the dirtying thread's unload saves it.
+            me.cortex.voxy.common.Logger.error(msg + " (kept alive, will be saved)");
+            ATOMIC_STATE_HANDLE.compareAndSet(this, 0, 1);
+            return false;
         }
         return witness == 1;
     }
