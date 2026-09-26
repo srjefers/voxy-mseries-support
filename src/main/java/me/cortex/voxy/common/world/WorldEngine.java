@@ -20,7 +20,7 @@ public class WorldEngine {
     public static final int DEFAULT_UPDATE_FLAGS = UPDATE_TYPE_BLOCK_BIT | UPDATE_TYPE_CHILD_EXISTENCE_BIT;
 
     public interface ISectionChangeCallback {void accept(WorldSection section, int updateFlags, int neighborMsk);}
-    public interface ISectionSaveCallback {void save(WorldEngine engine, WorldSection section);}
+    public interface ISectionSaveCallback {void save(WorldEngine engine, WorldSection section, boolean nonBlocking);}
 
     private final TrackedObject thisTracker = TrackedObject.createTrackedObject(this);
 
@@ -189,8 +189,11 @@ public class WorldEngine {
     }
 
     public void saveSection(WorldSection section) {
+        this.saveSection(section, false);
+    }
+    public void saveSection(WorldSection section, boolean nonBlocking) {
         if (this.saveCallback != null) {
-            this.saveCallback.save(this, section);
+            this.saveCallback.save(this, section, nonBlocking);
         }
     }
 }

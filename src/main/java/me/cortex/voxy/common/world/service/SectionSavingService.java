@@ -12,6 +12,8 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 // save to the db, this can be useful for just reducing the amount of thread pools in total
 // might have some issues with threading if the same section is saved from multiple threads?
 public class SectionSavingService {
+    private static final int SOFT_MAX_QUEUE_SIZE = 5_000;
+
     private final Service service;
     private record SaveEntry(WorldEngine engine, WorldSection section) {}
     private final ConcurrentLinkedDeque<SaveEntry> saveQueue = new ConcurrentLinkedDeque<>();
@@ -45,22 +47,24 @@ public class SectionSavingService {
         }
     }*/
 
-    public void enqueueSave(WorldEngine in, WorldSection section) {
+    public void enqueueSave(WorldEngine in, WorldSection section, boolean nonBlocking) {
         //If its not enqueued for saving then enqueue it
         if (section.exchangeIsInSaveQueue(true)) {
             //Acquire the section for use
             section.acquire();
 
             //Hard limit the save count to prevent OOM
-            if (this.getTaskCount() > 5_000) {
+            if ((!nonBlocking) && this.getTaskCount() > SOFT_MAX_QUEUE_SIZE) {
                 //wait a bit
+                Thread.yield();
+                /*
                 try {
                     Thread.sleep(10);
                 } catch (InterruptedException e) {
                     throw new RuntimeException(e);
-                }
+                }*/
                 //If we are still full, process entries in the queue ourselves instead of waiting for the service
-                while (this.getTaskCount() > 5_000 && this.service.isLive()) {
+                while (this.getTaskCount() > SOFT_MAX_QUEUE_SIZE && this.service.isLive()) {
                     if (!this.service.steal()) {
                         break;
                     }

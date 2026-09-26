@@ -144,9 +144,6 @@ public class NodeManager {
         //Verify that pos is actually valid
         assertPosValid(pos);
 
-        if ((pos&0xF) != 0) {
-            throw new IllegalStateException("BAD POS !! YOU DID SOMETHING VERY BAD");
-        }
         if (this.activeSectionMap.containsKey(pos)) {
             Logger.error("Tried inserting top level pos " + WorldEngine.pprintPos(pos) + " but it was in active map, discarding!");
             return;
