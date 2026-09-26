@@ -80,7 +80,9 @@ development:
 | `VOXY_SYNC_CHUNK_POS_CHECK=0` | Kill switch: skip the chunk-ring slot position check (upstream 6189ee38) in `voxy$cheekyGetChunk` |
 | `VOXY_NODE_UPLOAD_CAP_KB=N` | Geometry uploaded per async-node-manager run (default 1000 KB, upstream 36f85026 frame-spike smoothing); `0` = uncapped (pre-sync). Marker `[Voxy-SYNC] async node upload cap` |
 | `VOXY_GEOMETRY_ALLOC_ALIGN=1024` | Restore the 1024-element geometry allocation granule (upstream 72b3ade6 uses 128, ~20% less geometry memory). Marker `[Voxy-SYNC] geometry allocation granule` |
-| `VOXY_RD_PROCESS_RATE=20` | Restore the pre-sync render-distance tracker rate (upstream 27f82dda: 40 top-level node changes per tick). Marker `[Voxy-SYNC] render-distance process rate` |
+| `VOXY_RD_PROCESS_RATE=20` | Restore the pre-sync render-distance tracker rate (upstream 27f82dda: 40 top-level node changes per rendered frame). Marker `[Voxy-SYNC] render-distance process rate` |
+| `VOXY_WORKER_RETHROW=0` | Pre-sync worker failure handling: the Async Node Manager / Model factory threads log and exit instead of rethrowing their exception on the render thread (upstream 36f85026/02e490e0) |
+| `VOXY_IRIS_PACK_PREDICATE=quick\|current` | Iris 'pack enabled' predicate: default `hybrid` (pack loaded AND pipeline null-or-Iris), `quick` = pre-sync `isPackInUseQuick`, `current` = pure upstream 1952d3df. Marker `[Voxy-SYNC] Iris pack predicate` |
 | `-Dvoxy.verify.verifyNodeManager=true` | Run NodeManager.verifyIntegrity after every async result publish (upstream 8187d2fd; slow) |
 | `-Dvoxy.exclusiveLock=true` | Hold an exclusive lock on `.voxy/voxy.lock` so a second game instance cannot open the same store (upstream 36964ee4/c6b30e51; off by default) |
 | `VOXY_FRAME_TIMING=1` | Per-stage frame cost probe: `[Metal-TIMING]` (Metal-side waits) + `[Metal-VXTIMING]` (GL-side vx passes, async timer queries). Zero cost when unset |

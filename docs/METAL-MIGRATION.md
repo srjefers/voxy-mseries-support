@@ -128,7 +128,9 @@ real translucent biome-tinted water, full texture detail, ~111 FPS.
 | `VOXY_SYNC_CHUNK_POS_CHECK=0` | off (check on) | Kill switch: pre-sync unchecked chunk-ring slot read (upstream 6189ee38 rejects a slot holding a chunk from another position after death/teleport) |
 | `VOXY_NODE_UPLOAD_CAP_KB=N` | 1000 | Per-run geometry upload cap in the async node manager (upstream 36f85026); `0` restores the uncapped loop. Unified memory on Apple Silicon may tolerate a larger cap — measure section fill rate vs frame time |
 | `VOXY_GEOMETRY_ALLOC_ALIGN=N` | 128 | Geometry allocation granule in elements (power of two). Upstream 72b3ade6 went 1024 → 128 for ~20% less geometry memory; `1024` restores pre-sync |
-| `VOXY_RD_PROCESS_RATE=N` | 40 | Render-distance tracker add/remove rate per tick (upstream 27f82dda doubled it once request ids became 19-bit); `20` restores pre-sync |
+| `VOXY_RD_PROCESS_RATE=N` | 40 | Render-distance tracker add/remove budget per rendered frame (upstream 27f82dda doubled it; the fork applies it only with the 19-bit request ids); `20` restores pre-sync |
+| `VOXY_WORKER_RETHROW=0` | off (rethrow on) | Pre-sync worker failure handling: Async Node Manager / Model factory threads log and exit instead of surfacing their exception on the render thread (upstream 36f85026/02e490e0 — a crash report with the real cause instead of frozen LODs) |
+| `VOXY_IRIS_PACK_PREDICATE=mode` | hybrid | Iris 'pack enabled' predicate that also selects gbuffer-inject vs composite on Metal: `hybrid` = pack loaded AND pipeline null-or-IrisRenderingPipeline, `quick` = pre-sync `Iris.isPackInUseQuick()`, `current` = pure upstream 1952d3df (drops LODs under Iris's vanilla fallback) |
 | `VOXY_FRAME_TIMING=1` | off | Print `[Metal-TIMING]` (hotWait / drawFlushWait / bridgeWait / jniDrawLoop / lightmapSync / resync) and `[Metal-VXTIMING]` (GL-side vx passes, GPU via async timer queries) every 600 frames. Close F3 while sampling: vanilla's GPU-utilization timer owns `GL_TIME_ELAPSED` |
 | `VOXY_VX_TIMING=0` | off | With `VOXY_FRAME_TIMING=1`: keep only `[Metal-TIMING]` (no GL queries) |
 | `VOXY_VX_TIMING_GPU=0` | off | `[Metal-VXTIMING]` CPU brackets only |
