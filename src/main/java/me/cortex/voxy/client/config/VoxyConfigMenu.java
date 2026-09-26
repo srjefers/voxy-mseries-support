@@ -19,6 +19,8 @@ import net.minecraft.resources.Identifier;
 public class VoxyConfigMenu implements ConfigEntryPoint {
     @Override
     public void registerConfigLate(ConfigBuilder B) {
+        if (!VoxyCommon.isAvailable()) return;//Dont even register the config if its not avalible (upstream cff48664)
+
         var CFG = VoxyConfig.CONFIG;
 
         var cc = B.registerModOptions("voxy", "Voxy", VoxyCommon.MOD_VERSION)
