@@ -280,8 +280,11 @@ public class AsyncNodeManager {
             if (job == null)
                 break;
             workDone++;
-            this.manager.processChildChange(job.key, job.getNonEmptyChildren());
-            job.release();
+            try {
+                this.manager.processChildChange(job.key, job.getNonEmptyChildren());
+            } finally {
+                job.release();//fork: a throw here (worker death) used to strand this section ref, keeping the world 'used'
+            }
         } while (true);
 
 

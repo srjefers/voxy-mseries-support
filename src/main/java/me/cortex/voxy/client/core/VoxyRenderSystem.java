@@ -947,11 +947,30 @@ public class VoxyRenderSystem {
     }
 
     public void shutdown() {
+        try {
+            this.shutdown0();
+        } catch (Throwable t) {
+            //Fork: an Error (or anything escaping the per-step catches) must not skip the world release, or
+            // VoxyInstance.shutdown spins forever on isWorldUsed.
+            Logger.error("Error during render shutdown, releasing the world anyway", t);
+            if (!this.worldReleased) {
+                this.worldReleased = true;
+                this.worldIn.releaseRef();
+            }
+            throw t;
+        }
+    }
+
+    private boolean worldReleased;
+
+    private void shutdown0() {
         Logger.info("Flushing download stream");
         try {//fork: a throwing callback (dead node-manager worker) must not abort the teardown that follows
             DownloadStream.INSTANCE.flushWaitClear();
         } catch (Exception e) {
             Logger.error("Error flushing download stream", e);
+            //leftover frames would run stale callbacks against this (dead) renderer, possibly in the next session
+            try { DownloadStream.INSTANCE.waitDiscard(); } catch (Exception e2) { Logger.error("Error discarding download stream", e2); }
         }
         // World-rejoin fix: UploadStream is a process-lifetime singleton but
         // its queued copies target the world-lifetime buffers freed below.
@@ -1031,6 +1050,8 @@ public class VoxyRenderSystem {
             DownloadStream.INSTANCE.flushWaitClear();
         } catch (Exception e) {
             Logger.error("Error flushing download stream", e);
+            //leftover frames would run stale callbacks against this (dead) renderer, possibly in the next session
+            try { DownloadStream.INSTANCE.waitDiscard(); } catch (Exception e2) { Logger.error("Error discarding download stream", e2); }
         }
         // Anything queued into the upload stream DURING the teardown above
         // targets buffers that may already be freed — drop those entries
@@ -1044,6 +1065,7 @@ public class VoxyRenderSystem {
         }
 
         //Release hold on the world
+        this.worldReleased = true;
         this.worldIn.releaseRef();
         Logger.info("Render shutdown completed");
     }
