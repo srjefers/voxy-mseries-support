@@ -112,6 +112,12 @@ public final class MetalVxResolvePass {
                 uniform sampler2DRect uVxDepth;
                 uniform int uVxDepthIsWindow;
                 """);
+        final boolean floorSkipsBehindWater = !translucent && !SKY_FLOOR_UNDERWATER;
+        if (floorSkipsBehindWater) {
+            // LOD water-surface depth (the trans bridge, incl. the ghost depth kept for culled
+            // near water) so the sky-light floor below can skip seafloors seen through water.
+            sb.append("uniform sampler2DRect uVxTransDepth;\nuniform int uVxHasTransDepth;\n");
+        }
         if (WATER_RING_PARITY || me.cortex.voxy.client.iris.VxFogCap.enabled()) {
             // Live near-cull ring radius for the water ring parity injection
             // AND the vx fog cap's live far-plane proxy (ring + margin ==
@@ -150,9 +156,25 @@ public final class MetalVxResolvePass {
             try { skyFloor = Math.max(0, Math.min(15, Integer.parseInt(skyFloorEnv.trim()))) / 15.0f; }
             catch (NumberFormatException ignored) {}
         }
-        String skyFloorLine = skyFloor > 0.0f
-                ? String.format("vxLight.y = max(vxLight.y, %.5f);\n", skyFloor)
-                : "";
+        // 2026-09-26: the floor was written for the translucent (water) program; since the
+        // pack-shaded opaque resolve became the default (5481ed12) it also lifted every opaque
+        // LOD pixel, including seafloors 20+ blocks under water (stored sky ~0-3 -> 12), so far
+        // water lost its depth darkening and the bottom showed through. The opaque program now
+        // skips pixels with LOD water in front of them; VOXY_VX_SKY_FLOOR_UNDERWATER=1 restores
+        // flooring them too.
+        String skyFloorLine;
+        if (skyFloor <= 0.0f) {
+            skyFloorLine = "";
+        } else if (floorSkipsBehindWater) {
+            skyFloorLine = String.format(java.util.Locale.ROOT,
+                    "{ float vxTD = (uVxHasTransDepth == 1) ? dot(texture(uVxTransDepth, vxTexel).rgb, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0)) : 0.0;\n"
+                    + "  if (!(vxTD > 0.0 && vxTD < 0.9999995 && vxTD < vxD)) vxLight.y = max(vxLight.y, %.5f); }\n", skyFloor);
+        } else {
+            skyFloorLine = String.format(java.util.Locale.ROOT, "vxLight.y = max(vxLight.y, %.5f);\n", skyFloor);
+        }
+        if (floorSkipsBehindWater && skyFloor > 0.0f) {
+            Logger.info("[Metal-LODTEST] vx sky-light floor skips opaque LOD pixels behind LOD water (seafloors keep their stored sky light); VOXY_VX_SKY_FLOOR_UNDERWATER=1 floors them too");
+        }
         if (skyFloor > 0.0f) {
             Logger.info("MetalVxResolvePass: VOXY_VX_SKY_FLOOR active, sky light floored to " + skyFloor
                     + " (" + skyFloorEnv + "/15)");
@@ -806,6 +828,8 @@ public final class MetalVxResolvePass {
         // needle-miss builds (guarded at use). Prog is destroyed and rebuilt by
         // the pipeline-generation path, so no reset() changes are needed.
         int uRingCull = -1;
+        // Opaque program: LOD water depth for the behind-water sky-floor test (unit 4), or -1.
+        int uHasTransDepth = -1;
         int samplerCount;
         int ubo, uboSize;
         long uboScratch;
@@ -850,6 +874,8 @@ public final class MetalVxResolvePass {
     // while depth kept working on unit 3, i.e. the dark/opaque/textureless
     // LOD water root cause. See runOne's draw-instant probe notes.
     private static final boolean SAMPLER_FIX = !"0".equals(System.getenv("VOXY_VX_SAMPLER_FIX"));
+    /** 2026-09-26 kill switch: 1 = apply the sky-light floor to opaque LOD pixels behind LOD water too (pre-fix). */
+    private static final boolean SKY_FLOOR_UNDERWATER = "1".equals(System.getenv("VOXY_VX_SKY_FLOOR_UNDERWATER"));
     private static final float[] TRANS_CLEAR_ZERO = new float[4];
 
     // Sky-mirror dim factor for LOD water kept as near fallback inside the
@@ -1152,6 +1178,10 @@ public final class MetalVxResolvePass {
         setTexUnit(prog, "uVxTint", 1);
         setTexUnit(prog, "uVxMisc", 2);
         setTexUnit(prog, "uVxDepth", 3);
+        if (!translucent) {
+            setTexUnit(prog, "uVxTransDepth", 4);
+            p.uHasTransDepth = glGetUniformLocation(prog, "uVxHasTransDepth");
+        }
         p.uDepthIsWindow = glGetUniformLocation(prog, "uVxDepthIsWindow");
         // Match the working VxIrisSideChannel depth convention: the bridge packs the
         // LOD depth needing a *0.5+0.5 window remap unless VOXY_LOD_METAL_NDC is set.
@@ -1268,7 +1298,7 @@ public final class MetalVxResolvePass {
             if (!sc.resolve(oP0, opaqueDepthRect, fbw, fbh, ndc)) return;
             if (DUMP_OUT && dumpFrame % 300 == 100) { sc.dumpDepthStats(fbw, fbh); dumpAoStats(ipipe, sc, fbw, fbh); }
             int[] opaqueTargets = data.resolveOpaqueTargetsNow(ipipe);
-            runOne(data, opaque, oP0, oP1, oP2, opaqueDepthRect, opaqueTargets, fbw, fbh, false, 0);
+            runOne(data, opaque, oP0, oP1, oP2, opaqueDepthRect, opaqueTargets, fbw, fbh, false, 0, transDepthRect);
 
             if (trans != null && tP0 != 0 && transDepthRect != 0) {
                 sc.resolveTrans(tP0, transDepthRect, fbw, fbh, ndc);
@@ -1484,12 +1514,19 @@ public final class MetalVxResolvePass {
     private static void runOne(IrisVoxyRenderPipelineData data, Prog p,
                                int plane0, int plane1, int plane2, int depthRect,
                                int[] targets, int fbw, int fbh, boolean blend, int ssrMirrorTex) {
+        runOne(data, p, plane0, plane1, plane2, depthRect, targets, fbw, fbh, blend, ssrMirrorTex, 0);
+    }
+
+    private static void runOne(IrisVoxyRenderPipelineData data, Prog p,
+                               int plane0, int plane1, int plane2, int depthRect,
+                               int[] targets, int fbw, int fbh, boolean blend, int ssrMirrorTex,
+                               int floorTransDepthRect) {
         // VOXY_FRAME_TIMING=1 GL-side span: the pack's voxy_opaque (blend=false,
         // the 5481ed12 default cost) or voxy_translucent fullscreen resolve.
         int span = blend ? VxTiming.RESOLVE_TRANS : VxTiming.RESOLVE_OPAQUE;
         VxTiming.begin(span);
         try {
-            runOne0(data, p, plane0, plane1, plane2, depthRect, targets, fbw, fbh, blend, ssrMirrorTex);
+            runOne0(data, p, plane0, plane1, plane2, depthRect, targets, fbw, fbh, blend, ssrMirrorTex, floorTransDepthRect);
         } finally {
             VxTiming.end(span);
         }
@@ -1497,7 +1534,8 @@ public final class MetalVxResolvePass {
 
     private static void runOne0(IrisVoxyRenderPipelineData data, Prog p,
                                 int plane0, int plane1, int plane2, int depthRect,
-                                int[] targets, int fbw, int fbh, boolean blend, int ssrMirrorTex) {
+                                int[] targets, int fbw, int fbh, boolean blend, int ssrMirrorTex,
+                                int floorTransDepthRect) {
         if (p == null || targets == null || targets.length == 0) return;
         if (plane0 == 0 || depthRect == 0) return;
         boolean dirty = p.attached.length != targets.length;
@@ -1537,6 +1575,13 @@ public final class MetalVxResolvePass {
         glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_RECTANGLE, plane1);
         glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_RECTANGLE, plane2);
         glActiveTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_RECTANGLE, depthRect);
+        int prevUnit4Rect = -1;
+        if (p.uHasTransDepth >= 0) {
+            glActiveTexture(GL_TEXTURE4);
+            prevUnit4Rect = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
+            glBindTexture(GL_TEXTURE_RECTANGLE, floorTransDepthRect);
+            glUniform1i(p.uHasTransDepth, floorTransDepthRect != 0 ? 1 : 0);
+        }
         glActiveTexture(GL_TEXTURE0);
         // Iris leaves per-unit GL SAMPLER OBJECTS bound from its own passes; a
         // sampler with mip filtering makes a mip-less RECT texture INCOMPLETE,
@@ -1552,8 +1597,8 @@ public final class MetalVxResolvePass {
         // VOXY_VX_SAMPLER_FIX=0 reverts.
         int[] prevSamplers = null;
         if (SAMPLER_FIX) {
-            prevSamplers = new int[4];
-            for (int u = 0; u < 4; u++) {
+            prevSamplers = new int[5];//unit 4: the opaque program's LOD water depth
+            for (int u = 0; u < 5; u++) {
                 glActiveTexture(GL_TEXTURE0 + u);
                 prevSamplers[u] = glGetInteger(org.lwjgl.opengl.GL33C.GL_SAMPLER_BINDING);
                 org.lwjgl.opengl.GL33C.glBindSampler(u, 0);
@@ -1611,7 +1656,7 @@ public final class MetalVxResolvePass {
         if (!blend) VxTiming.endCoverage();
         if (prevSamplers != null) {
             // Iris assumes its sampler-object bindings persist across our hook.
-            for (int u = 0; u < 4; u++) org.lwjgl.opengl.GL33C.glBindSampler(u, prevSamplers[u]);
+            for (int u = 0; u < prevSamplers.length; u++) org.lwjgl.opengl.GL33C.glBindSampler(u, prevSamplers[u]);
         }
         // Both stages: the translucent program had never had a runtime readback
         // (the old !blend gate), which left the water-resolve output unmeasured.
@@ -1627,6 +1672,10 @@ public final class MetalVxResolvePass {
         for (int i = 0; i < p.samplerCount; i++) {
             glActiveTexture(GL_TEXTURE0 + 6 + i);
             glBindTexture(GL_TEXTURE_2D, 0);
+        }
+        if (prevUnit4Rect >= 0) {
+            glActiveTexture(GL_TEXTURE4);
+            glBindTexture(GL_TEXTURE_RECTANGLE, prevUnit4Rect);
         }
         glActiveTexture(GL_TEXTURE0);
     }
