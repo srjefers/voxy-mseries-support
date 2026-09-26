@@ -5,6 +5,7 @@ import com.google.gson.reflect.TypeToken;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonWriter;
 import me.cortex.voxy.common.Logger;
+import me.cortex.voxy.commonImpl.VoxyCommon;
 import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.BufferedReader;
@@ -101,6 +102,9 @@ public class Serialization {
         int count = 0;
         outer:
         for (var clzName : clazzs) {
+            if (VoxyCommon.IS_DEDICATED_SERVER&&clzName.startsWith("me.cortex.voxy.client")) {
+                continue;//Dont load stuff from client path when were on a dedicated server
+            }
             if (!clzName.toLowerCase(Locale.ROOT).contains("config")) {
                 continue;//Only load classes that contain the word config
             }
@@ -147,7 +151,7 @@ public class Serialization {
                         break;
                     }
                 }
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 Logger.error("Error while setting up config serialization", e);
             }
         }
