@@ -72,7 +72,14 @@ def gitCommitHash = { ->
         if (result.getResult().get().getExitValue() != 0) {
             return "<UnknownCommit>";
         } else {
-            return result.standardOutput.asText.get().strip();
+            //Fork: a jar built from uncommitted tracked changes must not carry a clean-looking stamp
+            // (a 2026-09-26 test jar said dc8c7e32 but held two later commits' worth of changes).
+            ExecOutput dirty = providers.exec {
+                commandLine = ['git', 'status', '--porcelain', '--untracked-files=no']
+                ignoreExitValue = true
+            }
+            def hash = result.standardOutput.asText.get().strip()
+            return dirty.standardOutput.asText.get().strip().isEmpty() ? hash : hash + "-dirty"
         }
     } catch (Exception e) {
         e.printStackTrace()
