@@ -25,10 +25,11 @@ echo "Using JAVA_HOME=${JAVA_HOME}"
 
 cmake -S "${HERE}" -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-  -DCMAKE_OSX_ARCHITECTURES=arm64
+  -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET="${VOXY_MACOS_MIN:-13.0}"
 
 cmake --build "${BUILD_DIR}" --config "${BUILD_TYPE}" --parallel
 
 echo
-echo "Built libvoxy_metal.dylib for ${BUILD_TYPE}."
+echo "Built libvoxy_metal.dylib for ${BUILD_TYPE} (macOS deployment target ${VOXY_MACOS_MIN:-13.0})."
 echo "Installed to: src/main/resources/natives/macos-arm64/libvoxy_metal.dylib"
