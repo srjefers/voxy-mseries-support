@@ -27,6 +27,7 @@
     "minecraft.MixinGlDebug",
     "minecraft.MixinLevelRenderer",
     "minecraft.MixinLevelRendererBridgeDemo",
+    "minecraft.MixinLightTexture",
     "minecraft.MixinMinecraft",
     "minecraft.MixinRenderSystem",
     "minecraft.MixinWindow",

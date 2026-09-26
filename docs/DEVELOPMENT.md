@@ -47,6 +47,7 @@ The loop that produced every fix in this port:
 | `[Metal-VIEWPORT]` | Warn-once: `GL_VIEWPORT` disagreed with MC's main RT (leaked pass viewport) |
 | `[Metal-TIMING]` | `VOXY_FRAME_TIMING=1`: per-frame avg of the three Metal-side CPU waits (hotWait / drawFlushWait / bridgeWait) + the per-draw JNI loop, every 600 frames |
 | `[Metal-VXTIMING]` | `VOXY_FRAME_TIMING=1`: same window, GL side — per-pass `gpuAvg/gpuMax\|cpuAvg/cpuMax` ms for the vx-contract passes (scOpaque/scTrans/scAbyss, inject*, resolve*, acquire, composite, lightmap; GPU via async `GL_TIME_ELAPSED`) + `lodCoverage=` (% of framebuffer pixels that are opaque LOD, from a `GL_SAMPLES_PASSED` query). One-shot `GL-side vx pass timing ON` line at first frame |
+| `[Metal] lightmap sync throttled to <mode>` | One-shot: whether the MC-lightmap readback runs only on lightmap rewrites (`lightmap-version`, default) or every frame (`VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1`); `[Metal-LayerB]` carries `lightmapSync=<run>/<skipped>` per window, `[Metal-TIMING]` its ms |
 | `IOSurfaceBridgeCompositor` | Composite mode (blit vs shader) and target FBO |
 
 ## Key environment variables
@@ -64,6 +65,7 @@ development:
 | `VOXY_NO_DEPTH_BOUND=1` | Kill switch: disable the chunk-bound depth mask |
 | `VOXY_WATER_ANIMATE=0` | Kill switch: freeze LOD water animation |
 | `VOXY_HOT_SERIALIZE=1` | Submit+wait per traversal iteration (race diagnostic, slow) |
+| `VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1` | Kill switch: readback MC's lightmap every frame instead of only when MC rewrote it (client tick) |
 | `VOXY_FOG_SMOOTH_MS` | Fog colour smoothing constant (0 disables) |
 | `VOXY_FRAME_TIMING=1` | Per-stage frame cost probe: `[Metal-TIMING]` (Metal-side waits) + `[Metal-VXTIMING]` (GL-side vx passes, async timer queries). Zero cost when unset |
 | `VOXY_VX_TIMING=0` | Kill switch: with `VOXY_FRAME_TIMING=1`, keep only `[Metal-TIMING]` (no GL queries, no VXTIMING line) — pre-probe behaviour |

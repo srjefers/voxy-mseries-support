@@ -717,12 +717,17 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             double windowFps = this.fpsWindowStartNs != 0
                     ? 600.0 / ((nowNs - this.fpsWindowStartNs) / 1e9) : -1;
             this.fpsWindowStartNs = nowNs;
+            // lightmapSync=<readbacks>/<skipped>: MC-lightmap glGetTexImage
+            // readbacks run vs skipped-as-unchanged this window (the per-tick
+            // throttle; VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1 → skipped=0).
             Logger.info(String.format(
-                    "[Metal-LayerB f=%d] fps=%.1f topNodeCount=%d firstDispatchSize=%d renderList.sectionCount=%d cmdGenDispatch=(%d,%d,%d) draws opaque=%d translucent=%d temporal=%d",
+                    "[Metal-LayerB f=%d] fps=%.1f topNodeCount=%d firstDispatchSize=%d renderList.sectionCount=%d cmdGenDispatch=(%d,%d,%d) draws opaque=%d translucent=%d temporal=%d lightmapSync=%d/%d",
                     this.metalFrame, windowFps, topNodeCount, firstDispatchSize,
                     renderListSectionCount,
                     cmdGenDispatchX, cmdGenDispatchY, cmdGenDispatchZ,
-                    opaqueDrawCount, translucentDrawCount, temporalOpaqueDrawCount));
+                    opaqueDrawCount, translucentDrawCount, temporalOpaqueDrawCount,
+                    me.cortex.voxy.client.core.rendering.util.LightMapHelper.takeWindowSyncs(),
+                    me.cortex.voxy.client.core.rendering.util.LightMapHelper.takeWindowSkips()));
             // VOXY_FRAME_TIMING=1 companion line: per-frame averages of the
             // three synchronous waits + the per-draw JNI loop over the same
             // 600-frame window, so the 120fps work can rank batching vs ICB
@@ -730,13 +735,19 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
                 Logger.info(String.format(java.util.Locale.ROOT,
                         "[Metal-TIMING f=%d] per-frame avg over 600: hotWait=%.2fms"
-                        + " drawFlushWait=%.2fms bridgeWait=%.2fms jniDrawLoop=%.2fms draws=%d",
+                        + " drawFlushWait=%.2fms bridgeWait=%.2fms jniDrawLoop=%.2fms draws=%d"
+                        + " lightmapSync=%.3fms (%d readbacks, %.3fms each)",
                         this.metalFrame,
                         me.cortex.voxy.client.core.util.FrameTiming.hotReadbackNs / 600.0 / 1e6,
                         me.cortex.voxy.client.core.util.FrameTiming.drawCallFlushNs / 600.0 / 1e6,
                         me.cortex.voxy.client.core.util.FrameTiming.bridgeFlushNs / 600.0 / 1e6,
                         me.cortex.voxy.client.core.util.FrameTiming.jniDrawLoopNs / 600.0 / 1e6,
-                        me.cortex.voxy.client.core.util.FrameTiming.jniDrawCount / 600));
+                        me.cortex.voxy.client.core.util.FrameTiming.jniDrawCount / 600,
+                        me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncNs / 600.0 / 1e6,
+                        me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncCount,
+                        me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncCount == 0 ? 0.0
+                            : me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncNs
+                              / (double) me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncCount / 1e6));
                 me.cortex.voxy.client.core.util.FrameTiming.reset();
                 // Same gate, same window: the GL-side vx-contract pass line
                 // (VxIrisSideChannel / MetalVxResolvePass / VxContractInjector /

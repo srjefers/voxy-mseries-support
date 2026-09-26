@@ -47,7 +47,10 @@ import org.lwjgl.system.MemoryUtil;
  * active {@link RenderEncoder} alongside a LINEAR / CLAMP_TO_EDGE sampler
  * that matches MC's lightmap sampling. Lazy-allocated; gated by frame id
  * so the three terrain passes (opaque + temporal + translucent) share a
- * single readback.
+ * single readback, and (2026-09-25) by {@link McLightmapVersion} so the
+ * readback only runs on frames where MC actually rewrote the lightmap
+ * (client tick rate) — {@code VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1} restores the
+ * per-frame readback.
  */
 public class LightMapHelper {
 
@@ -60,6 +63,20 @@ public class LightMapHelper {
     private static long stagingAddr;
     private static int lastSyncedFrame = -1;
     private static boolean lightmapSizeWarned = false;
+
+    /**
+     * VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1 — kill switch: readback MC's lightmap
+     * every frame (the pre-throttle behaviour) instead of only on frames
+     * where MC rewrote it. Read once at class load so the guard folds.
+     */
+    private static final boolean SYNC_EVERY_FRAME =
+            "1".equals(System.getenv("VOXY_LIGHTMAP_SYNC_EVERY_FRAME"));
+    /** {@link McLightmapVersion} value the mirror currently holds; -1 = never synced. */
+    private static int lastSyncedVersion = -1;
+    private static boolean throttleModeLogged = false;
+    /** Per-[Metal-LayerB]-window counters: readbacks run vs skipped as unchanged. */
+    private static int windowSyncs;
+    private static int windowSkips;
 
     public static void bind(int lightingIndex) {
         glBindSampler(lightingIndex, 0);
@@ -117,12 +134,46 @@ public class LightMapHelper {
     private static void syncFromMc(int frameId) {
         if (frameId == lastSyncedFrame) return;
         lastSyncedFrame = frameId;
+        if (!throttleModeLogged) {
+            throttleModeLogged = true;
+            me.cortex.voxy.common.Logger.info("[Metal] lightmap sync throttled to "
+                    + (SYNC_EVERY_FRAME
+                        ? "every-frame (VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1)"
+                        : "lightmap-version (readback only on frames where"
+                          + " LightTexture.updateLightTexture rewrote the texture;"
+                          + " VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1 restores per-frame)"));
+        }
+
+        // Throttle (2026-09-25): MC only re-renders its lightmap when
+        // LightTexture.tick() armed the update flag (client tick, ~20 Hz), yet
+        // this readback ran every frame (60-120 Hz). A glGetTexImage of a
+        // texture the GPU just wrote forces Apple's GL driver to drain every
+        // command queued ahead of it (Iris shadow pass, BSL setup) before it
+        // can copy — a hidden per-frame CPU-GPU sync at the SOLID head. Gate on
+        // the mixin-maintained version so the drain happens at most once per
+        // lightmap rewrite; the mirror keeps the last good copy in between.
+        // The frame-id gate above stays primary so the three terrain passes
+        // still share a single check per frame.
+        if (!SYNC_EVERY_FRAME) {
+            int version = McLightmapVersion.get();
+            if (version == lastSyncedVersion) {
+                windowSkips++;
+                return;
+            }
+            lastSyncedVersion = version;
+        }
+        windowSyncs++;
+        long tSync = me.cortex.voxy.client.core.util.FrameTiming.ENABLED ? System.nanoTime() : 0L;
+
         // VOXY_FRAME_TIMING=1 GL-side span (the one sanctioned per-frame readback).
         me.cortex.voxy.client.core.util.VxTiming.begin(me.cortex.voxy.client.core.util.VxTiming.LIGHTMAP);
         try {
             syncFromMc0();
         } finally {
             me.cortex.voxy.client.core.util.VxTiming.end(me.cortex.voxy.client.core.util.VxTiming.LIGHTMAP);
+            if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
+                me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncNs += System.nanoTime() - tSync;
+            }
         }
     }
 
@@ -187,6 +238,26 @@ public class LightMapHelper {
             glPixelStorei(GL_PACK_ALIGNMENT, prevAlign);
             glBindTexture(GL_TEXTURE_2D, prevBinding);
             glActiveTexture(prevActive);
+            if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
+                me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncCount++;
+            }
         }
+    }
+
+    /**
+     * Readbacks run in the current [Metal-LayerB] window (AbstractRenderPipeline
+     * prints and resets it every 600 frames).
+     */
+    public static int takeWindowSyncs() {
+        int v = windowSyncs;
+        windowSyncs = 0;
+        return v;
+    }
+
+    /** Readbacks skipped as "lightmap unchanged" in the current window. */
+    public static int takeWindowSkips() {
+        int v = windowSkips;
+        windowSkips = 0;
+        return v;
     }
 }
