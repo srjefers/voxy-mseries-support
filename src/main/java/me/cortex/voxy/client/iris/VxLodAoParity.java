@@ -67,6 +67,7 @@ public final class VxLodAoParity {
     private static final String VX_AO_MARK_B = "vxDepthTexOpaque";
     private static final String RADIUS_NEEDLE = ", 1.5, blueNoise, true)";
     private static final String POW_NEEDLE = "ao = pow(ao, 2.0);";
+    private static final String APPLIED_MARK = "voxy: LOD AO radius parity";
 
     /** @return patched lines, or null when this file carries no vx AO line. */
     public static ImmutableList<String> patch(ImmutableList<String> lines, String pathLabel) {
@@ -78,6 +79,10 @@ public final class VxLodAoParity {
         }
         if (idx < 0) return null;
         String aoLine = lines.get(idx);
+        // Iris serves the same expanded text through more than one path
+        // (program/deferred.glsl, world0/deferred.vsh/.fsh): already patched
+        // text is not a failure.
+        if (aoLine.contains(APPLIED_MARK)) return null;
         boolean radiusOk = aoLine.contains(RADIUS_NEEDLE);
         int powIdx = -1;
         for (int j = idx + 1; j < Math.min(idx + 3, lines.size()); j++) {
@@ -93,10 +98,15 @@ public final class VxLodAoParity {
             return null;
         }
         List<String> out = new ArrayList<>(lines);
-        String radius = String.format(Locale.ROOT, ", %.4f, blueNoise, true)", RADIUS);
-        out.set(idx, aoLine.replace(RADIUS_NEEDLE, radius + " // voxy: LOD AO radius parity (VOXY_VX_LOD_AO_PARITY=0 reverts)"));
-        String pow = String.format(Locale.ROOT, "ao = pow(ao, %.4f);", POW);
-        out.set(powIdx, lines.get(powIdx).replace(POW_NEEDLE, pow + " // voxy: LOD AO pow parity"));
+        // Block comments INSIDE the expression: the original statement's ';'
+        // follows the needle on the same line, and a trailing '//' comment
+        // swallowed it (2026-09-25 21:50 run: pack failed to compile, Iris
+        // disabled shaders). Line count unchanged either way.
+        String radius = String.format(Locale.ROOT, ", %.4f /* %s: VOXY_VX_LOD_AO_PARITY=0 reverts */, blueNoise, true)",
+                RADIUS, APPLIED_MARK);
+        out.set(idx, aoLine.replace(RADIUS_NEEDLE, radius));
+        String pow = String.format(Locale.ROOT, "ao = pow(ao, %.4f); /* voxy: LOD AO pow parity */", POW);
+        out.set(powIdx, lines.get(powIdx).replace(POW_NEEDLE, pow));
         if (!loggedApply) {
             loggedApply = true;
             Logger.info(String.format(Locale.ROOT,
