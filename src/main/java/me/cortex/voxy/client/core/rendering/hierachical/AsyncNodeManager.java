@@ -41,6 +41,7 @@ import static org.lwjgl.opengl.GL43C.*;
 //An "async host" for a NodeManager, has specific synchonius entry and exit points
 // this is done off thread to reduce the amount of work done on the render thread, improving frame stability and reducing runtime overhead
 public class AsyncNodeManager {
+    private static final boolean VERIFY_NODE_MANAGER = me.cortex.voxy.commonImpl.VoxyCommon.isVerificationFlagOn("verifyNodeManager");
     private static final VarHandle RESULT_HANDLE;
     private static final VarHandle RESULT_CACHE_1_HANDLE;
     private static final VarHandle RESULT_CACHE_2_HANDLE;
@@ -58,6 +59,21 @@ public class AsyncNodeManager {
     public final int maxNodeCount;
     private final long geometryCapacity;
     private volatile boolean running = true;
+    private volatile Throwable uncaughtException;
+    //Upstream 36f85026/02e490e0: a dying worker thread rethrows its exception on the render thread
+    // (crash report with the real cause) instead of leaving LODs frozen behind 'Not running'.
+    // VOXY_WORKER_RETHROW=0 restores the pre-sync behaviour (log, thread exits, render thread continues).
+    public static final boolean WORKER_RETHROW = !"0".equals(System.getenv("VOXY_WORKER_RETHROW"));
+    //Upstream 36f85026: cap the geometry uploaded per async loop run (~1 MB) to smooth frame
+    // spikes; VOXY_NODE_UPLOAD_CAP_KB tunes it (0 = uncapped, the pre-sync behaviour).
+    private static final long UPLOAD_CAP_BYTES = parseUploadCap();
+    private static long parseUploadCap() {
+        String v = System.getenv("VOXY_NODE_UPLOAD_CAP_KB");
+        long kb = 1_000L;
+        if (v != null && !v.isBlank()) { try { kb = Long.parseLong(v.trim()); } catch (NumberFormatException ignored) {} }
+        Logger.info("[Voxy-SYNC] async node upload cap: " + (kb <= 0 ? "OFF (VOXY_NODE_UPLOAD_CAP_KB=0)" : kb + " KB/run (upstream 36f85026; VOXY_NODE_UPLOAD_CAP_KB tunes, 0 = off)"));
+        return kb <= 0 ? Long.MAX_VALUE : kb << 10;
+    }
 
     private final NodeManager manager;
     private final BasicAsyncGeometryManager geometryManager;
@@ -96,8 +112,18 @@ public class AsyncNodeManager {
                 }
             } catch (Exception e) {
                 Logger.error("Critical error occurred in async processor, things will be broken", e);
+                if (WORKER_RETHROW) throw e;
             }
         });
+        if (WORKER_RETHROW) {
+            this.thread.setUncaughtExceptionHandler((t,e)->{
+                if (e == null) {
+                    e = new RuntimeException("null throwable");
+                }
+                this.uncaughtException = e;
+                this.running = false;
+            });
+        }
         this.thread.setName("Async Node Manager");
         this.thread.setDaemon(true);// don't block JVM shutdown if this thread is stuck
 
@@ -260,12 +286,17 @@ public class AsyncNodeManager {
 
         //Limit uploading as well as by geometry capacity being available
         // must have 50 mb of free geometry space to upload
-        for (int limit = 0; limit < 300 && ((this.geometryCapacity-this.geometryManager.getGeometryUsedBytes())>50_000_000L); limit++) {
+        //Limit to X geometry for each loop run to try smooth things more (upstream 36f85026)
+        long estimatedGeometryUploadAmount = 0;
+        for (int limit = 0; limit < 300 && ((this.geometryCapacity-this.geometryManager.getGeometryUsedBytes())>50_000_000L) && estimatedGeometryUploadAmount<UPLOAD_CAP_BYTES; limit++) {
             var job = this.geometryUpdateQueue.poll();
             if (job == null)
                 break;
             workDone++;
             this.manager.processGeometryResult(job);
+            if (job.geometryBuffer!=null) {
+                estimatedGeometryUploadAmount += job.geometryBuffer.size;
+            }
         }
 
         while (true) {//Process all request batches
@@ -497,11 +528,18 @@ public class AsyncNodeManager {
         if (!RESULT_HANDLE.compareAndSet(this, null, results)) {
             throw new IllegalArgumentException("Should always have null");
         }
+
+        if (VERIFY_NODE_MANAGER) {
+            this.manager.verifyIntegrity();
+        }
     }
 
     private IntConsumer tlnAddCallback; private IntConsumer tlnRemoveCallback;
     //Render thread synchronization
     public void tick(IGpuBuffer nodeBuffer, NodeCleaner cleaner) {//TODO: dont pass nodeBuffer here??, do something else thats better
+        if (this.uncaughtException != null) {
+            throw new RuntimeException(this.uncaughtException);//Propagate internal exception
+        }
         var results = (SyncResults)RESULT_HANDLE.getAndSet(this, null);//Acquire the results
         if (results == null) {//There are no new results to process, return
             return;
@@ -653,7 +691,12 @@ public class AsyncNodeManager {
     private final LongOpenHashSet tlnRem = new LongOpenHashSet();
 
     private void addWork() {
-        if (!this.running) throw new IllegalStateException("Not running");
+        if (!this.running) {
+            if (this.uncaughtException != null) {
+                throw new RuntimeException(this.uncaughtException);//Propagate internal exception
+            }
+            throw new IllegalStateException("Not running");
+        }
         if (this.workCounter.getAndIncrement() == 0) {
             LockSupport.unpark(this.thread);
         }

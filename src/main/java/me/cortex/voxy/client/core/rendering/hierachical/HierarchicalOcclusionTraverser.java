@@ -23,6 +23,8 @@ import me.cortex.voxy.common.world.WorldEngine;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
+import java.util.List;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -625,5 +627,13 @@ public class HierarchicalOcclusionTraverser {
         this.scratchQueueA.free();
         this.scratchQueueB.free();
         this.hizSampler.close();
+    }
+
+    //Upstream 36f85026: top-level-node count on the F3 line when the TLN table is over half full
+    public void addDebug(List<String> debug) {
+        //Conditionally add debug: only once the top-level node table is over half full
+        if (this.topNodeCount>this.idx2topNodeMapping.length/2) {
+            debug.add("TLN#: " + this.topNodeCount);
+        }
     }
 }

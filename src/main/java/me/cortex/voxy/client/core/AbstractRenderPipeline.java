@@ -1224,6 +1224,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
 
     public void addDebug(List<String> debug) {
         this.sectionRenderer.addDebug(debug);
+        this.traversal.addDebug(debug);
         RenderStatistics.addDebug(debug);
     }
 
