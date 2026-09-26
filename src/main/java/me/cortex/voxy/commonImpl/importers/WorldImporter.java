@@ -269,7 +269,7 @@ public class WorldImporter implements IDataImporter {
                 }
             }
             this.service.blockTillEmpty();
-            while (this.chunksProcessed.get() != this.totalChunks.get() && this.isRunning) {
+            while (this.chunksProcessed.get() < this.totalChunks.get() && this.isRunning) {//fork: '<' so a double-accounted chunk cannot wedge the gate
                 Thread.yield();
                 try {
                     Thread.sleep(10);
@@ -391,8 +391,8 @@ public class WorldImporter implements IDataImporter {
                                         Logger.error("Error decompressing chunk data");
                                     } else {
                                         var nbt = NbtIo.read(decompressedData);
-                                        accounted = true;
                                         this.importChunkNBT(nbt, x, z);
+                                        accounted = true;//importChunkNBT accounted for it (processed++ or total--)
                                     }
                                 }
                             } catch (Exception e) {

@@ -95,7 +95,11 @@ public class VoxyClient implements ClientModInitializer {
             }
             try {
                 FileOutputStream fis = new FileOutputStream(vf.resolve("voxy.lock").toFile());
-                EXCLUSIVE_LOCK = fis.getChannel().lock(0, Long.MAX_VALUE, false);
+                EXCLUSIVE_LOCK = fis.getChannel().tryLock(0, Long.MAX_VALUE, false);//fork: lock() blocked client init forever in a 2nd instance
+                if (EXCLUSIVE_LOCK == null) {
+                    fis.close();
+                    throw new IOException("voxy.lock is held by another game instance");
+                }
             } catch (NonWritableChannelException | IOException e) {
                 //If some error write to log and unsupport
                 Logger.error("Failed to acquire exclusive voxy lock file, mod will be disabled");

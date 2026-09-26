@@ -29,7 +29,14 @@ public class ModelBakerySubsystem {
     private volatile Throwable processingThreadException;
     public ModelBakerySubsystem(Mapper mapper) {
         this.mapper = mapper;
-        this.factory = new ModelFactory(mapper, this.storage);
+        try {
+            this.factory = new ModelFactory(mapper, this.storage);
+        } catch (RuntimeException | Error e) {
+            //A11 (fork): the store's model atlas (~535 MB Shared on Metal) is built by the field initializer; a
+            // failed factory build leaked it because the renderer's cleanup stack never saw this subsystem.
+            try { this.storage.free(); } catch (Throwable t) { me.cortex.voxy.common.Logger.error("Error freeing model store after a failed bakery build", t); }
+            throw e;
+        }
         this.processingThread = new Thread(()->{//TODO replace this with something good/integrate it into the async processor so that we just have less threads overall
             while (this.isRunning) {
                 this.factory.processAllThings();

@@ -21,6 +21,17 @@ public class BasicSectionGeometryData implements IGeometryData {
     public BasicSectionGeometryData(int maxSectionCount, long geometryCapacity) {
         this.maxSectionCount = maxSectionCount;
         this.sectionMetadataBuffer = RenderBackendFactory.get().createBuffer((long) maxSectionCount * SECTION_METADATA_SIZE);
+        try {
+            this.geometryBuffer = allocateGeometryBuffer(geometryCapacity);
+        } catch (RuntimeException | Error e) {
+            //A11 (fork): the 32 MB metadata buffer is allocated first; release it when the arena fails (GL OOM, Metal
+            // 'Failed to create Metal buffer') instead of leaking it on exactly the failure the renderer cleanup targets.
+            try { this.sectionMetadataBuffer.free(); } catch (Throwable t) { Logger.error("Error freeing section metadata after a failed geometry allocation", t); }
+            throw e;
+        }
+    }
+
+    private static IGpuBuffer allocateGeometryBuffer(long geometryCapacity) {
         //8 Cause a quad is 8 bytes
         if ((geometryCapacity%8)!=0) {
             throw new IllegalStateException();
@@ -59,9 +70,9 @@ public class BasicSectionGeometryData implements IGeometryData {
                 throw new IllegalStateException("Unable to allocate geometry buffer, got gl error " + error);
             }
         }
-        this.geometryBuffer = buffer;
         long delta = System.currentTimeMillis() - start;
         Logger.info("Successfully allocated the geometry buffer in " + delta + "ms");
+        return buffer;
     }
 
     private long sparseCommitment = 0;//Tracks the current range of the allocated sparse buffer

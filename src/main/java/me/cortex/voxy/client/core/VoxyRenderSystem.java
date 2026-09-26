@@ -250,6 +250,12 @@ public class VoxyRenderSystem {
 
                 this.nodeManager.start();
             }
+            //Test trigger for the A11 cleanup (diagnostic, remove once verified): the first construction of the
+            // process fails here, after the worker threads started. Use it with a shader pack active: the level
+            // renderer then disables Iris and builds the renderer again (without a pack the exception crashes).
+            if ("1".equals(System.getenv("VOXY_CTOR_FAIL_ONCE")) && CTOR_FAIL_ONCE_FIRED.compareAndSet(false, true)) {
+                throw new RuntimeException("VOXY_CTOR_FAIL_ONCE: simulated renderer construction failure");
+            }
 
             this.pipeline = RenderPipelineFactory.createPipeline(this.nodeManager, this.nodeCleaner, this.traversal, this::frexStillHasWork);
             {var c = this.pipeline; partialCleanup.push(c::free);}
@@ -281,7 +287,7 @@ public class VoxyRenderSystem {
             this.chunkBoundRenderer = new ChunkBoundRenderer(this.pipeline);
 
             Logger.info("Voxy render system created with " + geometryCapacity + " geometry capacity, using pipeline '" + this.pipeline.getClass().getSimpleName() + "' with renderer '" + sectionRenderer.getClass().getSimpleName() + "'");
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | Error e) {//fork: an Error (e.g. OutOfMemoryError) also releases the world and the partial build
             if (!"0".equals(System.getenv("VOXY_CTOR_FAILURE_CLEANUP"))) {
                 Logger.error("Voxy render system construction failed, releasing " + partialCleanup.size() + " partially built components", e);
                 while (!partialCleanup.isEmpty()) {//newest first, like a stack unwind
@@ -336,6 +342,7 @@ public class VoxyRenderSystem {
     private long fogClassStreakStartNs;
     private static boolean loggedViewportLeak;
     private static boolean loggedZeroViewport;
+    private static final java.util.concurrent.atomic.AtomicBoolean CTOR_FAIL_ONCE_FIRED = new java.util.concurrent.atomic.AtomicBoolean();
 
     /** Metal-only kill switch: VOXY_LOD_ZOOM_REFINE=1 restores the upstream
      *  refine-on-zoom behaviour (spyglass demands finer LOD levels → ~3s
