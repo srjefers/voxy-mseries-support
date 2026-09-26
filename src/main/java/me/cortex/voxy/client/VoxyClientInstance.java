@@ -34,8 +34,8 @@ public class VoxyClientInstance extends VoxyInstance {
         if (path == null) {
             path = getBasePath();
         }
-        this.basePath = path;
-        this.storageConfig = getCreateStorageConfig(path);
+        this.basePath = path.normalize();//upstream f048f09b: hygiene — getWorldPath(LevelResource.ROOT) yields '<level>/./voxy'
+        this.storageConfig = getCreateStorageConfig(this.basePath);
         this.updateDedicatedThreads();
     }
 
