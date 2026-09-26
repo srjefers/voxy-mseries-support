@@ -1229,13 +1229,17 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
 
     /**
      * Whether the OPAQUE LOD layer also goes through the material g-buffer + BSL resolve.
-     * Default FALSE: opaque LODs render on the proven base path (lit colour → bridge →
-     * normal composite), which is what's stable on dev — the resolve runs ONLY on the
-     * translucent (water) layer (issue #11). The full opaque-material path darkened far
-     * terrain (BSL deferred shading of grazing LOD); kept behind VOXY_VX_MATERIAL_OPAQUE=1
-     * for A/B only. Trans-only is the mergeable shape: water BSL-shaded, opaque untouched.
+     * Default TRUE since 2026-09-25: the pack's own voxy_opaque program applies the SAME
+     * GetLighting as its near terrain (sun direction, light/ambient colours, shadow map,
+     * foliage subsurface), which is the only way the LOD ring matches Sodium's ring at
+     * the seam — the inject path lights LODs with MC's plain lightmap and the seam showed
+     * as paler, shadowless terrain that "gained" shadows as Sodium built each section
+     * (user-verified on-device: seam closed, spyglass and unzoomed). The earlier note
+     * about far terrain darkening did not reproduce in that run; VOXY_VX_MATERIAL_OPAQUE=0
+     * reverts to the inject path (which alone carries the abyss fill, seafloor dim and
+     * long-shadow march — watch near-water floors when comparing).
      */
-    public static final boolean VX_MATERIAL_OPAQUE = "1".equals(System.getenv("VOXY_VX_MATERIAL_OPAQUE"));
+    public static final boolean VX_MATERIAL_OPAQUE = !"0".equals(System.getenv("VOXY_VX_MATERIAL_OPAQUE"));
 
     /** Opaque LOD uses the material g-buffer + resolve only when explicitly opted in. */
     public boolean vxOpaqueMaterialMode() {
