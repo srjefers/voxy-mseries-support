@@ -195,7 +195,7 @@ public final class MetalRenderEncoder implements RenderEncoder {
                     ? "[Metal] indirect draw loop: native batch ON (one JNI call per slice; VOXY_METAL_DRAW_BATCH=0 restores the per-draw Java loop)"
                     : "[Metal] indirect draw loop: native batch OFF (VOXY_METAL_DRAW_BATCH=0) — per-draw Java JNI loop");
         }
-        if (DRAW_BATCH) {
+        if (drawBatchActive) {
             // Lever D (2026-09-25): the per-draw Java loop below costs two JNI
             // crossings per draw (~40k/frame at 20k draws, 0.9-1.8 ms/frame
             // measured as jniDrawLoop). The native batch runs the identical
@@ -203,12 +203,23 @@ public final class MetalRenderEncoder implements RenderEncoder {
             // setVertexBytes at binding 6, indirect draw) in one native loop
             // under one autoreleasepool. Zero-pointer contents skips the
             // baseInstance push exactly like the Java loop.
-            MetalNative.mtlRenderEncoderDrawIndexedIndirectBatch(this.encoderHandle,
-                    metalPrimitive, this.boundIndexType,
-                    this.boundIndexBuffer, this.boundIndexBufferOffset,
-                    indirectBuf, indirectContents,
-                    offset, drawCount, stride, VOXY_METAL_PER_DRAW_UBO_BINDING);
-        } else {
+            try {
+                MetalNative.mtlRenderEncoderDrawIndexedIndirectBatch(this.encoderHandle,
+                        metalPrimitive, this.boundIndexType,
+                        this.boundIndexBuffer, this.boundIndexBufferOffset,
+                        indirectBuf, indirectContents,
+                        offset, drawCount, stride, VOXY_METAL_PER_DRAW_UBO_BINDING);
+                return;
+            } catch (UnsatisfiedLinkError e) {
+                // The loaded libvoxy_metal.dylib predates the batch export (a
+                // stale copy on java.library.path wins over the bundled one):
+                // fall back to the per-draw loop for the rest of the process.
+                drawBatchActive = false;
+                Logger.warn("[Metal] indirect draw loop: native batch export missing in the loaded dylib ("
+                        + e.getMessage() + ") — falling back to the per-draw Java loop");
+            }
+        }
+        {
             long perDrawScratchAddr = MemoryUtil.memAddress(this.perDrawScratch);
             for (int i = 0; i < drawCount; i++) {
                 long cmdAddr = offset + (long) i * stride;
@@ -243,6 +254,8 @@ public final class MetalRenderEncoder implements RenderEncoder {
      * Metal-only class, so the GL backend is untouched either way.
      */
     private static final boolean DRAW_BATCH = !"0".equals(System.getenv("VOXY_METAL_DRAW_BATCH"));
+    /** Flips off once if the loaded dylib lacks the batch export. */
+    private static boolean drawBatchActive = DRAW_BATCH;
     private static boolean drawBatchLogged;
 
     @Override

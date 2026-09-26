@@ -67,6 +67,8 @@ public final class IOSurfaceBridge implements AutoCloseable {
      * IOSurfaceRef address) starts at 0 and therefore always re-specifies.
      */
     int glResyncGen;
+    /** GL rect texture name the stamp above applies to (a bridge may be bound under several names). */
+    int glResyncTex;
     private long ioSurfaceHandle;
     private long metalTextureHandle;
 

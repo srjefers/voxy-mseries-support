@@ -331,8 +331,12 @@ Java_me_cortex_voxy_client_core_metal_MetalNative_mtlRenderEncoderDrawIndexedInd
         id<MTLBuffer> indirectBuffer = voxy_handle_cast<id<MTLBuffer>>(indirectBufferHandle);
         const uint8_t *contents = (const uint8_t *)indirectContentsPtr;
         uint32_t perDraw[4] = {0, 0, 0, 0};
+        // Never read or draw past the indirect buffer (the Java loop relied on
+        // the caller's clamp; one msgSend outside the loop makes it explicit).
+        const NSUInteger len = indirectBuffer.length;
         for (jint i = 0; i < commandCount; i++) {
             NSUInteger cmdOffset = (NSUInteger)firstCommandOffset + (NSUInteger)i * (NSUInteger)stride;
+            if (cmdOffset + (NSUInteger)stride > len) break;
             if (contents != nullptr) {
                 uint32_t baseInstance;
                 memcpy(&baseInstance, contents + cmdOffset + 16, sizeof(baseInstance));

@@ -118,6 +118,10 @@ real translucent biome-tinted water, full texture detail, ~111 FPS.
 | `VOXY_IRIS_GBUFFER_INJECT=0` | off | Kill switch: disable the Iris gbuffer injection (LODs stay hidden while a pack is active, the pre-injection behaviour) |
 | `VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1` | off | Kill switch: `glGetTexImage` MC's lightmap every frame (pre-throttle behaviour) instead of only on frames where `LightTexture.updateLightTexture` rewrote it (client tick, ~20 Hz). Marker `[Metal] lightmap sync throttled to <mode>`; `[Metal-LayerB] … lightmapSync=<run>/<skipped>` |
 | `VOXY_BRIDGE_RESYNC=every` | `once` | Kill switch: CGLTexImageIOSurface2D re-specification on every GL acquire (the pre-lever-C behaviour; 7+ per frame). Default re-specifies each bridge once per Metal frame (marker `[Metal-RESYNC]`, counts on `[Metal-TIMING]`) |
+| `VOXY_METAL_DRAW_BATCH=0` | off (batch on) | Kill switch: per-draw Java JNI indirect loop instead of the native batched loop (A/B on `[Metal-TIMING] jniDrawLoop` at equal `draws=`) |
+| `VOXY_FRAME_TIMING=1` | off | Print `[Metal-TIMING]` (hotWait / drawFlushWait / bridgeWait / jniDrawLoop / lightmapSync / resync) and `[Metal-VXTIMING]` (GL-side vx passes, GPU via async timer queries) every 600 frames. Close F3 while sampling: vanilla's GPU-utilization timer owns `GL_TIME_ELAPSED` |
+| `VOXY_VX_TIMING=0` | off | With `VOXY_FRAME_TIMING=1`: keep only `[Metal-TIMING]` (no GL queries) |
+| `VOXY_VX_TIMING_GPU=0` | off | `[Metal-VXTIMING]` CPU brackets only |
 
 ## Running
 

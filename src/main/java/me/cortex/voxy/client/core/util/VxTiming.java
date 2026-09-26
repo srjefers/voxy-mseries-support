@@ -119,7 +119,9 @@ public final class VxTiming {
     private static int curMask;
     private static int covQueryLive;
     private static int gpuState;                     // 0 = unchecked, 1 = supported, -1 = unsupported
-    private static boolean gpuActive;                // GPU queries armed for the current frame
+    private static boolean gpuActive;                // GPU frame allocated (coverage query allowed)
+    private static boolean timerActive;              // GL_TIME_ELAPSED segments allowed this frame (no foreign timer live)
+    private static int foreignFrames;                // frames whose timer half was skipped (vanilla F3 GPU timer)
     private static boolean loggedOn;
     private static boolean loggedForeign;
     private static final long[] scratchGpu = new long[PASSES];
@@ -163,15 +165,21 @@ public final class VxTiming {
         }
         logOnce();
         if (gpuState != 1) return;
-        // A GL_TIME_ELAPSED query owned by someone else (an Iris/Sodium
-        // profiler) would make our glBeginQuery an INVALID_OPERATION and
-        // corrupt their result — skip the GPU half for this frame instead.
-        if (glGetQueryi(GL_TIME_ELAPSED, GL_CURRENT_QUERY) != 0) {
+        // A GL_TIME_ELAPSED query owned by someone else would make our
+        // glBeginQuery an INVALID_OPERATION and corrupt their result. The one
+        // such owner in the shipped stack is vanilla: Minecraft.runTick wraps
+        // gameRenderer.render() in TimerQuery.beginProfile() whenever the F3
+        // "GPU %" entry is shown or F3+L metrics are recording. Skip only the
+        // TIMER half on such frames (coverage uses GL_SAMPLES_PASSED, a
+        // different target, and stays on) and count them for the report.
+        boolean foreign = glGetQueryi(GL_TIME_ELAPSED, GL_CURRENT_QUERY) != 0;
+        if (foreign) {
+            foreignFrames++;
             if (!loggedForeign) {
                 loggedForeign = true;
-                Logger.warn("[Metal-VXTIMING] a foreign GL_TIME_ELAPSED query is live at the frame head — GPU timing skipped on such frames");
+                Logger.warn("[Metal-VXTIMING] vanilla GL_TIME_ELAPSED query live at the frame head (F3 GPU-utilization "
+                        + "entry shown or F3+L metrics recording) — GPU columns skipped on such frames; close F3 while sampling");
             }
-            return;
         }
         cur = FREE.isEmpty() ? new Frame() : FREE.pop();
         cur.n = 0;
@@ -179,6 +187,7 @@ public final class VxTiming {
         cur.covPixels = 0;
         cur.lastIssued = 0;
         gpuActive = true;
+        timerActive = !foreign;
     }
 
     /** Open a span. Nested spans are fine (see class doc). */
@@ -190,7 +199,7 @@ public final class VxTiming {
         depth++;
         stackMask |= 1 << pass;
         callsFrame[pass]++;
-        if (gpuActive) switchSegment();
+        if (gpuActive && timerActive) switchSegment();
     }
 
     /** Close the innermost open span with this id (defensive against unbalanced calls). */
@@ -208,7 +217,7 @@ public final class VxTiming {
         depth = i;
         stackMask = 0;
         for (int j = 0; j < depth; j++) stackMask |= 1 << stackPass[j];
-        if (gpuActive) switchSegment();
+        if (gpuActive && timerActive) switchSegment();
     }
 
     /**
@@ -237,7 +246,7 @@ public final class VxTiming {
 
     /**
      * Emit the [Metal-VXTIMING] window line next to [Metal-TIMING] and reset
-     * the window. Silent when no GL-side pass ran (GL backend, no pack).
+     * the window. Prints every window once a Metal frame has closed; passes that did not run are omitted.
      */
     public static void report(int metalFrame) {
         if (!ENABLED) return;
@@ -273,6 +282,7 @@ public final class VxTiming {
         }
         sb.append(" gpuFrames=").append(gpuFrames);
         if (droppedFrames > 0) sb.append(" droppedUnreadFrames=").append(droppedFrames);
+        if (foreignFrames > 0) sb.append(" gpuSkippedForeign=").append(foreignFrames).append(" (F3 timer live)");
         if (!GPU_WANTED) sb.append(" (gpu OFF: VOXY_VX_TIMING_GPU=0)");
         else if (gpuState == -1) sb.append(" (gpu n/a: no ARB_timer_query)");
         Logger.info(sb.toString());
@@ -284,6 +294,7 @@ public final class VxTiming {
         java.util.Arrays.fill(gpuWinMaxNs, 0);
         cpuFrames = 0;
         gpuFrames = 0;
+        foreignFrames = 0;
         droppedFrames = 0;
         covSamples = 0;
         covPixels = 0;

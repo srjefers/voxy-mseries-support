@@ -556,7 +556,7 @@ public final class IOSurfaceBridgeCompositor {
                 return 0;
             }
             AUX_RECT_TEXES.put(handle, tex);
-            bridge.glResyncGen = bridgeGeneration; // the bind IS this frame's re-specification
+            bridge.glResyncGen = bridgeGeneration; bridge.glResyncTex = tex; // the bind IS this frame's re-specification
             Logger.info("IOSurfaceBridgeCompositor: aux bridge bound to GL tex " + tex);
         } else {
             resync(bridge, tex);
@@ -581,7 +581,8 @@ public final class IOSurfaceBridgeCompositor {
         // has stamped a frame yet (or a pipeline that never calls
         // markBridgesWritten) — then fall through to the per-acquire
         // behaviour so the gate can never starve GL of a re-specification.
-        if (RESYNC_ONCE && bridgeGeneration != 0 && bridge.glResyncGen == bridgeGeneration) {
+        if (RESYNC_ONCE && bridgeGeneration != 0
+                && bridge.glResyncGen == bridgeGeneration && bridge.glResyncTex == glTex) {
             if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
                 me.cortex.voxy.client.core.util.FrameTiming.resyncSkipped++;
             }
@@ -591,11 +592,13 @@ public final class IOSurfaceBridgeCompositor {
         int prevActiveTex = glGetInteger(GL_ACTIVE_TEXTURE);
         glActiveTexture(GL_TEXTURE0);
         int prevTexRect = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
-        bridge.bindToGlTexture(glTex);
+        boolean ok = bridge.bindToGlTexture(glTex);
         glBindTexture(GL_TEXTURE_RECTANGLE, prevTexRect);
         glActiveTexture(prevActiveTex);
-        bridge.glResyncGen = bridgeGeneration;
-        if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
+        // Stamp only a successful re-specification (a transient CGL failure
+        // must retry on the next acquire, as every pre-lever-C acquire did).
+        if (ok) { bridge.glResyncGen = bridgeGeneration; bridge.glResyncTex = glTex; }
+        if (ok && me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
             me.cortex.voxy.client.core.util.FrameTiming.resyncCount++;
             me.cortex.voxy.client.core.util.FrameTiming.resyncNs += System.nanoTime() - tFT;
         }
@@ -760,7 +763,7 @@ public final class IOSurfaceBridgeCompositor {
         int prevRectBinding = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
         try {
             boolean ok = rebindDepth0(depthBridge);
-            if (ok) depthBridge.glResyncGen = bridgeGeneration; // the bind IS this frame's re-specification
+            if (ok) { depthBridge.glResyncGen = bridgeGeneration; depthBridge.glResyncTex = gbufferDepthGlTex; } // the bind IS this frame's re-specification
             return ok;
         } finally {
             glBindTexture(GL_TEXTURE_RECTANGLE, prevRectBinding);
@@ -996,7 +999,7 @@ public final class IOSurfaceBridgeCompositor {
         int prevRectBinding = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
         try {
             boolean ok = rebind0(bridge);
-            if (ok) bridge.glResyncGen = bridgeGeneration; // the bind IS this frame's re-specification
+            if (ok) { bridge.glResyncGen = bridgeGeneration; bridge.glResyncTex = compositeGlTex; } // the bind IS this frame's re-specification
             return ok;
         } finally {
             glBindTexture(GL_TEXTURE_RECTANGLE, prevRectBinding);
