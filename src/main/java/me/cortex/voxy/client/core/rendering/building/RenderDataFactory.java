@@ -51,6 +51,22 @@ public class RenderDataFactory {
     private static final java.util.concurrent.atomic.AtomicBoolean PLANT_CULL_LOGGED =
             new java.util.concurrent.atomic.AtomicBoolean();
 
+    // Upstream mesher fixes 6212d95c + 514d0a0e + 89b3dacc (MCRcortex/voxy 2025-12-20 / 2026-04-29),
+    // shipped as one predicate because the three commits rewrite the same two lines:
+    //  (1) a same-model neighbour hides the face only when the model "culls same"; the old
+    //      `|| faceOccludes(meta, face)` also hid faces of models that do NOT cull same
+    //      (leaves, panes, slabs against an identical neighbour) — missing faces at LOD.
+    //  (2) a neighbour's occluding face hides this face only when this face CAN be
+    //      occluded (faceCanBeOccluded), the guard upstream had left commented out.
+    // Both directions mesh MORE faces than before. VOXY_MESH_FACE_OCCLUDE=0 restores the
+    // pre-sync predicate for A/B (fences / panes / leaves / stairs at LOD 0-2).
+    private static final boolean MESH_FACE_OCCLUDE_FIX = !"0".equals(System.getenv("VOXY_MESH_FACE_OCCLUDE"));
+
+    static {
+        me.cortex.voxy.common.Logger.info("[Voxy-SYNC] mesher face-occlusion predicate: "
+                + (MESH_FACE_OCCLUDE_FIX ? "upstream 6212d95c/514d0a0e/89b3dacc ON (VOXY_MESH_FACE_OCCLUDE=0 reverts)" : "PRE-SYNC (VOXY_MESH_FACE_OCCLUDE=0)"));
+    }
+
     private static int parseEnvInt(String name, int def) {
         String v = System.getenv(name);
         if (v == null || v.isEmpty()) {
@@ -416,10 +432,16 @@ public class RenderDataFactory {
     private static final long LM = (0xFFL<<55);
 
     private static boolean shouldMeshNonOpaqueBlockFace(int face, long quad, long meta, long neighborQuad, long neighborMeta) {
-        if (((quad^neighborQuad)&(0xFFFFL<<26))==0 && (DISABLE_CULL_SAME_OCCLUDES || (ModelQueries.cullsSame(meta)||ModelQueries.faceOccludes(meta, face)))) return false;//This is a hack, if the neigbor and this are the same, dont mesh the face// TODO: FIXME
-        if (!ModelQueries.faceExists(meta, face)) return false;//Dont mesh if no face
-        //if (ModelQueries.faceCanBeOccluded(meta, face)) //TODO: maybe enable this
-            if (ModelQueries.faceOccludes(neighborMeta, face^1)) return false;
+        if (MESH_FACE_OCCLUDE_FIX) {
+            if (((quad^neighborQuad)&(0xFFFFL<<26))==0 && (DISABLE_CULL_SAME_OCCLUDES || ModelQueries.cullsSame(meta))) return false;//This is a hack, if the neigbor and this are the same, dont mesh the face// TODO: FIXME
+            if (!ModelQueries.faceExists(meta, face)) return false;//Dont mesh if no face
+            if (ModelQueries.faceCanBeOccluded(meta, face) && ModelQueries.faceOccludes(neighborMeta, face^1)) return false;
+            return true;
+        }
+        // Pre-sync predicate (VOXY_MESH_FACE_OCCLUDE=0)
+        if (((quad^neighborQuad)&(0xFFFFL<<26))==0 && (DISABLE_CULL_SAME_OCCLUDES || (ModelQueries.cullsSame(meta)||ModelQueries.faceOccludes(meta, face)))) return false;
+        if (!ModelQueries.faceExists(meta, face)) return false;
+        if (ModelQueries.faceOccludes(neighborMeta, face^1)) return false;
         return true;
     }
 
