@@ -30,6 +30,7 @@ import static me.cortex.voxy.common.world.WorldEngine.UPDATE_TYPE_BLOCK_BIT;
 
 
 public class NodeManager {
+    private final java.util.concurrent.atomic.AtomicInteger childExistenceZeroLogs = new java.util.concurrent.atomic.AtomicInteger();//per instance: a rejoin gets a fresh budget
     private static final boolean VERIFY_NODE_MANAGER_OPERATIONS = true;//VoxyCommon.isVerificationFlagOn("nodeManager");
     //Assumptions:
     // all nodes have children (i.e. all nodes have at least one child existence bit set at all times)
@@ -949,6 +950,9 @@ public class NodeManager {
 
                     //TODO: make into warning or log error
                     //throw new IllegalStateException("Request result with child existence of 0");
+                    if (this.childExistenceZeroLogs.getAndIncrement() < 20) {//upstream ba460516 (logs every time); fork: first 20 per NodeManager
+                        Logger.warn("Request result with child existence of 0, for child pos " + WorldEngine.pprintPos(childPos));
+                    }
 
                 }
                 this.nodeData.setNodeChildExistence(childNodeId, childExistence);
@@ -1460,7 +1464,7 @@ public class NodeManager {
                 (WorldEngine.getZ(basePos)<<1)|((addin>>1)&1));
     }
 
-    private long makeParentPos(long pos) {
+    private static long makeParentPos(long pos) {
         int lvl = WorldEngine.getLevel(pos);
         if (lvl == MAX_LOD_LAYER) {
             throw new IllegalArgumentException("Cannot create a parent higher than LoD " + (MAX_LOD_LAYER));
