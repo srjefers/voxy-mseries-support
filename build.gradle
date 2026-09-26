@@ -232,6 +232,9 @@ jar {
 
 
 tasks.register('makeExcludedRocksDB', Zip) {
+    // The exclude closure below is not a tracked input: bump this when the native filter
+    // changes, or the build cache keeps serving the previous nested jar.
+    inputs.property("nativeFilterVersion", "2-keep-osx-arm64")
     archiveExtension.set("jar")
     entryCompression = ZipEntryCompression.STORED
     destinationDirectory.set temporaryDir
@@ -248,7 +251,9 @@ tasks.register('makeExcludedRocksDB', Zip) {
     exclude {
         def file = it.name
         if (file.endsWith(".jnilib")) {
-            return true
+            // Keep the Apple Silicon native: the Metal build's whole audience is macOS arm64, and
+            // without it RocksDB (the default LOD storage) cannot load outside the dev classpath.
+            return !file.contains("osx-arm64")
         }
         if (!file.endsWith(".so")) {
             return false
@@ -308,8 +313,11 @@ dependencies {
     // Runtime shader translation (Metal/Vulkan backends only).
     // GL backend on Win/Linux uses the driver compiler and never touches these
     // — natives are shipped only for macos-arm64 to keep jar size minimal.
-    implementation "org.lwjgl:lwjgl-shaderc"
-    implementation "org.lwjgl:lwjgl-spvc"
+    // The Java bindings must be bundled too: Minecraft 1.21.11 ships LWJGL core but not the
+    // shaderc/spvc modules, so a launcher install had only the natives (NoClassDefFoundError on
+    // the first runtime shader compile). Dev runClient hid it (Loom puts them on the classpath).
+    include(implementation("org.lwjgl:lwjgl-shaderc:$lwjglVersion"))
+    include(implementation("org.lwjgl:lwjgl-spvc:$lwjglVersion"))
     include(runtimeOnly "org.lwjgl:lwjgl-shaderc:$lwjglVersion:natives-macos-arm64")
     include(runtimeOnly "org.lwjgl:lwjgl-spvc:$lwjglVersion:natives-macos-arm64")
 
