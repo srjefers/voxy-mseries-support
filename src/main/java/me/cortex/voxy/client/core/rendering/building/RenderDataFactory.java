@@ -310,7 +310,13 @@ public class RenderDataFactory {
                 }
                 long modelMetadata = this.modelMan.getModelMetadataFromClientId(modelId);
 
-                if (cullPlants && ModelQueries.isPlant(modelMetadata)) {
+                if (modelId == 0) {
+                    //Upstream 1f993f8e: model id 0 is the air bake (any block whose bake dedups to
+                    // it is "basically air") — emit like the air branch above (light byte only)
+                    // instead of packing quad data / metadata for a voxel the mesher never draws.
+                    sectionData[i * 2] = (block&(0xFFL<<56))>>>1;
+                    sectionData[i * 2 + 1] = 0;
+                } else if (cullPlants && ModelQueries.isPlant(modelMetadata)) {
                     //Far-LOD plant cull: same emission as the air branch above (light byte kept),
                     // no notEmpty/opaque/fluid bits so the mesher sees an empty voxel
                     if (PLANT_CULL_LOGGED.compareAndSet(false, true)) {
