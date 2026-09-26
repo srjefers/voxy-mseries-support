@@ -75,7 +75,13 @@ public final class MetalNative {
             Logger.info("Metal native library loaded from " + tmp);
             return true;
         } catch (Throwable t) {
-            Logger.warn("Metal native library not available: " + t.getMessage());
+            String msg = String.valueOf(t.getMessage());
+            if (msg.contains("newer than running OS") || msg.contains("minimum")) {
+                Logger.error("Voxy's Metal renderer needs macOS 13 (Ventura) or newer; this Mac runs macOS "
+                        + System.getProperty("os.version") + ". Voxy will stay disabled. (" + msg + ")");
+            } else {
+                Logger.warn("Metal native library not available: " + msg);
+            }
             available = false;
             return false;
         }

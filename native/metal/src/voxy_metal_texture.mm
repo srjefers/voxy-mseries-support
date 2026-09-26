@@ -1,6 +1,8 @@
 // voxy_metal_texture.mm — MTLTexture and MTLRenderPassDescriptor.
 
 #include "voxy_metal.h"
+#include <cstdlib>
+#include <cstring>
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_me_cortex_voxy_client_core_metal_MetalNative_mtlNewTextureDescriptor(
@@ -308,8 +310,22 @@ Java_me_cortex_voxy_client_core_metal_MetalNative_mtlDeviceNewLibraryWithSource(
         NSString *src = [NSString stringWithUTF8String:utf];
         env->ReleaseStringUTFChars(source, utf);
 
+        // Pin MSL 3.0 (the macOS 13 floor; SPIRV-Cross emits 3.0) so every Mac compiles exactly
+        // what the oldest supported OS compiles: with options:nil a macOS 26 dev box used the
+        // newest language version and a 3.0-only failure would first show up on a user's Ventura
+        // machine. VOXY_METAL_MSL_PIN=0 restores options:nil.
+        static int pinMsl = -1;
+        if (pinMsl < 0) {
+            const char *e = getenv("VOXY_METAL_MSL_PIN");
+            pinMsl = (e != nullptr && strcmp(e, "0") == 0) ? 0 : 1;
+        }
+        MTLCompileOptions *opts = nil;
+        if (pinMsl) {
+            opts = [MTLCompileOptions new];
+            opts.languageVersion = MTLLanguageVersion3_0;
+        }
         NSError *error = nil;
-        id<MTLLibrary> lib = [device newLibraryWithSource:src options:nil error:&error];
+        id<MTLLibrary> lib = [device newLibraryWithSource:src options:opts error:&error];
         if (lib == nil) {
             voxy_set_last_error(error ? [error localizedDescription] : @"Unknown MSL compile error");
             return 0;

@@ -382,6 +382,8 @@ tasks.register('buildMetalNative', Exec) {
 
     inputs.dir file("$nativeDir/src")
     inputs.file file("$nativeDir/CMakeLists.txt")
+    inputs.file file("$nativeDir/build.sh")
+    inputs.property("macosMin", System.getenv("VOXY_MACOS_MIN") ?: "13.0")
     outputs.file output
 
     workingDir = nativeDir

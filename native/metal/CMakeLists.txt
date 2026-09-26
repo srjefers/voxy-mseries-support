@@ -62,6 +62,9 @@ target_include_directories(voxy_metal PRIVATE
 target_compile_options(voxy_metal PRIVATE
     -fobjc-arc
     -Wall -Wextra -Wno-unused-parameter
+    # An API newer than the deployment target without @available is an error, not a warning:
+    # it would load on the dev box and crash (or fail to load) on the oldest supported macOS.
+    -Werror=unguarded-availability-new
     -fvisibility=hidden)
 
 # JNI export must stay visible.
