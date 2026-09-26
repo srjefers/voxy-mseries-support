@@ -941,7 +941,11 @@ public class VoxyRenderSystem {
 
     public void shutdown() {
         Logger.info("Flushing download stream");
-        DownloadStream.INSTANCE.flushWaitClear();
+        try {//fork: a throwing callback (dead node-manager worker) must not abort the teardown that follows
+            DownloadStream.INSTANCE.flushWaitClear();
+        } catch (Exception e) {
+            Logger.error("Error flushing download stream", e);
+        }
         // World-rejoin fix: UploadStream is a process-lifetime singleton but
         // its queued copies target the world-lifetime buffers freed below.
         // Un-flushed session-N entries used to execute on session-N+1's first
@@ -1016,7 +1020,11 @@ public class VoxyRenderSystem {
 
 
         Logger.info("Flushing download stream");
-        DownloadStream.INSTANCE.flushWaitClear();
+        try {//fork: a throwing callback (dead node-manager worker) must not abort the teardown that follows
+            DownloadStream.INSTANCE.flushWaitClear();
+        } catch (Exception e) {
+            Logger.error("Error flushing download stream", e);
+        }
         // Anything queued into the upload stream DURING the teardown above
         // targets buffers that may already be freed — drop those entries
         // WITHOUT executing them (see UploadStream.discardClear).

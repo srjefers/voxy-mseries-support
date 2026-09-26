@@ -46,6 +46,7 @@ public class ModelBakerySubsystem {
                 if (e == null) {
                     e = new RuntimeException("unhandled excpetion not added");
                 }
+                me.cortex.voxy.common.Logger.error("Model factory processor thread died", e);
                 this.processingThreadException = e;
             });
         }

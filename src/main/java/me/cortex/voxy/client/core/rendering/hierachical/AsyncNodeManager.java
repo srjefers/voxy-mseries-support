@@ -120,6 +120,7 @@ public class AsyncNodeManager {
                 if (e == null) {
                     e = new RuntimeException("null throwable");
                 }
+                Logger.error("Async Node Manager thread died", e);//an Error bypasses the body's catch (Exception)
                 this.uncaughtException = e;
                 this.running = false;
             });
@@ -744,7 +745,7 @@ public class AsyncNodeManager {
 
     public void addTopLevel(long section) {//Only called from render thread
         DIAG_TOP_LEVEL_ADD_COUNT.incrementAndGet();
-        if (!this.running) throw new IllegalStateException("Not running");
+        this.throwIfNotRunning();
         long stamp = this.tlnLock.writeLock();
         int state = 0;
         if (!this.tlnRem.remove(section)) {
@@ -761,7 +762,7 @@ public class AsyncNodeManager {
     }
 
     public void removeTopLevel(long section) {//Only called from render thread
-        if (!this.running) throw new IllegalStateException("Not running");
+        this.throwIfNotRunning();
         long stamp = this.tlnLock.writeLock();
         int state = 0;
         if (!this.tlnAdd.remove(section)) {
@@ -783,8 +784,19 @@ public class AsyncNodeManager {
         this.thread.start();
     }
 
-    public void stop() {
+    private void throwIfNotRunning() {
         if (!this.running) {
+            if (WORKER_RETHROW && this.uncaughtException != null) {
+                throw new RuntimeException(this.uncaughtException);//Propagate internal exception
+            }
+            throw new IllegalStateException("Not running");
+        }
+    }
+
+    public void stop() {
+        //A worker that died with a recorded exception is already stopped: still join it and drain/free the
+        // queues (they hold section refs; skipping this left world refs alive and hung VoxyInstance.shutdown)
+        if (!this.running && !(WORKER_RETHROW && this.uncaughtException != null)) {
             throw new IllegalStateException();
         }
         this.running = false;
