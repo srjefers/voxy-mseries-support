@@ -319,6 +319,12 @@ void main() {
     vec2 uv2 = modf(uv, tile)*(1.0/(vec2(3.0,2.0)*256.0));
     vec4 colour;
     vec2 texPos = uv2 + getBaseUV();
+#ifdef VOXY_LOD_PLANT_EDGEFADE
+    // Taken here, before the gl_HelperInvocation early return below, so the
+    // derivatives are defined (see the plant edge test in the cutout block).
+    vec2 voxyTexDx = dFdx(texPos);
+    vec2 voxyTexDy = dFdy(texPos);
+#endif
 
 #ifdef VOXY_NO_ATLAS
     // M12 Metal path: ModelTextureBakery is still GL-only, so the
@@ -491,6 +497,27 @@ void main() {
 #ifndef VOXY_LOD_NO_DISCARD
     //Also, small quad is really fking over the mipping level somehow
     #ifndef TRANSLUCENT
+    #ifdef VOXY_LOD_PLANT_EDGEFADE
+    // Metal (2026-09-25): a plant is an axis-aligned '+' of two full-cell
+    // planes. Viewed near a block axis one plane is almost edge-on: its 16
+    // sprite columns (bottom rows fully opaque) collapse into a 3-4 px solid
+    // column that, at a steep pitch, smears over the plane's depth extent —
+    // the "tall dark cactus" next to vanilla's X, whose blades are never
+    // edge-on except along a diagonal. A near-edge-on plane has a strongly
+    // anisotropic UV footprint (many texels per pixel along one screen axis,
+    // ~1 along the other), so drop plant fragments whose footprint anisotropy
+    // exceeds VOXY_LOD_PLANT_EDGE_ANISO (default 3: gone past ~20 deg off an
+    // axis, kept at 30+). Face-on and 45-degree planes stay (aniso <= 1.5).
+    if (modelIsPlantCross(modelData[interData.x>>16])) {
+        float voxyLx = length(voxyTexDx);
+        float voxyLy = length(voxyTexDy);
+        float voxyAniso = max(voxyLx, voxyLy) / max(min(voxyLx, voxyLy), 1e-7);
+        if (voxyAniso > VOXY_LOD_PLANT_EDGE_ANISO) {
+            discard;
+            return;
+        }
+    }
+    #endif
     #ifdef VOXY_LOD_MIP_DISCARD
     // Metal (2026-09-25): ALSO test the alpha at the distance mip. The mip-0
     // test alone keeps every sparse blade of a plant sprite fully opaque at

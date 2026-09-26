@@ -500,6 +500,24 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                         Logger.info("[Metal-LODTEST] mip-aware cutout discard ON (alpha <= " + cutStr
                                 + " at the distance mip; plant tufts thin with distance); VOXY_LOD_MIP_DISCARD=0 reverts");
                     }
+                    // VOXY_LOD_PLANT_EDGEFADE (2026-09-25, opaque only): drop the
+                    //   near-edge-on plane of a plant '+' cross (UV footprint
+                    //   anisotropy > VOXY_LOD_PLANT_EDGE_ANISO, default 3.0) —
+                    //   the tall solid centre column next to vanilla's X.
+                    //   =0 reverts; _ANISO=<f> tunes (lower = more aggressive).
+                    if (!"0".equals(System.getenv("VOXY_LOD_PLANT_EDGEFADE"))) {
+                        float an = 3.0f;
+                        String av = System.getenv("VOXY_LOD_PLANT_EDGE_ANISO");
+                        if (av != null && !av.isBlank()) {
+                            try { an = Math.max(1.0f, Math.min(64.0f, Float.parseFloat(av.trim()))); }
+                            catch (NumberFormatException e) { an = 3.0f; }
+                        }
+                        String anStr = String.format(java.util.Locale.ROOT, "%.4f", an);
+                        opaqueDefines.put("VOXY_LOD_PLANT_EDGEFADE", "");
+                        opaqueDefines.put("VOXY_LOD_PLANT_EDGE_ANISO", anStr);
+                        Logger.info("[Metal-LODTEST] plant edge-on plane fade ON (UV anisotropy > " + anStr
+                                + " discards); VOXY_LOD_PLANT_EDGEFADE=0 reverts");
+                    }
                 }
                 // VOXY_WATER_FAR_ALPHA — far-water opacity ramp (2026-07-03),
                 //   DEFAULT ON, translucent only. Constant vanilla alpha 0.706

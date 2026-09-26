@@ -585,11 +585,13 @@ public class ModelFactory {
         // the cell centre = upstream's axis-aligned '+' cross, self-lit and
         // non-occluding (offset >= 0.1 clears occludesFace below).
         // GL bakes real depth and never hits the == 0 condition.
+        boolean plantCrossModel = false;
         if (PLANT_CROSS && !isFluid
                 && blockState.getFluidState().isEmpty()
                 && blockState.getBlock() instanceof VegetationBlock
                 && me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
                         != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+            plantCrossModel = true; // GPU model flag bit 16 (quads.frag edge-fade), Metal only
             boolean any = false;
             for (int face = 2; face < 6; face++) { // NORTH, SOUTH, WEST, EAST
                 if (sizes[face] >= 0.0f && sizes[face] < 0.01f) {
@@ -766,6 +768,7 @@ public class ModelFactory {
 
         //TODO: THIS
         modelFlags |= isShaded?8:0;//model has AO and shade
+        modelFlags |= plantCrossModel?16:0;//Metal plant cross (see quads.frag VOXY_LOD_PLANT_EDGEFADE); never set on GL
 
         //modelFlags |= blockRenderLayer == RenderLayer.getSolid()?0:1;// should discard alpha
         MemoryUtil.memPutInt(uploadPtr, modelFlags); uploadPtr += 4;
