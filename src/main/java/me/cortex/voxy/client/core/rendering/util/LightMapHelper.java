@@ -117,7 +117,16 @@ public class LightMapHelper {
     private static void syncFromMc(int frameId) {
         if (frameId == lastSyncedFrame) return;
         lastSyncedFrame = frameId;
+        // VOXY_FRAME_TIMING=1 GL-side span (the one sanctioned per-frame readback).
+        me.cortex.voxy.client.core.util.VxTiming.begin(me.cortex.voxy.client.core.util.VxTiming.LIGHTMAP);
+        try {
+            syncFromMc0();
+        } finally {
+            me.cortex.voxy.client.core.util.VxTiming.end(me.cortex.voxy.client.core.util.VxTiming.LIGHTMAP);
+        }
+    }
 
+    private static void syncFromMc0() {
         var lightTex = Minecraft.getInstance().gameRenderer.lightTexture().getTextureView().texture();
         int glId = ((com.mojang.blaze3d.opengl.GlTexture) lightTex).glId();
 

@@ -198,6 +198,16 @@ public final class IOSurfaceBridgeCompositor {
      * {@link #compositeIrisGbuffer} to draw into the pack's terrain gbuffer.)
      */
     public static void composite(IOSurfaceBridge bridge, boolean useBlit) {
+        // VOXY_FRAME_TIMING=1 GL-side span; begin/end are JIT-folded no-ops when off.
+        me.cortex.voxy.client.core.util.VxTiming.begin(me.cortex.voxy.client.core.util.VxTiming.COMPOSITE);
+        try {
+            composite0(bridge, useBlit);
+        } finally {
+            me.cortex.voxy.client.core.util.VxTiming.end(me.cortex.voxy.client.core.util.VxTiming.COMPOSITE);
+        }
+    }
+
+    private static void composite0(IOSurfaceBridge bridge, boolean useBlit) {
         if (disabled || bridge == null || bridge.ioSurfaceHandle() == 0) return;
 
         // (Re)bind on first use or after the bridge re-allocated (resize).
@@ -362,6 +372,15 @@ public final class IOSurfaceBridgeCompositor {
      * compositor's CGL binding + per-frame resync machinery.
      */
     public static int acquireColorRectTex(IOSurfaceBridge bridge) {
+        me.cortex.voxy.client.core.util.VxTiming.begin(me.cortex.voxy.client.core.util.VxTiming.ACQUIRE);
+        try {
+            return acquireColorRectTex0(bridge);
+        } finally {
+            me.cortex.voxy.client.core.util.VxTiming.end(me.cortex.voxy.client.core.util.VxTiming.ACQUIRE);
+        }
+    }
+
+    private static int acquireColorRectTex0(IOSurfaceBridge bridge) {
         if (disabled || bridge == null || bridge.ioSurfaceHandle() == 0) return 0;
         if (compositeGlTex == 0 || boundIoSurface != bridge.ioSurfaceHandle()) {
             if (!rebind(bridge)) {
@@ -375,6 +394,15 @@ public final class IOSurfaceBridgeCompositor {
 
     /** Depth-bridge counterpart of {@link #acquireColorRectTex}. */
     public static int acquireDepthRectTex(IOSurfaceBridge depthBridge) {
+        me.cortex.voxy.client.core.util.VxTiming.begin(me.cortex.voxy.client.core.util.VxTiming.ACQUIRE);
+        try {
+            return acquireDepthRectTex0(depthBridge);
+        } finally {
+            me.cortex.voxy.client.core.util.VxTiming.end(me.cortex.voxy.client.core.util.VxTiming.ACQUIRE);
+        }
+    }
+
+    private static int acquireDepthRectTex0(IOSurfaceBridge depthBridge) {
         if (gbufferDisabled || depthBridge == null || depthBridge.ioSurfaceHandle() == 0) return 0;
         if (gbufferDepthGlTex == 0 || boundDepthIoSurface != depthBridge.ioSurfaceHandle()) {
             if (!rebindDepth(depthBridge)) {
@@ -473,6 +501,15 @@ public final class IOSurfaceBridgeCompositor {
     }
 
     public static int acquireAuxRectTex(IOSurfaceBridge bridge) {
+        me.cortex.voxy.client.core.util.VxTiming.begin(me.cortex.voxy.client.core.util.VxTiming.ACQUIRE);
+        try {
+            return acquireAuxRectTex0(bridge);
+        } finally {
+            me.cortex.voxy.client.core.util.VxTiming.end(me.cortex.voxy.client.core.util.VxTiming.ACQUIRE);
+        }
+    }
+
+    private static int acquireAuxRectTex0(IOSurfaceBridge bridge) {
         if (bridge == null || bridge.ioSurfaceHandle() == 0) return 0;
         long handle = bridge.ioSurfaceHandle();
         int tex = AUX_RECT_TEXES.getOrDefault(handle, 0);
@@ -515,6 +552,18 @@ public final class IOSurfaceBridgeCompositor {
     public static boolean compositeIrisGbuffer(IOSurfaceBridge colorBridge, IOSurfaceBridge depthBridge,
                                                org.joml.Matrix4f invVoxyMVP, org.joml.Matrix4f mcMVP,
                                                boolean voxyDepthIsWindowConvention, float maxNdcZ) {
+        me.cortex.voxy.client.core.util.VxTiming.begin(me.cortex.voxy.client.core.util.VxTiming.COMPOSITE);
+        try {
+            return compositeIrisGbuffer0(colorBridge, depthBridge, invVoxyMVP, mcMVP,
+                    voxyDepthIsWindowConvention, maxNdcZ);
+        } finally {
+            me.cortex.voxy.client.core.util.VxTiming.end(me.cortex.voxy.client.core.util.VxTiming.COMPOSITE);
+        }
+    }
+
+    private static boolean compositeIrisGbuffer0(IOSurfaceBridge colorBridge, IOSurfaceBridge depthBridge,
+                                                 org.joml.Matrix4f invVoxyMVP, org.joml.Matrix4f mcMVP,
+                                                 boolean voxyDepthIsWindowConvention, float maxNdcZ) {
         if (gbufferDisabled || disabled
                 || colorBridge == null || colorBridge.ioSurfaceHandle() == 0
                 || depthBridge == null || depthBridge.ioSurfaceHandle() == 0) {

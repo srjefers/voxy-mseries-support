@@ -1223,6 +1223,21 @@ public final class MetalVxResolvePass {
                                int oP0, int oP1, int oP2, int opaqueDepthRect,
                                int tP0, int tP1, int tP2, int transDepthRect,
                                int fbw, int fbh) {
+        // VOXY_FRAME_TIMING=1 GL-side span (total; runOne opaque/trans and the
+        // side-channel decodes are spanned separately inside).
+        VxTiming.begin(VxTiming.RESOLVE);
+        try {
+            resolve0(data, ipipe, oP0, oP1, oP2, opaqueDepthRect, tP0, tP1, tP2, transDepthRect, fbw, fbh);
+        } finally {
+            VxTiming.end(VxTiming.RESOLVE);
+        }
+    }
+
+    private static void resolve0(IrisVoxyRenderPipelineData data,
+                                 net.irisshaders.iris.pipeline.IrisRenderingPipeline ipipe,
+                                 int oP0, int oP1, int oP2, int opaqueDepthRect,
+                                 int tP0, int tP1, int tP2, int transDepthRect,
+                                 int fbw, int fbh) {
         checkPipelineGeneration(data, ipipe);
         if (!build(data)) return;
         if (oP0 == 0 || opaqueDepthRect == 0) return;
@@ -1286,6 +1301,18 @@ public final class MetalVxResolvePass {
      * BSL water shading while opaque LODs stay byte-identical to dev. GL state saved/restored.
      */
     public static void resolveTranslucentOnly(IrisVoxyRenderPipelineData data,
+                               net.irisshaders.iris.pipeline.IrisRenderingPipeline ipipe,
+                               int tP0, int tP1, int tP2, int transDepthRect,
+                               int fbw, int fbh) {
+        VxTiming.begin(VxTiming.RESOLVE_TRANS_ONLY);
+        try {
+            resolveTranslucentOnly0(data, ipipe, tP0, tP1, tP2, transDepthRect, fbw, fbh);
+        } finally {
+            VxTiming.end(VxTiming.RESOLVE_TRANS_ONLY);
+        }
+    }
+
+    private static void resolveTranslucentOnly0(IrisVoxyRenderPipelineData data,
                                net.irisshaders.iris.pipeline.IrisRenderingPipeline ipipe,
                                int tP0, int tP1, int tP2, int transDepthRect,
                                int fbw, int fbh) {
@@ -1457,6 +1484,20 @@ public final class MetalVxResolvePass {
     private static void runOne(IrisVoxyRenderPipelineData data, Prog p,
                                int plane0, int plane1, int plane2, int depthRect,
                                int[] targets, int fbw, int fbh, boolean blend, int ssrMirrorTex) {
+        // VOXY_FRAME_TIMING=1 GL-side span: the pack's voxy_opaque (blend=false,
+        // the 5481ed12 default cost) or voxy_translucent fullscreen resolve.
+        int span = blend ? VxTiming.RESOLVE_TRANS : VxTiming.RESOLVE_OPAQUE;
+        VxTiming.begin(span);
+        try {
+            runOne0(data, p, plane0, plane1, plane2, depthRect, targets, fbw, fbh, blend, ssrMirrorTex);
+        } finally {
+            VxTiming.end(span);
+        }
+    }
+
+    private static void runOne0(IrisVoxyRenderPipelineData data, Prog p,
+                                int plane0, int plane1, int plane2, int depthRect,
+                                int[] targets, int fbw, int fbh, boolean blend, int ssrMirrorTex) {
         if (p == null || targets == null || targets.length == 0) return;
         if (plane0 == 0 || depthRect == 0) return;
         boolean dirty = p.attached.length != targets.length;
@@ -1563,7 +1604,11 @@ public final class MetalVxResolvePass {
                     + " expected=[" + plane0 + "," + plane1 + "," + plane2 + "," + depthRect + "]"
                     + " samplerUnits(uVxAlbedo,uVxTint,uVxMisc,uVxDepth)=" + java.util.Arrays.toString(sunits));
         }
+        // Opaque resolve: LOD coverage occlusion query (the assembled fragment
+        // discards vxD>=1 / alpha<=0.001, so samples passed = LOD pixels).
+        if (!blend) VxTiming.beginCoverage((long) fbw * fbh);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        if (!blend) VxTiming.endCoverage();
         if (prevSamplers != null) {
             // Iris assumes its sampler-object bindings persist across our hook.
             for (int u = 0; u < 4; u++) org.lwjgl.opengl.GL33C.glBindSampler(u, prevSamplers[u]);

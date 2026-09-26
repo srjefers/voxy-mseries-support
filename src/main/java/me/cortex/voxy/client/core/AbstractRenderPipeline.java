@@ -588,6 +588,14 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         var backend = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get();
         if (!(backend instanceof me.cortex.voxy.client.core.metal.MetalRenderBackend mrb)) return;
 
+        // VOXY_FRAME_TIMING=1: GL-side vx pass probe frame boundary — folds
+        // the previous frame's spans (lightmap sync below, the SOLID-hook GL
+        // passes after this method returns) and polls the async GL timer
+        // queries. No-op (JIT-folded) when the gate is off.
+        if (me.cortex.voxy.client.core.util.VxTiming.ENABLED) {
+            me.cortex.voxy.client.core.util.VxTiming.beginFrame();
+        }
+
         // 1) Allocate the IOSurface bridge sized to MC's framebuffer. The
         //    bridge is the cross-context handle: Metal renders into the
         //    backing MTLTexture, IOSurfaceBridgeCompositor blits it into MC's
@@ -730,6 +738,10 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                         me.cortex.voxy.client.core.util.FrameTiming.jniDrawLoopNs / 600.0 / 1e6,
                         me.cortex.voxy.client.core.util.FrameTiming.jniDrawCount / 600));
                 me.cortex.voxy.client.core.util.FrameTiming.reset();
+                // Same gate, same window: the GL-side vx-contract pass line
+                // (VxIrisSideChannel / MetalVxResolvePass / VxContractInjector /
+                // compositor / lightmap) with async GL_TIME_ELAPSED results.
+                me.cortex.voxy.client.core.util.VxTiming.report(this.metalFrame);
             }
         }
 
