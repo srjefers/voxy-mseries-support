@@ -63,6 +63,13 @@ import static org.lwjgl.opengl.GL11.*;
 //TODO: NOTE!!! is it worth even uploading as a 16x16 texture, since automatic lod selection... doing 8x8 textures might be perfectly ok!!!
 // this _quarters_ the memory requirements for the texture atlas!!! WHICH IS HUGE saving
 public class ModelFactory {
+    /** Far-LOD plant work S1 (2026-09-25): plant cross models bake without
+     *  dilation and get centred side faces on Metal. VOXY_LOD_PLANT_CROSS=0
+     *  reverts to the hollow-box behaviour. Read from the bakery too. */
+    public static final boolean PLANT_CROSS = !"0".equals(System.getenv("VOXY_LOD_PLANT_CROSS"));
+    private static final java.util.concurrent.atomic.AtomicBoolean PLANT_CROSS_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
     public static final int MODEL_TEXTURE_SIZE = 16;
     public static final int LAYERS = Integer.numberOfTrailingZeros(MODEL_TEXTURE_SIZE);
 
@@ -563,6 +570,36 @@ public class ModelFactory {
             float ownHeight = blockState.getFluidState().getOwnHeight();
             if (sizes[up] >= 0.0f && sizes[up] < 0.01f && ownHeight > 0.0f && ownHeight < 1.0f) {
                 sizes[up] = 1.0f - ownHeight;
+            }
+        }
+
+        // Metal plant cross models (2026-09-25, far-LOD plant work S1): the
+        // Metal capture writes no depth bits, so a cross model's four side
+        // faces come out at offset 0 — ON the cell walls — instead of the
+        // ~0.5 the GL bake measures for two 45-degree blades. Together with
+        // the bake-fill dilation (skipped for plants now, see
+        // MetalViewCapture.emitToStream) that made every tuft a hollow green
+        // box at LOD 0 and let it occlude its neighbours' side faces. Put the
+        // side faces at 0.5 (enc 32): quad_util mixes depthOffset with
+        // 1-depthOffset per face parity, so both opposing faces coincide at
+        // the cell centre = upstream's axis-aligned '+' cross, self-lit and
+        // non-occluding (offset >= 0.1 clears occludesFace below).
+        // GL bakes real depth and never hits the == 0 condition.
+        if (PLANT_CROSS && !isFluid
+                && blockState.getFluidState().isEmpty()
+                && blockState.getBlock() instanceof VegetationBlock
+                && me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                        != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+            boolean any = false;
+            for (int face = 2; face < 6; face++) { // NORTH, SOUTH, WEST, EAST
+                if (sizes[face] >= 0.0f && sizes[face] < 0.01f) {
+                    sizes[face] = 0.5f;
+                    any = true;
+                }
+            }
+            if (any && PLANT_CROSS_LOGGED.compareAndSet(false, true)) {
+                Logger.info("[Metal-LODTEST] plant cross bake ON: undilated side cells + centred depth 0.5 for "
+                        + "VegetationBlock models (VOXY_LOD_PLANT_CROSS=0 reverts); first model " + blockState);
             }
         }
 

@@ -13,6 +13,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.VegetationBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.SingleThreadedRandomSource;
@@ -585,7 +586,14 @@ public class ModelTextureBakery {
             }
         }
 
-        this.metalCapture.emitToStream(destAddr);
+        // Plant cross models (same predicate as ModelFactory's bit-55 flag):
+        // keep the sparse blade alpha instead of dilating the cell into a
+        // solid tile. See MetalViewCapture.emitToStream(long, boolean).
+        boolean plantCross = isBlock
+                && me.cortex.voxy.client.core.model.ModelFactory.PLANT_CROSS
+                && state.getFluidState().isEmpty()
+                && state.getBlock() instanceof VegetationBlock;
+        this.metalCapture.emitToStream(destAddr, plantCross);
         if (!isBlock) {
             maybeLogWaterBakeDiag(state, destAddr);
         }
