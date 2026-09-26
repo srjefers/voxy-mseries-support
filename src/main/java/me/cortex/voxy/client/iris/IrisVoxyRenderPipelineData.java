@@ -521,7 +521,7 @@ public class IrisVoxyRenderPipelineData {
 
         //samplerSet contains our samplers
         if (samplerSet.size() != samplerNameSet.size()) {
-            Logger.error("Did not find all requested samplers. Found [" + samplerSet.stream().map(a->a.name).collect(Collectors.joining()) + "] expected " + samplerNameSet);
+            Logger.error("Did not find all requested samplers. Found [" + samplerSet.stream().map(a->a.name).collect(Collectors.joining(", ")) + "] expected " + samplerNameSet);
         }
 
         //TODO: generate a layout (defines) for all the samplers with the correct types

@@ -170,6 +170,8 @@ public class VoxyRenderSystem {
         //Keep the world loaded, NOTE: this is done FIRST, to keep and ensure that even if the rest of loading takes more
         // than timeout, we keep the world acquired
         world.acquireRef();
+        Logger.info("Creating Voxy render system");
+
         System.gc();
 
         if (Minecraft.getInstance().options.getEffectiveRenderDistance()<3) {
