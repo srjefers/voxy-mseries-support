@@ -11,8 +11,11 @@ import net.irisshaders.iris.shaderpack.ShaderPack;
 import net.irisshaders.iris.shaderpack.include.AbsolutePackPath;
 import org.lwjgl.opengl.ARBDrawBuffersBlend;
 
+import java.io.IOException;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Type;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.function.Function;
 import java.util.function.IntSupplier;
@@ -357,6 +360,10 @@ public class IrisShaderPatch {
                 }
                 voxyPatchData = builder.toString();
             }
+
+            //Stupid chunk fade in patch (should probably just breaks
+            voxyPatchData = voxyPatchData.replaceAll("void _cfi_ignoreMarker\\(\\) \\{\\}", "");
+
             patchData = GSON.fromJson(voxyPatchData, PatchGson.class);
             if (patchData == null) {
                 throw new IllegalStateException("Voxy patch json returned null, this is most likely due to malformed json file");
@@ -387,8 +394,15 @@ public class IrisShaderPatch {
             }
         } catch (Exception e) {
             patchData = null;
-            Logger.error("Failed to parse patch data gson",e);
-            throw new ShaderLoadError("Failed to parse patch data gson",e);
+            Logger.error("Failed to parse patch data gson, dumping json",e);
+            try {
+                Files.writeString(Path.of("JSON_DUMP.txt"), voxyPatchData);//relative: lands in the game directory (JVM working dir)
+            } catch (IOException j) {
+                //fork: upstream threw RuntimeException(j) here, which dropped the parse error and escaped
+                // MixinIris's ShaderLoadError handler (read-only instance dirs are common on macOS launchers)
+                Logger.error("Could not write JSON_DUMP.txt", j);
+            }
+            throw new ShaderLoadError("Failed to parse patch data gson, dumping json",e);
         }
         if (patchData == null) {
             return null;
