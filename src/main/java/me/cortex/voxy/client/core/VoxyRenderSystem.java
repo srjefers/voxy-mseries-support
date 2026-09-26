@@ -1099,6 +1099,28 @@ public class VoxyRenderSystem {
 
             geometryCapacity = Math.min(geometryCapacity, limit);
         }
+        //Fork (Metal, unified memory): the arena is a Shared MTLBuffer, and the first command buffer that
+        // binds it makes the WHOLE length resident and wired (probe: +4096 MB footprint on first bind),
+        // while a heavily explored session peaked at ~440 MB of geometry. The VRAM clamp above only exists
+        // for NVIDIA GL, so every Apple Silicon Mac paid the full 4 GB. Scale the cap with physical RAM:
+        // RAM/16, clamped to 1..4 GB (16 GB -> 1 GB, 48 GB -> 3 GB, 64 GB+ -> 4 GB). NodeCleaner evicts
+        // when the arena runs low, so a smaller arena degrades to coarser far LODs, not a crash.
+        // -Dvoxy.geometryBufferSizeOverrideMB still wins; VOXY_METAL_ARENA_RAM_SCALE=0 restores 4 GB.
+        if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                != me.cortex.voxy.client.core.gpu.BackendType.OPENGL
+                && !"0".equals(System.getenv("VOXY_METAL_ARENA_RAM_SCALE"))) {
+            long ram = physicalMemoryBytes();
+            if (ram > 0) {
+                long cap = Math.min(Math.max(ram / 16, 1L << 30), 1L << 32);
+                cap = (cap & ~((1L << 28) - 1)) - 1024;//256 MiB steps, same -1 KiB shape as the default
+                if (cap < geometryCapacity) {
+                    geometryCapacity = cap;
+                }
+                Logger.info("[Metal-MEM] geometry arena " + (geometryCapacity >> 20) + " MB for " + (ram >> 30)
+                        + " GB of unified memory (RAM/16, 1-4 GB; -Dvoxy.geometryBufferSizeOverrideMB overrides,"
+                        + " VOXY_METAL_ARENA_RAM_SCALE=0 restores 4 GB)");
+            }
+        }
         //geometryCapacity = 1<<28;
         //geometryCapacity = 1<<30;//1GB test
         var override = System.getProperty("voxy.geometryBufferSizeOverrideMB", "");
@@ -1106,6 +1128,18 @@ public class VoxyRenderSystem {
             geometryCapacity = Long.parseLong(override)*1024L*1024L;
         }
         return geometryCapacity;
+    }
+
+    private static long physicalMemoryBytes() {
+        try {
+            var os = java.lang.management.ManagementFactory.getOperatingSystemMXBean();
+            if (os instanceof com.sun.management.OperatingSystemMXBean sun) {
+                return sun.getTotalMemorySize();
+            }
+        } catch (Throwable t) {
+            Logger.warn("Could not read physical memory size: " + t);
+        }
+        return -1;
     }
 
     public WorldEngine getEngine() {
