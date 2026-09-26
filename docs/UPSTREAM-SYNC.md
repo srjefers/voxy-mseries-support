@@ -28,6 +28,8 @@ Upstream changed the Iris 'vx' contract in five places since the merge-base; the
 
 **Status 2026-09-26 (B2):** all 13 commits applied (7 fork commits). Hand-applied into the rewritten AsyncNodeManager / HierarchicalOcclusionTraverser / NodeManager: 36f85026+02e490e0+8187d2fd, ad5f6ee0 (both dispatch sites), ba460516 (both child-existence sites, rate-limited to 20). Knobs: `VOXY_NODE_UPLOAD_CAP_KB` (0 = off), `VOXY_GEOMETRY_ALLOC_ALIGN` (1024 = pre-sync), `VOXY_RD_PROCESS_RATE` (20 = pre-sync), `-Dvoxy.verify.verifyNodeManager`.
 
+**Status 2026-09-26 (B3):** applied except `7bb498f2` (build.gradle hash classifier), `f703d83b`/`a47a028d` (fabric/loader version bumps — separate decision). Hand-applied: cff48664 (menu guard), d4acdaf1+1952d3df (viewport guards in `setupViewport`/`renderOpaque`, `Iris.getCurrentPack()`), lock trio (`-Dvoxy.exclusiveLock=true` opt-in, `{player_uuid}` token), 158ff6a5 (`RENDER_RELOAD` local from 554243e8), b281d934+0033da2a, 516ad99f, 7889f119+b72fcef6 (json by hand). Also fixed here: the B1 port of da5a6543 had silently lost the `client.voxy.mixins.json` hunk (dangling `MixinLayerLightSectionStorage` entry — would fail at Mixin apply); fixup commit folded at integration. New user-visible behaviour: `/voxy import current`, chat warning at render distance < 3, Voxy settings page hidden when Voxy is unavailable.
+
 ### B0 Mesher correctness (shared GL+Metal; run first)  — effort S, before-alpha
 - d69bf7e8 L — long mask ~((1L<<26)-1) [APPLY — no behavioural change, see Top 10 correction]
 - 2dc1f1d3 how has this been missed — aabb Math.max(0, max-min-1) [APPLY, from unclassified tail; fork RenderDataFactory:1751]

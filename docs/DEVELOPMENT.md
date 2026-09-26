@@ -81,6 +81,7 @@ development:
 | `VOXY_GEOMETRY_ALLOC_ALIGN=1024` | Restore the 1024-element geometry allocation granule (upstream 72b3ade6 uses 128, ~20% less geometry memory). Marker `[Voxy-SYNC] geometry allocation granule` |
 | `VOXY_RD_PROCESS_RATE=20` | Restore the pre-sync render-distance tracker rate (upstream 27f82dda: 40 top-level node changes per tick). Marker `[Voxy-SYNC] render-distance process rate` |
 | `-Dvoxy.verify.verifyNodeManager=true` | Run NodeManager.verifyIntegrity after every async result publish (upstream 8187d2fd; slow) |
+| `-Dvoxy.exclusiveLock=true` | Hold an exclusive lock on `.voxy/voxy.lock` so a second game instance cannot open the same store (upstream 36964ee4/c6b30e51; off by default) |
 | `VOXY_FRAME_TIMING=1` | Per-stage frame cost probe: `[Metal-TIMING]` (Metal-side waits) + `[Metal-VXTIMING]` (GL-side vx passes, async timer queries). Zero cost when unset |
 | `VOXY_VX_TIMING=0` | Kill switch: with `VOXY_FRAME_TIMING=1`, keep only `[Metal-TIMING]` (no GL queries, no VXTIMING line) — pre-probe behaviour |
 | `VOXY_VX_TIMING_GPU=0` | `[Metal-VXTIMING]` CPU brackets only, no `GL_TIME_ELAPSED`/`GL_SAMPLES_PASSED` queries |
