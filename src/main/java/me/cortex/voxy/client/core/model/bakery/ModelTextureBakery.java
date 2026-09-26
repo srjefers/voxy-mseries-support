@@ -38,9 +38,25 @@ import com.mojang.blaze3d.vertex.PoseStack;
 public class ModelTextureBakery {
     //Note: the first bit of metadata is if alpha discard is enabled
     private static final Matrix4f[] VIEWS = new Matrix4f[6];
-    /** 45-degree yaw about the cell centre for plant cross bakes on Metal (see renderToStreamMetal). */
+    /** Horizontal scale applied to plant cross bakes after the 45-degree yaw.
+     *  MC's cross elements carry rescale:true, i.e. the blade quad is 16*sqrt(2)
+     *  = 20.4 units long so it spans the cell DIAGONAL; once yawed onto an axis
+     *  it overflows the 16-unit cell and gets clipped, so the sprite's blades
+     *  fill the whole face and every tuft reads ~1.4x wider than vanilla's X
+     *  seen along an axis (spyglass A/B, 2026-09-25). 1/sqrt(2) undoes the
+     *  rescale: the axis-aligned blade is exactly as wide as vanilla's blade
+     *  projected at 45 degrees. VOXY_LOD_PLANT_SCALE=<f> tunes (0.5 = half). */
+    private static final float PLANT_XZ_SCALE = parsePlantScale();
+    private static float parsePlantScale() {
+        String v = System.getenv("VOXY_LOD_PLANT_SCALE");
+        if (v == null || v.isEmpty()) return 0.70710678f;
+        try { return Math.max(0.1f, Math.min(1.5f, Float.parseFloat(v.trim()))); }
+        catch (NumberFormatException e) { return 0.70710678f; }
+    }
+    /** 45-degree yaw + horizontal shrink about the cell centre for plant cross bakes on Metal. */
     private static final Matrix4f PLANT_ROT45 = new Matrix4f()
             .translate(0.5f, 0f, 0.5f)
+            .scale(PLANT_XZ_SCALE, 1f, PLANT_XZ_SCALE)
             .rotateY((float) Math.toRadians(45.0))
             .translate(-0.5f, 0f, -0.5f);
 
