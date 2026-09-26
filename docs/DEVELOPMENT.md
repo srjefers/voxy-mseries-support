@@ -77,6 +77,10 @@ development:
 | `VOXY_SYNC_UNDEFINED_SKYLIGHT=0` | Kill switch: fill not-in-storage sections with sky light 0 again (pre upstream 47053483; dark patches next to unstored sections) |
 | `VOXY_SECTION_FREE_ASSERT=0` | Downgrade the "Section freed while marked as dirty or in the save queue" assertion (upstream c7166d3f/c2dca44e) from a crash to a log line |
 | `VOXY_SYNC_CHUNK_POS_CHECK=0` | Kill switch: skip the chunk-ring slot position check (upstream 6189ee38) in `voxy$cheekyGetChunk` |
+| `VOXY_NODE_UPLOAD_CAP_KB=N` | Geometry uploaded per async-node-manager run (default 1000 KB, upstream 36f85026 frame-spike smoothing); `0` = uncapped (pre-sync). Marker `[Voxy-SYNC] async node upload cap` |
+| `VOXY_GEOMETRY_ALLOC_ALIGN=1024` | Restore the 1024-element geometry allocation granule (upstream 72b3ade6 uses 128, ~20% less geometry memory). Marker `[Voxy-SYNC] geometry allocation granule` |
+| `VOXY_RD_PROCESS_RATE=20` | Restore the pre-sync render-distance tracker rate (upstream 27f82dda: 40 top-level node changes per tick). Marker `[Voxy-SYNC] render-distance process rate` |
+| `-Dvoxy.verify.verifyNodeManager=true` | Run NodeManager.verifyIntegrity after every async result publish (upstream 8187d2fd; slow) |
 | `VOXY_FRAME_TIMING=1` | Per-stage frame cost probe: `[Metal-TIMING]` (Metal-side waits) + `[Metal-VXTIMING]` (GL-side vx passes, async timer queries). Zero cost when unset |
 | `VOXY_VX_TIMING=0` | Kill switch: with `VOXY_FRAME_TIMING=1`, keep only `[Metal-TIMING]` (no GL queries, no VXTIMING line) — pre-probe behaviour |
 | `VOXY_VX_TIMING_GPU=0` | `[Metal-VXTIMING]` CPU brackets only, no `GL_TIME_ELAPSED`/`GL_SAMPLES_PASSED` queries |

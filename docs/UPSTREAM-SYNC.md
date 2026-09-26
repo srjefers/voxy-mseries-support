@@ -26,6 +26,8 @@ Upstream changed the Iris 'vx' contract in five places since the merge-base; the
 
 **Status 2026-09-26 (later):** B1 applied except `7d511421` (no-memcpy serialization pipeline — deferred: the fork's ZSTDCompressor carries the M13 input-scratch hardening and the thread-local output buffer needs on-device RSS verification; re-evaluate with B11). Adaptations: `c2dca44e` without upstream's `release(boolean,int hints)` overload (arrived outside the batch), `352da265` keeps the fork's level-less `iterateStoredSectionPositions` inside try-with-resources and does NOT bump rocksdbjni (issue #18), `136381a7` Java hunks only. Kill switches: `VOXY_SYNC_UNDEFINED_SKYLIGHT=0`, `VOXY_SECTION_FREE_ASSERT=0`, `VOXY_SYNC_CHUNK_POS_CHECK=0`.
 
+**Status 2026-09-26 (B2):** all 13 commits applied (7 fork commits). Hand-applied into the rewritten AsyncNodeManager / HierarchicalOcclusionTraverser / NodeManager: 36f85026+02e490e0+8187d2fd, ad5f6ee0 (both dispatch sites), ba460516 (both child-existence sites, rate-limited to 20). Knobs: `VOXY_NODE_UPLOAD_CAP_KB` (0 = off), `VOXY_GEOMETRY_ALLOC_ALIGN` (1024 = pre-sync), `VOXY_RD_PROCESS_RATE` (20 = pre-sync), `-Dvoxy.verify.verifyNodeManager`.
+
 ### B0 Mesher correctness (shared GL+Metal; run first)  — effort S, before-alpha
 - d69bf7e8 L — long mask ~((1L<<26)-1) [APPLY — no behavioural change, see Top 10 correction]
 - 2dc1f1d3 how has this been missed — aabb Math.max(0, max-min-1) [APPLY, from unclassified tail; fork RenderDataFactory:1751]

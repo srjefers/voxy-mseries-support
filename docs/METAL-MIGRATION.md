@@ -125,6 +125,9 @@ real translucent biome-tinted water, full texture detail, ~111 FPS.
 | `VOXY_SYNC_UNDEFINED_SKYLIGHT=0` | off (sky 15 on) | Kill switch: pre-sync zero fill for sections that are not in storage (upstream 47053483 fills air with sky light 15 so bordering LOD faces are not cave-dark) |
 | `VOXY_SECTION_FREE_ASSERT=0` | off (throw) | Upstream c7166d3f/c2dca44e assertion that a section is never freed while dirty/queued; `0` logs instead of crashing so a session survives while the trace is collected |
 | `VOXY_SYNC_CHUNK_POS_CHECK=0` | off (check on) | Kill switch: pre-sync unchecked chunk-ring slot read (upstream 6189ee38 rejects a slot holding a chunk from another position after death/teleport) |
+| `VOXY_NODE_UPLOAD_CAP_KB=N` | 1000 | Per-run geometry upload cap in the async node manager (upstream 36f85026); `0` restores the uncapped loop. Unified memory on Apple Silicon may tolerate a larger cap — measure section fill rate vs frame time |
+| `VOXY_GEOMETRY_ALLOC_ALIGN=N` | 128 | Geometry allocation granule in elements (power of two). Upstream 72b3ade6 went 1024 → 128 for ~20% less geometry memory; `1024` restores pre-sync |
+| `VOXY_RD_PROCESS_RATE=N` | 40 | Render-distance tracker add/remove rate per tick (upstream 27f82dda doubled it once request ids became 19-bit); `20` restores pre-sync |
 | `VOXY_FRAME_TIMING=1` | off | Print `[Metal-TIMING]` (hotWait / drawFlushWait / bridgeWait / jniDrawLoop / lightmapSync / resync) and `[Metal-VXTIMING]` (GL-side vx passes, GPU via async timer queries) every 600 frames. Close F3 while sampling: vanilla's GPU-utilization timer owns `GL_TIME_ELAPSED` |
 | `VOXY_VX_TIMING=0` | off | With `VOXY_FRAME_TIMING=1`: keep only `[Metal-TIMING]` (no GL queries) |
 | `VOXY_VX_TIMING_GPU=0` | off | `[Metal-VXTIMING]` CPU brackets only |
