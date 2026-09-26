@@ -47,11 +47,12 @@ public class SectionSavingService {
         }
     }*/
 
-    public void enqueueSave(WorldEngine in, WorldSection section, boolean nonBlocking) {
+    public boolean enqueueSave(WorldEngine in, WorldSection section, boolean nonBlocking, boolean sectionAlreadyAcquired) {
         //If its not enqueued for saving then enqueue it
         if (section.exchangeIsInSaveQueue(true)) {
-            //Acquire the section for use
-            section.acquire();
+            if (!sectionAlreadyAcquired) {
+                section.acquire(); //Acquire the section for use
+            }
 
             //Hard limit the save count to prevent OOM
             if ((!nonBlocking) && this.getTaskCount() > SOFT_MAX_QUEUE_SIZE) {
@@ -74,7 +75,9 @@ public class SectionSavingService {
 
             this.saveQueue.add(new SaveEntry(in, section));
             this.service.execute();
+            return true;
         }
+        return false;
     }
 
     public void shutdown() {
