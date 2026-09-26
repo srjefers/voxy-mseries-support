@@ -164,6 +164,9 @@ public final class WorldSection {
         if ((witness & 1) == 0 && witness != 0) {
             throw new IllegalStateException("Section marked as free but has refs");
         }
+        if (witness == 1 && (this.isDirty || this.inSaveQueue)) {
+            throw new IllegalStateException("Section freed while marked as dirty or in the save queue");
+        }
         return witness == 1;
     }
 
