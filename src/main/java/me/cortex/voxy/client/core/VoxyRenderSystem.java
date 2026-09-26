@@ -1104,21 +1104,29 @@ public class VoxyRenderSystem {
         // while a heavily explored session peaked at ~440 MB of geometry. The VRAM clamp above only exists
         // for NVIDIA GL, so every Apple Silicon Mac paid the full 4 GB. Scale the cap with physical RAM:
         // RAM/16, clamped to 1..4 GB (16 GB -> 1 GB, 48 GB -> 3 GB, 64 GB+ -> 4 GB). NodeCleaner evicts
-        // when the arena runs low, so a smaller arena degrades to coarser far LODs, not a crash.
+        // when less than 256 MB is left, and on Metal the upload loop defers a section that has no
+        // contiguous block (AsyncNodeManager fit gate) instead of throwing 'Geometry OOM', so a smaller
+        // arena costs far-LOD detail, not a crash.
         // -Dvoxy.geometryBufferSizeOverrideMB still wins; VOXY_METAL_ARENA_RAM_SCALE=0 restores 4 GB.
-        if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
-                != me.cortex.voxy.client.core.gpu.BackendType.OPENGL
-                && !"0".equals(System.getenv("VOXY_METAL_ARENA_RAM_SCALE"))) {
-            long ram = physicalMemoryBytes();
-            if (ram > 0) {
-                long cap = Math.min(Math.max(ram / 16, 1L << 30), 1L << 32);
-                cap = (cap & ~((1L << 28) - 1)) - 1024;//256 MiB steps, same -1 KiB shape as the default
-                if (cap < geometryCapacity) {
-                    geometryCapacity = cap;
+        boolean metal = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+        String arenaSource = null;
+        long ram = -1;
+        if (metal) {
+            if ("0".equals(System.getenv("VOXY_METAL_ARENA_RAM_SCALE"))) {
+                arenaSource = "VOXY_METAL_ARENA_RAM_SCALE=0, not RAM-scaled";
+            } else {
+                ram = physicalMemoryBytes();
+                if (ram > 0) {
+                    long cap = Math.min(Math.max(ram / 16, 1L << 30), 1L << 32);
+                    cap = (cap & ~((1L << 28) - 1)) - 1024;//256 MiB steps, same -1 KiB shape as the default
+                    if (cap < geometryCapacity) {
+                        geometryCapacity = cap;
+                    }
+                    arenaSource = "RAM/16 clamped to 1-4 GB";
+                } else {
+                    arenaSource = "physical RAM unknown, not RAM-scaled";
                 }
-                Logger.info("[Metal-MEM] geometry arena " + (geometryCapacity >> 20) + " MB for " + (ram >> 30)
-                        + " GB of unified memory (RAM/16, 1-4 GB; -Dvoxy.geometryBufferSizeOverrideMB overrides,"
-                        + " VOXY_METAL_ARENA_RAM_SCALE=0 restores 4 GB)");
             }
         }
         //geometryCapacity = 1<<28;
@@ -1126,6 +1134,12 @@ public class VoxyRenderSystem {
         var override = System.getProperty("voxy.geometryBufferSizeOverrideMB", "");
         if (!override.isEmpty()) {
             geometryCapacity = Long.parseLong(override)*1024L*1024L;
+            arenaSource = "-Dvoxy.geometryBufferSizeOverrideMB";
+        }
+        if (metal) {
+            Logger.info("[Metal-MEM] geometry arena " + ((geometryCapacity + 1024) >> 20) + " MB"
+                    + (ram > 0 ? " for " + (ram >> 30) + " GB of unified memory" : "")
+                    + " (" + arenaSource + "; the override property wins, VOXY_METAL_ARENA_RAM_SCALE=0 restores 4 GB)");
         }
         return geometryCapacity;
     }

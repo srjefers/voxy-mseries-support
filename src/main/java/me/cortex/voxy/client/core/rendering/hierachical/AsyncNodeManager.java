@@ -194,6 +194,14 @@ public class AsyncNodeManager {
     private static final int SCATTER_PUSH_BINDING = 14;
 
     private final me.cortex.voxy.client.core.gpu.RenderBackend backend = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get();
+    //Fork (Metal): defer a geometry result that has no contiguous block in the arena instead of letting
+    // createMeta throw 'Geometry OOM' (worker death -> render-thread rethrow -> crash). The 50 MB gate
+    // counts holes as free, so a fragmented arena passes it; the smaller RAM-scaled arenas make that
+    // reachable. The deferred job goes back to the head of the queue and the cleaner makes room.
+    // GL keeps upstream behaviour byte-identical. VOXY_GEOMETRY_FIT_GATE=0 restores the throw.
+    private final boolean fitGate = this.backend.getType() != me.cortex.voxy.client.core.gpu.BackendType.OPENGL
+            && !"0".equals(System.getenv("VOXY_GEOMETRY_FIT_GATE"));
+    private long fitDeferrals;
 
     private final me.cortex.voxy.client.core.gpu.IGpuPipeline scatterWrite = this.backend.createComputePipeline(
             new me.cortex.voxy.client.core.gpu.ComputePipelineDesc(
@@ -296,6 +304,19 @@ public class AsyncNodeManager {
             var job = this.geometryUpdateQueue.poll();
             if (job == null)
                 break;
+            if (this.fitGate && !this.geometryManager.canFit(job)) {
+                this.geometryUpdateQueue.addFirst(job);
+                long n = ++this.fitDeferrals;
+                if ((n & (n - 1)) == 0) {//1st, 2nd, 4th, 8th... occurrence
+                    long[] shape = this.geometryManager.freeShape();
+                    Logger.warn("[Metal-MEM] geometry arena fragmented: deferred a " + (job.geometryBuffer.size >> 10)
+                            + " KB section (largest hole " + (shape[0] >> 10) + " KB, top room " + (shape[1] >> 10)
+                            + " KB, used " + (this.geometryManager.getGeometryUsedBytes() >> 20) + " of "
+                            + (this.geometryCapacity >> 20) + " MB); waiting for the cleaner. deferrals=" + n
+                            + " (VOXY_GEOMETRY_FIT_GATE=0 restores the OOM throw)");
+                }
+                break;
+            }
             workDone++;
             this.manager.processGeometryResult(job);
             if (job.geometryBuffer!=null) {
@@ -364,6 +385,11 @@ public class AsyncNodeManager {
 
         if (workDone == 0) {//Nothing happened, which is odd, but just return
             //Should probably log that nothing happened, at least once
+            if (this.fitGate && !this.geometryUpdateQueue.isEmpty()) {
+                //Fork (Metal): geometry is queued but gated (arena below 50 MB free or fragmented), so
+                // workCounter stays > 0 and run() never parks: back off instead of spinning a core.
+                LockSupport.parkNanos(2_000_000L);
+            }
             return;
         }
         //=====================

@@ -152,6 +152,22 @@ public class BasicAsyncGeometryManager implements IGeometryManager {
         return this.allocationSet.getCount();
     }
 
+    /** True when the arena has a contiguous block for this section right now: a large enough hole, or
+     *  enough room left at the top. The used-bytes gate counts holes as free, so a fragmented arena can
+     *  pass it and still fail createMeta's alloc (the 'Geometry OOM' throw). */
+    public boolean canFit(BuiltSection section) {
+        if (section.geometryBuffer == null || section.geometryBuffer.size <= 0) return true;
+        long upsized = ((section.geometryBuffer.size / GEOMETRY_ELEMENT_SIZE) + (ALLOC_ALIGN - 1)) & ~(long) (ALLOC_ALIGN - 1);
+        if (this.allocationHeap.getLimit() - this.allocationHeap.getSize() >= upsized) return true;
+        return this.allocationHeap.numFreeBlocks() > 0 && this.allocationHeap.getLargestFreeBlockSize(0) >= upsized;
+    }
+
+    /** Largest hole and the room left at the top, in bytes: [hole, top]. For the fit-gate log. */
+    public long[] freeShape() {
+        long hole = this.allocationHeap.numFreeBlocks() > 0 ? (long) this.allocationHeap.getLargestFreeBlockSize(0) * GEOMETRY_ELEMENT_SIZE : 0;
+        return new long[]{hole, (this.allocationHeap.getLimit() - this.allocationHeap.getSize()) * GEOMETRY_ELEMENT_SIZE};
+    }
+
     public long getGeometryUsedBytes() {
         return this.usedCapacity * GEOMETRY_ELEMENT_SIZE;
     }
