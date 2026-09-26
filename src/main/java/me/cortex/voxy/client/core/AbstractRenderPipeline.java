@@ -523,7 +523,9 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
     @Override
     protected void free0() {
         this.fb.free();
-        this.sectionRenderer.free();
+        if (this.sectionRenderer != null) {//null only when the renderer constructor failed before setSectionRenderer
+            this.sectionRenderer.free();
+        }
         this.depthMaskBlit.delete();
         this.depthSetBlit.delete();
         this.depthCopy.delete();

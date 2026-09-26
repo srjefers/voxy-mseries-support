@@ -82,6 +82,7 @@ development:
 | `VOXY_GEOMETRY_ALLOC_ALIGN=1024` | Restore the 1024-element geometry allocation granule (upstream 72b3ade6 uses 128, ~20% less geometry memory). Marker `[Voxy-SYNC] geometry allocation granule` |
 | `VOXY_RD_PROCESS_RATE=20` | Restore the pre-sync render-distance tracker rate (upstream 27f82dda: 40 top-level node changes per rendered frame). Marker `[Voxy-SYNC] render-distance process rate` |
 | `VOXY_WORKER_RETHROW=0` | Pre-sync worker failure handling: the Async Node Manager / Model factory threads log and exit instead of rethrowing their exception on the render thread (upstream 36f85026/02e490e0) |
+| `VOXY_CTOR_FAILURE_CLEANUP=0` | Pre-fix behaviour when the Voxy renderer constructor throws: keep the partially built components alive (geometry arena, model atlas, worker threads) instead of releasing them |
 | `VOXY_IRIS_PACK_PREDICATE=quick\|current` | Iris 'pack enabled' predicate: default `hybrid` (pack loaded AND pipeline null-or-Iris), `quick` = pre-sync `isPackInUseQuick`, `current` = pure upstream 1952d3df. Marker `[Voxy-SYNC] Iris pack predicate` |
 | `-Dvoxy.verify.verifyNodeManager=true` | Run NodeManager.verifyIntegrity after every async result publish (upstream 8187d2fd; slow) |
 | `-Dvoxy.exclusiveLock=true` | Hold an exclusive lock on `.voxy/voxy.lock` so a second game instance cannot open the same store (upstream 36964ee4/c6b30e51; off by default) |

@@ -208,6 +208,13 @@ public class VoxyRenderSystem {
             oldBufferBindings[i] = glGetIntegeri(GL_SHADER_STORAGE_BUFFER_BINDING, i);
         }
 
+        //A11 (fork): every component built below registers its release here, so a constructor
+        // failure (e.g. a pack whose Voxy pipeline cannot be created, GL_OUT_OF_MEMORY on the geometry
+        // buffer) frees what was already built instead of leaking it. Without this a failed build kept
+        // the ~4 GB geometry arena, the model atlas, 'Async Node Manager' + 'Model factory processor'
+        // threads and the HOT buffers alive, and MixinLevelRenderer then built a second renderer on top
+        // (Iris disabled). VOXY_CTOR_FAILURE_CLEANUP=0 restores the leak for A/B.
+        final java.util.ArrayDeque<Runnable> partialCleanup = new java.util.ArrayDeque<>();
         try {
             //wait for opengl to be finished, this should hopefully ensure all memory allocations are free
             glFinish();
@@ -220,27 +227,37 @@ public class VoxyRenderSystem {
 
             {
                 this.modelService = new ModelBakerySubsystem(world.getMapper());
+                {var c = this.modelService; partialCleanup.push(c::shutdown);}
                 this.renderGen = new RenderGenerationService(world, this.modelService, sm, IUsesMeshlets.class.isAssignableFrom(backendFactory.clz()));
+                {var c = this.renderGen; partialCleanup.push(c::shutdown);}
 
                 this.geometryData = new BasicSectionGeometryData(1 << 20, geometryCapacity);
+                {var c = this.geometryData; partialCleanup.push(c::free);}
 
                 this.nodeManager = new AsyncNodeManager(1 << 21, this.geometryData, this.renderGen);
+                {var c = this.nodeManager; partialCleanup.push(c::stop);}
                 this.nodeCleaner = new NodeCleaner(this.nodeManager);
+                {var c = this.nodeCleaner; partialCleanup.push(c::free);}
                 this.traversal = new HierarchicalOcclusionTraverser(this.nodeManager, this.nodeCleaner, this.renderGen);
+                {var c = this.traversal; partialCleanup.push(c::free);}
 
                 world.setDirtyCallback(this.nodeManager::worldEvent);
+                partialCleanup.push(() -> world.setDirtyCallback(null));
 
                 Arrays.stream(world.getMapper().getBiomeEntries()).forEach(this.modelService::addBiome);
                 world.getMapper().setBiomeCallback(this.modelService::addBiome);
+                partialCleanup.push(() -> world.getMapper().setBiomeCallback(null));
 
                 this.nodeManager.start();
             }
 
             this.pipeline = RenderPipelineFactory.createPipeline(this.nodeManager, this.nodeCleaner, this.traversal, this::frexStillHasWork);
+            {var c = this.pipeline; partialCleanup.push(c::free);}
             this.pipeline.setupExtraModelBakeryData(this.modelService);//Configure the model service
             var sectionRenderer = backendFactory.create(this.pipeline, this.modelService.getStore(), this.geometryData);
             this.pipeline.setSectionRenderer(sectionRenderer);
             this.viewportSelector = new ViewportSelector<>(sectionRenderer::createViewport);
+            {var c = this.viewportSelector; partialCleanup.push(c::free);}
 
             {
                 int minSec = Minecraft.getInstance().level.getMinSectionY() >> 5;
@@ -265,6 +282,16 @@ public class VoxyRenderSystem {
 
             Logger.info("Voxy render system created with " + geometryCapacity + " geometry capacity, using pipeline '" + this.pipeline.getClass().getSimpleName() + "' with renderer '" + sectionRenderer.getClass().getSimpleName() + "'");
         } catch (RuntimeException e) {
+            if (!"0".equals(System.getenv("VOXY_CTOR_FAILURE_CLEANUP"))) {
+                Logger.error("Voxy render system construction failed, releasing " + partialCleanup.size() + " partially built components", e);
+                while (!partialCleanup.isEmpty()) {//newest first, like a stack unwind
+                    try {
+                        partialCleanup.pop().run();
+                    } catch (Throwable t) {
+                        Logger.error("Error releasing a partially built renderer component", t);
+                    }
+                }
+            }
             world.releaseRef();//If something goes wrong, we must release the world first
             throw e;
         }
