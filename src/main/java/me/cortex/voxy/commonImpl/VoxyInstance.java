@@ -136,18 +136,20 @@ public abstract class VoxyInstance {
             return world;
         }
         long stamp = this.activeWorldLock.writeLock();
+        try {//fork: every exit (upstream 7da77c7f's early return AND a createWorld/createStorage throw) releases the stamp
+            if (!this.isRunning) {
+                Logger.error("Tried getting world object on voxy instance but its not running");
+                return null;
+            }
 
-        if (!this.isRunning) {
-            Logger.error("Tried getting world object on voxy instance but its not running");
-            return null;
+            world = this.activeWorlds.get(identifier);
+            if (world == null) {
+                //Create world here
+                world = this.createWorld(identifier);
+            }
+        } finally {
+            this.activeWorldLock.unlockWrite(stamp);
         }
-
-        world = this.activeWorlds.get(identifier);
-        if (world == null) {
-            //Create world here
-            world = this.createWorld(identifier);
-        }
-        this.activeWorldLock.unlockWrite(stamp);
         identifier.cachedEngineObject = new WeakReference<>(world);
         return world;
     }
