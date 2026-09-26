@@ -75,7 +75,9 @@ public final class VxLodAoParity {
         int idx = -1;
         for (int i = 0; i < lines.size(); i++) {
             String l = lines.get(i);
-            if (l.contains(VX_AO_MARK_A) && l.contains(VX_AO_MARK_B)) { idx = i; break; }
+            // deferred1's GetAmbientOcclusion(vxZ, vxDepthTexOpaque, ...) READS the
+            // SSAO buffer; only deferred's "= AmbientOcclusion(vxZ, ..." COMPUTES it.
+            if (l.contains(VX_AO_MARK_A) && l.contains(VX_AO_MARK_B) && !l.contains("GetAmbientOcclusion")) { idx = i; break; }
         }
         if (idx < 0) return null;
         String aoLine = lines.get(idx);
