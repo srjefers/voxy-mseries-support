@@ -33,6 +33,12 @@ public final class FrameTiming {
     public static long lightmapSyncNs;
     /** Frames on which that readback actually ran (the rest were throttled as unchanged). */
     public static long lightmapSyncCount;
+    /** IOSurface GL re-specifications actually issued (CGLTexImageIOSurface2D, IOSurfaceBridgeCompositor.resync). */
+    public static long resyncCount;
+    /** Re-specifications skipped by the once-per-bridge-per-frame gate (VOXY_BRIDGE_RESYNC). */
+    public static long resyncSkipped;
+    /** Wall time inside the issued re-specifications (incl. the 2 glGetInteger + rebinds around each). */
+    public static long resyncNs;
 
     private FrameTiming() {}
 
@@ -44,5 +50,8 @@ public final class FrameTiming {
         jniDrawCount = 0;
         lightmapSyncNs = 0;
         lightmapSyncCount = 0;
+        resyncCount = 0;
+        resyncSkipped = 0;
+        resyncNs = 0;
     }
 }

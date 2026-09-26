@@ -58,6 +58,15 @@ public final class IOSurfaceBridge implements AutoCloseable {
     private final int width;
     private final int height;
     private final IOSurfaceFormat format;
+    /**
+     * Compositor-side stamp (lever C, 2026-09-25): the
+     * {@link IOSurfaceBridgeCompositor} bridge generation this surface was
+     * last re-specified into its GL rect texture for (CGLTexImageIOSurface2D).
+     * 0 = never. Package-private on purpose — only the compositor's resync
+     * gate reads/writes it; a fresh bridge object (realloc / recycled
+     * IOSurfaceRef address) starts at 0 and therefore always re-specifies.
+     */
+    int glResyncGen;
     private long ioSurfaceHandle;
     private long metalTextureHandle;
 

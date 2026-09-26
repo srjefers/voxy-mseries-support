@@ -184,6 +184,37 @@ public final class IOSurfaceBridgeCompositor {
      */
     public static final boolean USE_BLIT = !"1".equals(System.getenv("VOXY_COMPOSITE_SHADER"));
 
+    /**
+     * Lever C (2026-09-25): re-specify each IOSurface into its GL rect
+     * texture ONCE per bridge per Metal frame instead of on every acquire.
+     * Root cause of the waste: every acquire*RectTex / composite* path
+     * called {@link #resync} unconditionally, and the vx-contract frame
+     * acquires the same bridges several times (VxContractInjector.inject0
+     * takes colour+depth, then transDepthBridge for the seafloor dim;
+     * MixinDefaultChunkRenderer then takes trans0/1/2 + the SAME
+     * transDepthBridge again for resolveTranslucentOnly) — 7+ CGL
+     * re-specifications per frame, each with 2 glGetInteger + 2 rebinds,
+     * for bytes that changed exactly once (at WAIT #3). The 2026-05-25
+     * guarantee is kept verbatim: GL re-specifies AFTER each Metal write,
+     * so per-frame coherence is unchanged — only the duplicates go.
+     * {@code VOXY_BRIDGE_RESYNC=every} restores the per-acquire behaviour
+     * (today's, for A/B); default {@code once}.
+     */
+    private static final boolean RESYNC_ONCE = !"every".equalsIgnoreCase(System.getenv("VOXY_BRIDGE_RESYNC"));
+    /** Bumped once per Metal frame by {@link #markBridgesWritten()}; 0 until the first Metal submit. */
+    private static int bridgeGeneration;
+    private static boolean resyncModeLogged;
+
+    /**
+     * Called by AbstractRenderPipeline.runPipelineMetal right after the
+     * end-of-frame submit (WAIT #3) — the single point per frame after which
+     * the IOSurfaces hold new Metal bytes. Every GL-side acquire that follows
+     * re-specifies each bridge once for this generation and skips repeats.
+     */
+    public static void markBridgesWritten() {
+        bridgeGeneration++;
+    }
+
     private IOSurfaceBridgeCompositor() {}
 
     /** Composite the bridge's contents into the currently bound DRAW framebuffer. */
@@ -233,12 +264,9 @@ public final class IOSurfaceBridgeCompositor {
         // texture at the IOSurface's current bytes. Save/restore the
         // rectangle-texture binding because composite() runs inside Sodium's
         // chunk render and must not leak GL state.
-        int prevActiveTex0 = glGetInteger(GL_ACTIVE_TEXTURE);
-        glActiveTexture(GL_TEXTURE0);
-        int prevTexRect0 = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
-        bridge.bindToGlTexture(compositeGlTex);
-        glBindTexture(GL_TEXTURE_RECTANGLE, prevTexRect0);
-        glActiveTexture(prevActiveTex0);
+        // (Lever C: routed through resync() so the once-per-frame gate and
+        // the [Metal-TIMING] resync counters cover this path too.)
+        resync(bridge, compositeGlTex);
 
         var mc = Minecraft.getInstance();
         var mainRT = mc.getMainRenderTarget();
@@ -528,6 +556,7 @@ public final class IOSurfaceBridgeCompositor {
                 return 0;
             }
             AUX_RECT_TEXES.put(handle, tex);
+            bridge.glResyncGen = bridgeGeneration; // the bind IS this frame's re-specification
             Logger.info("IOSurfaceBridgeCompositor: aux bridge bound to GL tex " + tex);
         } else {
             resync(bridge, tex);
@@ -541,12 +570,35 @@ public final class IOSurfaceBridgeCompositor {
      * IOSurface each frame (see composite()'s 2026-05-25 note).
      */
     private static void resync(IOSurfaceBridge bridge, int glTex) {
+        if (!resyncModeLogged) {
+            resyncModeLogged = true;
+            Logger.info("[Metal-RESYNC] IOSurface GL re-specification mode="
+                    + (RESYNC_ONCE ? "ONCE per bridge per Metal frame (VOXY_BRIDGE_RESYNC=every restores per-acquire)"
+                                   : "EVERY acquire (VOXY_BRIDGE_RESYNC=every; the pre-lever-C behaviour)")
+                    + " gen=" + bridgeGeneration);
+        }
+        // Once-per-frame gate. bridgeGeneration == 0 means no Metal submit
+        // has stamped a frame yet (or a pipeline that never calls
+        // markBridgesWritten) — then fall through to the per-acquire
+        // behaviour so the gate can never starve GL of a re-specification.
+        if (RESYNC_ONCE && bridgeGeneration != 0 && bridge.glResyncGen == bridgeGeneration) {
+            if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
+                me.cortex.voxy.client.core.util.FrameTiming.resyncSkipped++;
+            }
+            return;
+        }
+        long tFT = me.cortex.voxy.client.core.util.FrameTiming.ENABLED ? System.nanoTime() : 0;
         int prevActiveTex = glGetInteger(GL_ACTIVE_TEXTURE);
         glActiveTexture(GL_TEXTURE0);
         int prevTexRect = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
         bridge.bindToGlTexture(glTex);
         glBindTexture(GL_TEXTURE_RECTANGLE, prevTexRect);
         glActiveTexture(prevActiveTex);
+        bridge.glResyncGen = bridgeGeneration;
+        if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
+            me.cortex.voxy.client.core.util.FrameTiming.resyncCount++;
+            me.cortex.voxy.client.core.util.FrameTiming.resyncNs += System.nanoTime() - tFT;
+        }
     }
 
     public static boolean compositeIrisGbuffer(IOSurfaceBridge colorBridge, IOSurfaceBridge depthBridge,
@@ -593,13 +645,10 @@ public final class IOSurfaceBridgeCompositor {
         // incoherence as composite() (see the 2026-05-25 comment there): GL
         // only reliably observes Metal's external writes when the texture is
         // re-specified from the IOSurface each frame.
-        int prevActiveTexR = glGetInteger(GL_ACTIVE_TEXTURE);
-        glActiveTexture(GL_TEXTURE0);
-        int prevTexRectR = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
-        colorBridge.bindToGlTexture(compositeGlTex);
-        depthBridge.bindToGlTexture(gbufferDepthGlTex);
-        glBindTexture(GL_TEXTURE_RECTANGLE, prevTexRectR);
-        glActiveTexture(prevActiveTexR);
+        // (Lever C: routed through resync() — same save/restore, plus the
+        // once-per-frame gate and the [Metal-TIMING] resync counters.)
+        resync(colorBridge, compositeGlTex);
+        resync(depthBridge, gbufferDepthGlTex);
 
         int fbw = colorBridge.width();
         int fbh = colorBridge.height();
@@ -710,7 +759,9 @@ public final class IOSurfaceBridgeCompositor {
     private static boolean rebindDepth(IOSurfaceBridge depthBridge) {
         int prevRectBinding = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
         try {
-            return rebindDepth0(depthBridge);
+            boolean ok = rebindDepth0(depthBridge);
+            if (ok) depthBridge.glResyncGen = bridgeGeneration; // the bind IS this frame's re-specification
+            return ok;
         } finally {
             glBindTexture(GL_TEXTURE_RECTANGLE, prevRectBinding);
         }
@@ -944,7 +995,9 @@ public final class IOSurfaceBridgeCompositor {
     private static boolean rebind(IOSurfaceBridge bridge) {
         int prevRectBinding = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
         try {
-            return rebind0(bridge);
+            boolean ok = rebind0(bridge);
+            if (ok) bridge.glResyncGen = bridgeGeneration; // the bind IS this frame's re-specification
+            return ok;
         } finally {
             glBindTexture(GL_TEXTURE_RECTANGLE, prevRectBinding);
         }

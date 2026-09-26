@@ -117,6 +117,7 @@ real translucent biome-tinted water, full texture detail, ~111 FPS.
 | `VOXY_WATER_ANIMATE=0` | off | Kill switch: freeze LOD water (disables the `water_still` model-atlas cell re-upload that animates LOD water in step with MC) |
 | `VOXY_IRIS_GBUFFER_INJECT=0` | off | Kill switch: disable the Iris gbuffer injection (LODs stay hidden while a pack is active, the pre-injection behaviour) |
 | `VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1` | off | Kill switch: `glGetTexImage` MC's lightmap every frame (pre-throttle behaviour) instead of only on frames where `LightTexture.updateLightTexture` rewrote it (client tick, ~20 Hz). Marker `[Metal] lightmap sync throttled to <mode>`; `[Metal-LayerB] … lightmapSync=<run>/<skipped>` |
+| `VOXY_BRIDGE_RESYNC=every` | `once` | Kill switch: CGLTexImageIOSurface2D re-specification on every GL acquire (the pre-lever-C behaviour; 7+ per frame). Default re-specifies each bridge once per Metal frame (marker `[Metal-RESYNC]`, counts on `[Metal-TIMING]`) |
 
 ## Running
 

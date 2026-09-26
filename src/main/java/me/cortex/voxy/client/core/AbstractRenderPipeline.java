@@ -736,7 +736,8 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                 Logger.info(String.format(java.util.Locale.ROOT,
                         "[Metal-TIMING f=%d] per-frame avg over 600: hotWait=%.2fms"
                         + " drawFlushWait=%.2fms bridgeWait=%.2fms jniDrawLoop=%.2fms draws=%d"
-                        + " lightmapSync=%.3fms (%d readbacks, %.3fms each)",
+                        + " lightmapSync=%.3fms (%d readbacks, %.3fms each)"
+                        + " resync=%.1f/frame (skipped %.1f/frame) resyncCost=%.3fms",
                         this.metalFrame,
                         me.cortex.voxy.client.core.util.FrameTiming.hotReadbackNs / 600.0 / 1e6,
                         me.cortex.voxy.client.core.util.FrameTiming.drawCallFlushNs / 600.0 / 1e6,
@@ -747,7 +748,10 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                         me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncCount,
                         me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncCount == 0 ? 0.0
                             : me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncNs
-                              / (double) me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncCount / 1e6));
+                              / (double) me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncCount / 1e6,
+                        me.cortex.voxy.client.core.util.FrameTiming.resyncCount / 600.0,
+                        me.cortex.voxy.client.core.util.FrameTiming.resyncSkipped / 600.0,
+                        me.cortex.voxy.client.core.util.FrameTiming.resyncNs / 600.0 / 1e6));
                 me.cortex.voxy.client.core.util.FrameTiming.reset();
                 // Same gate, same window: the GL-side vx-contract pass line
                 // (VxIrisSideChannel / MetalVxResolvePass / VxContractInjector /
@@ -1010,6 +1014,12 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         } else {
             backend.submit();
         }
+        // Lever C: this submit (WAIT #3) is the one point per frame after
+        // which the IOSurfaces hold new Metal bytes. Bump the compositor's
+        // bridge generation here so every GL-side acquire this frame
+        // re-specifies each bridge exactly once (see
+        // IOSurfaceBridgeCompositor.resync / VOXY_BRIDGE_RESYNC).
+        me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.markBridgesWritten();
         this.metalFrame++;
 
         // [Metal-VXPLANES] one-shot CPU read-back of the material g-buffer planes
