@@ -33,6 +33,7 @@ import me.cortex.voxy.commonImpl.VoxyCommon;
 import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
 import net.caffeinemc.mods.sodium.client.util.FogParameters;
 import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.lwjgl.opengl.GL11;
@@ -174,8 +175,10 @@ public class VoxyRenderSystem {
 
         System.gc();
 
-        if (Minecraft.getInstance().options.getEffectiveRenderDistance()<3) {
-            Logger.warn("Having a vanilla render distance of 2 can cause rare culling near the edge of your screen issues, please use 3 or more");
+        if (Minecraft.getInstance().options.renderDistance().get()<3) {//upstream 0033da2a: the configured value, not the server-clamped effective one
+            String msg = "Voxy: Having a vanilla render distance of 2 can cause rare culling near the edge of your screen issues, please use 3 or more";
+            Logger.warn(msg);
+            Minecraft.getInstance().getChatListener().handleSystemMessage(Component.literal(msg), false);//upstream b281d934
         }
 
         this.constructedIrisGbufferInject = IrisUtil.irisGbufferInjectMode();
