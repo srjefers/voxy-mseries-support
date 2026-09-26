@@ -55,5 +55,5 @@ Every behavioural change ships an env kill switch (see `docs/DEVELOPMENT.md`). P
 | D5 | Docs: env table entries for every knob added since July (`VOXY_LOD_PLANT_*`, `VOXY_VX_LOD_AO_*`, `VOXY_GL_*`, `VOXY_LOD_MIP_DISCARD*`) | open | `docs/DEVELOPMENT.md`, `docs/METAL-MIGRATION.md` |
 | D6 | Remove falsified diagnostic knobs (house rule) once the release is cut | open | e.g. `VOXY_OPAQUE_RING_DEBUG`, water probe siblings |
 | D7 | Rewrite the falsified flip comment in `IrisVoxyRenderPipelineData.java:85-93`; apply the two identified one-liners (shadow-pass face-culling preflight, stale projection on reload) | open | |
-| D8 | Upstream sync: classify and cherry-pick applicable MCRcortex/voxy commits (266 on the 1.21.11 line, 165 on newer dev) | in progress | plan doc to follow |
+| D8 | Upstream sync: classify and cherry-pick applicable MCRcortex/voxy commits (266 on the 1.21.11 line, 165 on newer dev) | plan done | `docs/UPSTREAM-SYNC.md`: 431 classified (APPLY 99, ADAPT 133, SKIP 190); batches B0-B5 before alpha (mesher correctness, storage/lifecycle, HOT robustness, session hardening, GL parity, `#define VOXY 1` contract), B6-B11 after |
 | D9 | Issues: #12 #13 #18 kept open with status; #11 closed; #19 (Luster shader collaboration) and #20 (1.21.1 support) need the owner's decision | open | |
