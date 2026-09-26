@@ -259,6 +259,27 @@ public final class MetalVxResolvePass {
                     + "; VOXY_VX_NO_SSR=0 restores the pack's SSR");
         }
 
+        // Foliage vs the pack's LOD contact-shadow march (2026-09-25, opt-in
+        // VOXY_VX_LOD_FOLIAGE_NOMARCH=1). deferred1's vx branch runs
+        // GetLODShadows — a screen-space march over vxDepthTexOpaque seeded by
+        // colortex6.r (the shadowMask voxy_opaque writes). A first-ring tuft is
+        // a thin 1-block vertical cross; the march from its lower pixels toward
+        // the sun hits the tuft's own upper part and darkens the base, so LOD
+        // tufts read as dark standing bushes while vanilla tufts (shadow map +
+        // SHADOW_VEGETATION bias) stay pale. Zero the seed for foliage ids so the
+        // march leaves them alone; ground and everything else keep their mask.
+        if (!translucent && "1".equals(System.getenv("VOXY_VX_LOD_FOLIAGE_NOMARCH"))) {
+            String needle = "shadowMask = shadow.r * mix(NoL, 1.0, sqrt(basicSubsurface) * 0.7);";
+            boolean found = patchText.contains(needle);
+            if (found) {
+                patchText = patchText.replace(needle,
+                        "shadowMask = (foliage > 0.5) ? 0.0 : shadow.r * mix(NoL, 1.0, sqrt(basicSubsurface) * 0.7); // voxy: foliage excluded from the LOD contact march");
+            }
+            Logger.info("[Metal-LODTEST] vx resolve foliage contact-march mask " + (found
+                    ? "ON (foliage customIds seed shadowMask=0; VOXY_VX_LOD_FOLIAGE_NOMARCH unset restores)"
+                    : "FAILED (shadowMask needle not found — pack text drifted)"));
+        }
+
         // Near-fallback mirror dim (VOXY_VX_NEAR_MIRROR_DIM, =1 disables). The
         // masked near-cull (VOXY_TRANS_NEAR_CULL_MASKED) keeps LOD water INSIDE
         // the MC render ring over Sodium sections that aren't built yet; with
