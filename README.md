@@ -8,8 +8,9 @@ OpenGL 4.6; macOS ships a frozen OpenGL 4.1, so this fork runs Voxy's entire
 LOD renderer on **Metal** while Minecraft itself keeps rendering on GL, and
 bridges the two worlds every frame through an IOSurface.
 
-Verified on an Apple M4 at **~110 FPS** with 32-chunk render distance and LOD
-terrain to the horizon.
+Tested on an Apple M4 Max (48 GB) with LOD terrain to the horizon; see
+[System requirements](#system-requirements) for measured memory and frame
+rates and for what smaller Macs need.
 
 ## Quick start (development environment)
 
@@ -23,7 +24,8 @@ VOXY_FORCE_METAL=1 ./gradlew runClient
 without it Voxy disables itself on macOS and you get plain Sodium rendering.
 
 To use the mod in a launcher profile, build the jar and drop it in `mods/`
-together with the matching Sodium version:
+together with the matching Sodium version, then add the JVM arguments from
+[Opting in](#opting-in-and-java-memory):
 
 ```bash
 ./gradlew build    # output: build/libs/voxy-<version>.jar
@@ -36,6 +38,101 @@ together with the matching Sodium version:
 | Fabric API | 0.140.0+ |
 | Sodium (required) | mc1.21.11-0.8.1 |
 
+## System requirements
+
+Values marked † are estimates that have not been measured on that hardware
+yet; everything else comes from the code or was measured on an Apple M4 Max
+(48 GB, macOS 26) with the BSL shader pack.
+
+### Hard requirements
+
+| | Requirement |
+|---|---|
+| Chip | Apple Silicon, M1 or newer. On Intel Macs (or an x86_64 Java under Rosetta) Voxy turns itself off and the game runs with plain Sodium. |
+| macOS | 13 Ventura or newer. Only macOS 26 has been tested. Jars built before commit `8f15d273` only load on macOS 26. |
+| Java | Java 21, **arm64** (the launcher's bundled runtime). |
+| Minecraft | 1.21.11 |
+| Fabric Loader / Fabric API | 0.18.2 / 0.140.0+1.21.11 (tested versions) |
+| Sodium | exactly `mc1.21.11-0.8.1`, required |
+| Iris | 1.10.7, optional (only for shader packs); all testing so far had Iris installed |
+| Incompatible | voxyworldgenv2 2.2.2 |
+
+### Opting in and Java memory
+
+Add these JVM arguments to the launcher profile (adjust `-Xmx` with the
+table below):
+
+```
+-Xmx6G -Dvoxy.forceMetal=true
+```
+
+Without `-Dvoxy.forceMetal=true` (or the environment variable
+`VOXY_FORCE_METAL=1`) Voxy disables itself and you get plain Sodium.
+
+### Tiers
+
+| | Minimum | Recommended | Tested |
+|---|---|---|---|
+| Chip (GPU cores) | M1–M4 base, 7–10 cores† | M1–M4 Pro, 14–20 cores† | M4 Max, 40 cores |
+| Unified memory | 16 GB | 24–32 GB | 48 GB |
+| Java heap | `-Xmx4G` | `-Xmx6G` | `-Xmx6G` (the dev run defaulted to 12 GB) |
+| Minecraft render distance | 8–12 chunks | 12–16 chunks | 32 chunks |
+| Voxy render distance (menu value) | 256–512 chunks (512 is the default) | 512–1024 chunks | 2016 chunks |
+| Voxy *Pixels² of subdivision size* | 128 | 96 | 96 |
+| Shader pack | none | BSL with *Shadow Distance* 128 and *Shadow Resolution* 1024† | BSL defaults |
+| Window | about 1080p | Retina window | 2848×1284 window |
+| java process in Activity Monitor | ≈7–9 GB† | ≈9–12 GB† | 13.5–16.7 GB (measured) |
+
+- Graphics settings follow the chip and `-Xmx` follows the memory, so read
+  each row on its own (for example, a base M2 with 24 GB uses the Minimum
+  graphics rows and `-Xmx6G`).
+- **8 GB Macs are not supported.** An untested experiment:
+  `-Dvoxy.geometryBufferSizeOverrideMB=512 -Xmx3G`, Minecraft render
+  distance 8 or less, no shader pack.
+- The Tested memory figure was measured before the geometry arena was
+  sized from RAM (commit `5b947233`); expect about 1 GB less on a 48 GB Mac
+  now†.
+- A lower Minecraft render distance moves work to Voxy, which draws far
+  terrain much more cheaply.
+- With BSL, lower *Fog Density LOD* to about 0.25 (see Known issues).
+
+**Measured frame rates (Tested tier, BSL defaults, Voxy render distance
+2016 chunks, subdivision 96, vsync on at 120 Hz):** median about 37 FPS
+(29–64) at 2848×1284, and 61–75 FPS at 1708×960. With vsync on, the frame
+rate snaps to 120/n (60, 40, 30…), so a small extra cost can look like a
+large drop. Other chips have not been measured†.
+
+**Disk:** Voxy stores LODs only for terrain you explored, pre-generated or
+imported, at about 5–11 KB per chunk (211 MB for 36,800 chunks measured).
+Singleplayer data lives in `<world>/voxy/`, multiplayer data in
+`.voxy/saves/`.
+
+### Why Activity Monitor shows much more than F3: unified memory
+
+Apple Silicon GPUs have no separate video memory: the CPU and the GPU share
+the same RAM. Everything Voxy hands to the GPU comes out of the same pool as
+Minecraft's Java heap:
+
+| What uses memory | Size |
+|---|---|
+| LOD geometry arena | physical RAM / 16, between 1 and 4 GB (1 GB on 16 GB, 3 GB on 48 GB). macOS keeps all of it resident as soon as the GPU uses it. |
+| Block texture atlas | ≈0.5 GB |
+| Other fixed Voxy buffers and driver overhead | ≈0.4 GB |
+| Metal ↔ OpenGL frame bridges | ≈70 MB without a shader pack; with one, 68 bytes per pixel: ≈150 MB at 1080p, ≈260 MB at 2848×1284, ≈550 MB on a full-screen 16-inch MacBook Pro, ≈1 GB at 5K |
+| Sodium's near-terrain buffers | ≈2.1 GB at 32 chunks, much less at 12–16 |
+| Shader pack render targets and shadow maps | several hundred MB† |
+
+- **F3 shows only the Java heap** (2.5 GB used of 12 GB in the tested
+  session). Activity Monitor shows the whole process, including everything in
+  the table above.
+- **Do not give Java much more heap than it needs.** Java tends to grow into
+  its `-Xmx` and rarely gives memory back, and on unified memory every GB of
+  heap is a GB the GPU cannot use. Voxy's GPU memory is wired while in use, so
+  it cannot be swapped out either.
+- `-Dvoxy.geometryBufferSizeOverrideMB=<MB>` sets the geometry arena
+  explicitly. A smaller arena makes far LODs coarser once it fills up; it does
+  not crash.
+
 ## What works (alpha)
 
 - LOD terrain to the horizon with **real baked block textures**, biome
@@ -44,7 +141,9 @@ together with the matching Sodium version:
   no X-ray, stable visuals while swimming)
 - Correct LOD↔terrain boundary (chunk-bound depth masking)
 - Spyglass / zoomed FOV, screenshots, render-distance changes
-- ~110 FPS on an M4 (synchronous GPU model — more headroom planned)
+- Frame rates measured on an M4 Max are in
+  [System requirements](#system-requirements) (synchronous GPU model — more
+  headroom planned)
 
 ## Known issues / not yet done
 
@@ -57,8 +156,7 @@ together with the matching Sodium version:
   white clouds can be hard to see against it at day (MC 1.21.11 renders the
   sky in a way the compositor cannot yet preserve).
 - **Performance phase 2** pending: the Metal frame currently uses 3
-  synchronous GPU waits; collapsing them should push FPS well past the
-  current ~110.
+  synchronous GPU waits; collapsing them is the main planned frame-rate gain.
 - **Iris shader packs now drive LOD terrain on Metal** through Voxy's native
   pack contract (packs shipping `voxy.json`, e.g. BSL): LOD depth goes to the
   pack's dedicated `vxDepthTex` side-channel and the pack's own `#ifdef VOXY`
