@@ -59,25 +59,32 @@ public class IrisUtil {
     /**
      * Upstream 1952d3df swapped {@code Iris.isPackInUseQuick()} (the live pipeline is an
      * IrisRenderingPipeline) for {@code Iris.getCurrentPack().isPresent()} (a pack is loaded).
-     * On this fork the predicate also selects gbuffer-inject vs IOSurface composite, so the pure
-     * upstream form would drop the LOD frame whenever a pack is loaded but Iris runs its vanilla
-     * fallback pipeline (pack compile failure). Default "hybrid": a pack is loaded AND the live
-     * pipeline is either not built yet (null during pipeline recreation — the window upstream
-     * fixed) or an IrisRenderingPipeline. VOXY_IRIS_PACK_PREDICATE=quick restores the pre-sync
-     * predicate, =current the pure upstream one.
+     * On the GL backend the fork keeps pure upstream ("current"): the GL path must match upstream.
+     * On Metal the predicate also selects gbuffer-inject vs IOSurface composite, so the pure form
+     * would drop the LOD frame whenever a pack is loaded but Iris runs its vanilla fallback pipeline
+     * (pack compile failure); the Metal default is "hybrid": a pack is loaded AND the live pipeline
+     * is either not built yet (null during pipeline recreation, the window upstream fixed) or an
+     * IrisRenderingPipeline. VOXY_IRIS_PACK_PREDICATE=hybrid|quick|current overrides on both
+     * backends (quick = pre-sync). Resolved on first use, after the render backend exists.
      */
-    private static final String PACK_PREDICATE = parsePackPredicate();
+    private static volatile String packPredicate;
 
-    private static String parsePackPredicate() {
-        String v = System.getenv("VOXY_IRIS_PACK_PREDICATE");
-        String mode = (v == null || v.isBlank()) ? "hybrid" : v.trim().toLowerCase(java.util.Locale.ROOT);
-        if (!mode.equals("hybrid") && !mode.equals("quick") && !mode.equals("current")) mode = "hybrid";
-        me.cortex.voxy.common.Logger.info("[Voxy-SYNC] Iris pack predicate: " + mode + " (upstream 1952d3df; VOXY_IRIS_PACK_PREDICATE=quick restores pre-sync, =current is pure upstream)");
+    private static String packPredicate() {
+        String mode = packPredicate;
+        if (mode == null) {
+            String v = System.getenv("VOXY_IRIS_PACK_PREDICATE");
+            boolean gl = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                    == me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+            mode = (v == null || v.isBlank()) ? (gl ? "current" : "hybrid") : v.trim().toLowerCase(java.util.Locale.ROOT);
+            if (!mode.equals("hybrid") && !mode.equals("quick") && !mode.equals("current")) mode = gl ? "current" : "hybrid";
+            packPredicate = mode;
+            me.cortex.voxy.common.Logger.info("[Voxy-SYNC] Iris pack predicate: " + mode + " (upstream 1952d3df; GL default current, Metal default hybrid; VOXY_IRIS_PACK_PREDICATE=quick restores pre-sync)");
+        }
         return mode;
     }
 
     private static boolean irisShaderPackEnabled0() {
-        switch (PACK_PREDICATE) {
+        switch (packPredicate()) {
             case "quick": return Iris.isPackInUseQuick();
             case "current": return Iris.getCurrentPack().isPresent();
             default: {
