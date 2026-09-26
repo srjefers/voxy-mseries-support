@@ -18,6 +18,9 @@ import java.util.Arrays;
 
 public class RenderDataFactory {
     private static final boolean CHECK_NEIGHBOR_FACE_OCCLUSION = true;
+    // Upstream 1f985ce6: the -x/+x section-border checks passed swapped face indices to faceOccludes.
+    // VOXY_MESH_XFACE_FIX=0 restores the swapped (pre-sync) indices for A/B.
+    private static final boolean MESH_XFACE_FIX = !"0".equals(System.getenv("VOXY_MESH_XFACE_FIX"));
     // When the neighbour is the same model id, the face between them is normally
     // culled (no interior faces between identical blocks). The original author
     // flagged that this BREAKS TRANSLUCENTS (water/glass) at chunk borders when
@@ -1084,7 +1087,7 @@ public class RenderDataFactory {
                         long meta = this.modelMan.getModelMetadataFromClientId(this.modelMan.getModelId(Mapper.getBlockId(neighborId)));
                         if (ModelQueries.isFullyOpaque(meta)) {
                             oki = false;
-                        } else if (CHECK_NEIGHBOR_FACE_OCCLUSION && ModelQueries.faceOccludes(meta, (2 << 1) | (1 - 1))) {
+                        } else if (CHECK_NEIGHBOR_FACE_OCCLUSION && ModelQueries.faceOccludes(meta, (2 << 1) | (MESH_XFACE_FIX ? 1 : 0))) {//upstream 1f985ce6: -x neighbour occludes with its +x face
                             //TODO check self occlsion
                             oki = false;
                         }
@@ -1106,7 +1109,7 @@ public class RenderDataFactory {
                         long meta = this.modelMan.getModelMetadataFromClientId(this.modelMan.getModelId(Mapper.getBlockId(neighborId)));
                         if (ModelQueries.isFullyOpaque(meta)) {
                             oki = false;
-                        } else if (CHECK_NEIGHBOR_FACE_OCCLUSION && ModelQueries.faceOccludes(meta, (2 << 1) | (1 - 0))) {
+                        } else if (CHECK_NEIGHBOR_FACE_OCCLUSION && ModelQueries.faceOccludes(meta, (2 << 1) | (MESH_XFACE_FIX ? 0 : 1))) {//upstream 1f985ce6: +x neighbour occludes with its -x face
                             //TODO check self occlsion
                             oki = false;
                         }
