@@ -87,6 +87,7 @@ public class BasicSectionGeometryData implements IGeometryData {
         return this.sectionMetadataBuffer;
     }
 
+    @Override
     public int getSectionCount() {
         return this.currentSectionCount;
     }

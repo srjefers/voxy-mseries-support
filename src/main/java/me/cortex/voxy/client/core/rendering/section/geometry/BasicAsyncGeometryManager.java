@@ -15,6 +15,15 @@ import java.util.function.Consumer;
 //Is basicly the manager for an "undefined" data store, the underlying store is irrelevant
 // this manager serves as an overlay, that is, it allows an implementation to do "async management" of the data store
 public class BasicAsyncGeometryManager implements IGeometryManager {
+    private static final int ALLOC_ALIGN = parseAlign();
+    private static int parseAlign() {
+        int a = 128;
+        String v = System.getenv("VOXY_GEOMETRY_ALLOC_ALIGN");
+        if (v != null && !v.isBlank()) { try { a = Integer.parseInt(v.trim()); } catch (NumberFormatException ignored) {} }
+        if (a < 1 || a > (1 << 20) || (a & (a - 1)) != 0) a = 128;//power of two, at most 1M elements (larger granules exceed the arena on the first allocation)
+        me.cortex.voxy.common.Logger.info("[Voxy-SYNC] geometry allocation granule: " + a + " elements (upstream 72b3ade6; VOXY_GEOMETRY_ALLOC_ALIGN=1024 restores pre-sync)");
+        return a;
+    }
     public static final int SECTION_METADATA_SIZE = 32;
 
     private static final long GEOMETRY_ELEMENT_SIZE = 8;
@@ -108,8 +117,9 @@ public class BasicAsyncGeometryManager implements IGeometryManager {
     private SectionMeta createMeta(BuiltSection section) {
         if ((section.geometryBuffer.size%GEOMETRY_ELEMENT_SIZE)!=0) throw new IllegalStateException();
         int size = (int) (section.geometryBuffer.size/GEOMETRY_ELEMENT_SIZE);
-        //clamp size upwards
-        int upsized = (size+1023)&~1023;
+        //clamp size upwards to the allocation granule (upstream 72b3ade6: 128 elements instead of
+        // 1024 -> ~20% less geometry memory; VOXY_GEOMETRY_ALLOC_ALIGN=1024 restores the old granule)
+        int upsized = (size+(ALLOC_ALIGN-1))&~(ALLOC_ALIGN-1);
         //Address
         int addr = (int)this.allocationHeap.alloc(upsized);
         if (addr == -1) {

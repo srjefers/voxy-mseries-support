@@ -846,7 +846,7 @@ public class AsyncNodeManager {
     }
 
     public void addDebug(List<String> debug) {
-        debug.add("UC/GC: " + (this.getUsedGeometryCapacity()/(1<<20))+"/"+(this.getGeometryCapacity()/(1<<20)));
+        debug.add("UC/GC,#N: " + (this.getUsedGeometryCapacity()/(1<<20))+"/"+(this.getGeometryCapacity()/(1<<20)) + "," + (this.geometryData.getSectionCount()));
         //debug.add("GUQ/NRC: " + this.geometryUpdateQueue.size()+"/"+this.removeBatchQueue.size());
     }
 
