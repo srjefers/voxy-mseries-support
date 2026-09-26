@@ -154,6 +154,10 @@ vec4 computeColour(vec2 texturePos, vec4 colour) {
 
 
 void main() {
+#ifdef VOXY_LOD_MIP_DISCARD
+    // Distance mip carried out of the colour block for the cutout test below.
+    float voxyCutoutLod = 0.0;
+#endif
 #if defined(VOXY_BOUND_DEBUG) && defined(PATCHED_SHADER)
     // See the bound-mask block below: PATCHED variants paint the debug red
     // at the emit site via this flag (no outColour exists to write here).
@@ -401,6 +405,9 @@ void main() {
                                  0.0, VOXY_ATLAS_MAX_LOD);
         }
         #endif
+        #ifdef VOXY_LOD_MIP_DISCARD
+        voxyCutoutLod = voxyAtlasLod;
+        #endif
         colour = textureLod(blockModelAtlas, texPos, voxyAtlasLod);
 #elif defined(VOXY_LOD_FIXED_MIP)
         // DIAGNOSTIC (2026-05-25): sample the atlas at a fixed LOD 0 instead of
@@ -484,7 +491,20 @@ void main() {
 #ifndef VOXY_LOD_NO_DISCARD
     //Also, small quad is really fking over the mipping level somehow
     #ifndef TRANSLUCENT
+    #ifdef VOXY_LOD_MIP_DISCARD
+    // Metal (2026-09-25): ALSO test the alpha at the distance mip. The mip-0
+    // test alone keeps every sparse blade of a plant sprite fully opaque at
+    // any distance (an undilated plant cell's mip alpha IS its coverage), so
+    // a 1-block tuft 600 blocks away rendered as a solid dark speck and the
+    // far plains read as a dense carpet while vanilla's mipmapped cutout lets
+    // the thin upper blades fade and keeps only the dense base. Dilated cells
+    // (cubes, leaves, fences) have mip alpha 1 everywhere: untouched.
+    // VOXY_LOD_MIP_DISCARD=0 reverts; VOXY_LOD_MIP_DISCARD_ALPHA tunes (0.5).
+    if (useDiscard() && (textureLod(blockModelAtlas, texPos, 0).a <= 0.1f
+            || textureLod(blockModelAtlas, texPos, voxyCutoutLod).a <= VOXY_LOD_MIP_DISCARD_ALPHA)) {
+    #else
     if (useDiscard() && (textureLod(blockModelAtlas, texPos, 0).a <= 0.1f)) {
+    #endif
     //if (useDiscard() && (colour.a <= 0.1f)) {
     #else
     if (textureLod(blockModelAtlas, texPos, 0).a == 0.0f) {
