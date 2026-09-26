@@ -492,7 +492,9 @@ public class HierarchicalOcclusionTraverser {
                         encoder.setBuffer(NODE_QUEUE_SINK_BINDING, sink, 0);
 
                         if (iter == 0) {
-                            encoder.dispatch(firstDispatchSize, 1, 1);
+                            if (firstDispatchSize != 0) {//upstream ad5f6ee0: a zero-sized dispatch makes the AMD GL driver log errors
+                                encoder.dispatch(firstDispatchSize, 1, 1);
+                            }
                         } else {
                             encoder.dispatchIndirect(this.queueMetaBuffer, iter * 4L * 4);
                         }
@@ -533,7 +535,9 @@ public class HierarchicalOcclusionTraverser {
             encoder.barrier(
                     ComputeEncoder.BARRIER_SHADER | ComputeEncoder.BARRIER_INDIRECT | ComputeEncoder.BARRIER_TRANSFER,
                     ComputeEncoder.BARRIER_SHADER | ComputeEncoder.BARRIER_INDIRECT);
-            encoder.dispatch(firstDispatchSize, 1, 1);
+            if (firstDispatchSize != 0) {//upstream ad5f6ee0: skip the zero-sized first dispatch
+                encoder.dispatch(firstDispatchSize, 1, 1);
+            }
             encoder.barrier(
                     ComputeEncoder.BARRIER_SHADER | ComputeEncoder.BARRIER_INDIRECT,
                     ComputeEncoder.BARRIER_SHADER | ComputeEncoder.BARRIER_INDIRECT);
