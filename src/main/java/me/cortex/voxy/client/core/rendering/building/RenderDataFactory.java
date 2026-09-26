@@ -1744,13 +1744,20 @@ public class RenderDataFactory {
             coff += size;
         }
 
+
+
         int aabb = 0;
         aabb |= this.minX;
         aabb |= this.minY<<5;
         aabb |= this.minZ<<10;
-        aabb |= (this.maxX-this.minX-1)<<15;
-        aabb |= (this.maxY-this.minY-1)<<20;
-        aabb |= (this.maxZ-this.minZ-1)<<25;
+        //Feel like a clown for missing the Math.max
+        aabb |= Math.max(0,this.maxX-this.minX-1)<<15;
+        aabb |= Math.max(0,this.maxY-this.minY-1)<<20;
+        aabb |= Math.max(0,this.maxZ-this.minZ-1)<<25;
+
+        //if (this.maxX<=this.minX||this.maxY<=this.minY||this.maxZ<=this.minZ) {
+        //    throw new IllegalStateException("AABB bounds are not valid");
+        //}
 
         return new BuiltSection(section.key, section.getNonEmptyChildren(), aabb, buff, offsets);
     }
