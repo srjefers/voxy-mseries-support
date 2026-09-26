@@ -936,6 +936,25 @@ public class VoxyRenderSystem {
         } catch (Exception e) {
             Logger.error("Error resetting vx resolve pass", e);
         }
+        // 2026-09-25 memory audit: two more process-lifetime statics outlived
+        // the session on the Metal + pack path — the vx depth side-channel
+        // (2 x D32F fbw*fbh textures + FBOs/programs; destroy() had no caller)
+        // and the compositor's GL rect textures / FBO that pin the last
+        // session's IOSurfaces at the title screen (plus any aux entry a bridge
+        // close missed). Both are no-ops on the GL backend (never created).
+        // VOXY_GL_SESSION_RELEASE=0 keeps the old behaviour for A/B.
+        if (!"0".equals(System.getenv("VOXY_GL_SESSION_RELEASE"))) {
+            try {
+                me.cortex.voxy.client.core.util.VxIrisSideChannel.destroy();
+            } catch (Exception e) {
+                Logger.error("Error destroying vx side-channel", e);
+            }
+            try {
+                me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.releaseSession();
+            } catch (Exception e) {
+                Logger.error("Error releasing compositor GL objects", e);
+            }
+        }
 
 
 

@@ -392,6 +392,86 @@ public final class IOSurfaceBridgeCompositor {
     private static final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap AUX_RECT_TEXES =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
 
+    /** Session GL-object release (2026-09-25, memory audit): default ON;
+     *  VOXY_GL_SESSION_RELEASE=0 restores the leaking behaviour for A/B. */
+    private static final boolean GL_SESSION_RELEASE = !"0".equals(System.getenv("VOXY_GL_SESSION_RELEASE"));
+
+    /**
+     * Release every GL object this compositor created for the IOSurface
+     * {@code handle}: the aux rect texture (AUX_RECT_TEXES) and, if it is the
+     * bound primary colour/depth surface, the primary rect texture + FBO.
+     * Called from {@link IOSurfaceBridge#close()} BEFORE the surface's own
+     * CFRelease. Why: a GL texture bound with CGLTexImageIOSurface2D holds its
+     * own retain on the IOSurface, so an orphan GL texture keeps the surface's
+     * wired memory alive after the Java side released it (4 aux bridges x
+     * fbw*fbh*4 per session + per resize, ~95 MB/session at 3024x1964 — log
+     * census: aux GL names climbed 747..775 across sessions while the primary
+     * names recycled). Runs on the render thread with GL current at every
+     * existing close() site (pipeline free, plane-bridge realloc).
+     */
+    public static void releaseForBridge(long handle) {
+        if (!GL_SESSION_RELEASE || handle == 0) return;
+        try {
+            int tex = AUX_RECT_TEXES.remove(handle);
+            if (tex != 0) glDeleteTextures(tex);
+            if (handle == boundIoSurface && compositeGlTex != 0) {
+                if (compositeFbo != 0) glDeleteFramebuffers(compositeFbo);
+                glDeleteTextures(compositeGlTex);
+                compositeFbo = 0;
+                compositeGlTex = 0;
+                boundIoSurface = 0;
+            }
+            if (handle == boundDepthIoSurface && gbufferDepthGlTex != 0) {
+                glDeleteTextures(gbufferDepthGlTex);
+                gbufferDepthGlTex = 0;
+                boundDepthIoSurface = 0;
+            }
+        } catch (Throwable t) {
+            Logger.warn("IOSurfaceBridgeCompositor: releaseForBridge failed: " + t.getMessage());
+        }
+    }
+
+    /**
+     * End-of-session drain, called from VoxyRenderSystem.shutdown() next to
+     * MetalVxResolvePass.reset(): deletes any aux entries a close() did not
+     * reach (leak sentinel — logged with the count), the primary colour/depth
+     * GL objects (they pinned the last session's two surfaces at the title
+     * screen), and clears the once-per-process disable latches so a new
+     * session re-attempts the CGL bind instead of staying dark forever.
+     */
+    public static void releaseSession() {
+        if (!GL_SESSION_RELEASE) return;
+        try {
+            int leaked = AUX_RECT_TEXES.size();
+            if (leaked > 0) {
+                Logger.warn("IOSurfaceBridgeCompositor: " + leaked + " aux rect texture(s) survived their bridge close — deleting at shutdown");
+                for (int tex : AUX_RECT_TEXES.values()) if (tex != 0) glDeleteTextures(tex);
+                AUX_RECT_TEXES.clear();
+            }
+            if (compositeGlTex != 0) {
+                if (compositeFbo != 0) glDeleteFramebuffers(compositeFbo);
+                glDeleteTextures(compositeGlTex);
+                compositeFbo = 0;
+                compositeGlTex = 0;
+                boundIoSurface = 0;
+            }
+            if (gbufferDepthGlTex != 0) {
+                glDeleteTextures(gbufferDepthGlTex);
+                gbufferDepthGlTex = 0;
+                boundDepthIoSurface = 0;
+            }
+            if (disabled || gbufferDisabled) {
+                Logger.info("IOSurfaceBridgeCompositor: clearing disable latch(es) at session end (composite=" + disabled
+                        + ", gbuffer=" + gbufferDisabled + ") so the next session re-attempts the bind");
+                disabled = false;
+                gbufferDisabled = false;
+            }
+            Logger.info("IOSurfaceBridgeCompositor: session GL objects released (aux drained=" + leaked + ")");
+        } catch (Throwable t) {
+            Logger.warn("IOSurfaceBridgeCompositor: releaseSession failed: " + t.getMessage());
+        }
+    }
+
     public static int acquireAuxRectTex(IOSurfaceBridge bridge) {
         if (bridge == null || bridge.ioSurfaceHandle() == 0) return 0;
         long handle = bridge.ioSurfaceHandle();

@@ -222,6 +222,10 @@ public final class IOSurfaceBridge implements AutoCloseable {
             this.metalTextureHandle = 0;
         }
         if (this.ioSurfaceHandle != 0) {
+            // Drop the GL side FIRST (the CGL-bound rect texture holds its own
+            // retain on the surface); the compositor owns the GL names so this
+            // class stays LWJGL-free. See IOSurfaceBridgeCompositor.releaseForBridge.
+            IOSurfaceBridgeCompositor.releaseForBridge(this.ioSurfaceHandle);
             MetalNative.iosurfaceRelease(this.ioSurfaceHandle);
             this.ioSurfaceHandle = 0;
         }
