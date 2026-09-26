@@ -177,7 +177,7 @@ public abstract class MixinDefaultChunkRenderer extends ShaderChunkRenderer {
                             int tP2 = pipeline.metalVxTrans2() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans2()) : 0;
                             int tD  = pipeline.metalDepthTransBridge() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalDepthTransBridge()) : 0;
                             me.cortex.voxy.client.core.util.MetalVxResolvePass.resolve(
-                                    mvp.getPipelineData(), irp,
+                                    mvp.getPipelineData(), irp, viewport.projection, viewport.modelView,
                                     oP0, oP1, oP2, oD, tP0, tP1, tP2, tD,
                                     viewport.width, viewport.height);
                         }
