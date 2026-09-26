@@ -305,6 +305,7 @@ public class VoxyRenderSystem {
     private int fogClassStreak;
     private long fogClassStreakStartNs;
     private static boolean loggedViewportLeak;
+    private static boolean loggedZeroViewport;
 
     /** Metal-only kill switch: VOXY_LOD_ZOOM_REFINE=1 restores the upstream
      *  refine-on-zoom behaviour (spyglass demands finer LOD levels → ~3s
@@ -483,6 +484,14 @@ public class VoxyRenderSystem {
                 height = (int) (height*factor[1]);
             }
         }
+        if (width <= 0 || height <= 0) {//upstream 1952d3df: a 0x0 viewport (minimised window, Iris resize) must not reach the frame
+            if (!loggedZeroViewport) {//fork: once per transition (upstream logs every frame; Logger.error also posts to chat)
+                loggedZeroViewport = true;
+                Logger.error("Viewport width or height was zero, skipping Voxy frames until it is valid again");
+            }
+            return null;
+        }
+        loggedZeroViewport = false;
 
         viewport.zoomCompensation = 1.0f;
         if (!ZOOM_REFINE_ENABLED
@@ -590,6 +599,9 @@ public class VoxyRenderSystem {
     public void renderOpaque(Viewport<?> viewport) {
         if (viewport == null) {
             return;
+        }
+        if (viewport.width <= 0 || viewport.height <= 0) {//upstream d4acdaf1/1952d3df: only render on a valid viewport
+            return;//logged once by setupViewport's guard (the GL Iris path reuses a viewport that was valid when built)
         }
 
         if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()

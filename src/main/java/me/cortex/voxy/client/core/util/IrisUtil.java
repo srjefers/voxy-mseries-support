@@ -56,8 +56,36 @@ public class IrisUtil {
         }
     }
 
+    /**
+     * Upstream 1952d3df swapped {@code Iris.isPackInUseQuick()} (the live pipeline is an
+     * IrisRenderingPipeline) for {@code Iris.getCurrentPack().isPresent()} (a pack is loaded).
+     * On this fork the predicate also selects gbuffer-inject vs IOSurface composite, so the pure
+     * upstream form would drop the LOD frame whenever a pack is loaded but Iris runs its vanilla
+     * fallback pipeline (pack compile failure). Default "hybrid": a pack is loaded AND the live
+     * pipeline is either not built yet (null during pipeline recreation — the window upstream
+     * fixed) or an IrisRenderingPipeline. VOXY_IRIS_PACK_PREDICATE=quick restores the pre-sync
+     * predicate, =current the pure upstream one.
+     */
+    private static final String PACK_PREDICATE = parsePackPredicate();
+
+    private static String parsePackPredicate() {
+        String v = System.getenv("VOXY_IRIS_PACK_PREDICATE");
+        String mode = (v == null || v.isBlank()) ? "hybrid" : v.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!mode.equals("hybrid") && !mode.equals("quick") && !mode.equals("current")) mode = "hybrid";
+        me.cortex.voxy.common.Logger.info("[Voxy-SYNC] Iris pack predicate: " + mode + " (upstream 1952d3df; VOXY_IRIS_PACK_PREDICATE=quick restores pre-sync, =current is pure upstream)");
+        return mode;
+    }
+
     private static boolean irisShaderPackEnabled0() {
-        return Iris.isPackInUseQuick();
+        switch (PACK_PREDICATE) {
+            case "quick": return Iris.isPackInUseQuick();
+            case "current": return Iris.getCurrentPack().isPresent();
+            default: {
+                if (Iris.getCurrentPack().isEmpty()) return false;
+                var pipeline = Iris.getPipelineManager().getPipelineNullable();
+                return pipeline == null || pipeline instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline;
+            }
+        }
     }
 
     public static boolean irisShaderPackEnabled() {

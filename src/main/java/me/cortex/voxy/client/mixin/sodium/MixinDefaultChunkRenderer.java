@@ -155,7 +155,9 @@ public abstract class MixinDefaultChunkRenderer extends ShaderChunkRenderer {
                 renderer.renderOpaque(viewport);
 
                 var pipeline = renderer.getPipeline();
-                if (pipeline != null && pipeline.metalBridge() != null) {
+                // viewport == null: setupViewport skipped a 0x0 frame (minimised window, Iris resize).
+                // The resolve passes below dereference it, and the bridges hold the previous frame.
+                if (viewport != null && pipeline != null && pipeline.metalBridge() != null) {
                     if (pipeline.vxOpaqueMaterialMode()
                             && pipeline instanceof me.cortex.voxy.client.core.MetalVxRenderPipeline mvp
                             && pipeline.metalVxOpaque0() != null
