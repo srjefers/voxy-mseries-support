@@ -21,6 +21,7 @@ import net.minecraft.client.renderer.ItemBlockRenderTypes;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
@@ -303,7 +304,11 @@ public class ModelFactory {
         var biomeEntry = this.biomeQueue.poll();
         while (biomeEntry != null) {
             var biomeRegistry = Minecraft.getInstance().level.registryAccess().lookupOrThrow(Registries.BIOME);
-            var res = this.addBiome0(biomeEntry.id, biomeRegistry.getValue(Identifier.parse(biomeEntry.biome)));
+            var mcbiomeEntry = biomeRegistry.get(Identifier.parse(biomeEntry.biome));
+            if (!mcbiomeEntry.isPresent()) {
+                Logger.error("Could not find biome: " + biomeEntry.biome + " using default");
+            }
+            var res = this.addBiome0(biomeEntry.id, mcbiomeEntry.isPresent()?mcbiomeEntry.orElseThrow().value():DEFAULT_BIOME);
             if (res != null) {
                 this.uploadResults.add(res);
             }
@@ -861,6 +866,9 @@ public class ModelFactory {
     }
 
     private BiomeUploadResult addBiome0(int id, Biome biome) {
+        if (biome == null) {
+            throw new IllegalStateException("Null biome");
+        }
         for (int i = this.biomes.size(); i <= id; i++) {
             this.biomes.add(null);
         }
@@ -870,7 +878,8 @@ public class ModelFactory {
             throw new IllegalStateException("Biome was put in an id that was not null");
         }
         if (oldBiome == biome) {
-            Logger.error("Biome added was a duplicate");
+            Logger.error("Biome added was a duplicate: " + id);
+            return null;
         }
 
         if (this.modelsRequiringBiomeColours.isEmpty()) return null;
@@ -925,6 +934,10 @@ public class ModelFactory {
 
             @Override
             public int getBlockTint(BlockPos pos, ColorResolver colorResolver) {
+                if (colorResolver == null) {
+                    Logger.error("Block state: " + state + " colourprovider: " + colorProvider + " had a null colorresolver");
+                    return 0;
+                }
                 return colorResolver.getColor(biome, 0, 0);
             }
 
