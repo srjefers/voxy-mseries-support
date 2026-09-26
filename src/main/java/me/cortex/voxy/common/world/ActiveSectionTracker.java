@@ -3,6 +3,7 @@ package me.cortex.voxy.common.world;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import me.cortex.voxy.common.Logger;
+import me.cortex.voxy.common.world.other.Mapper;
 import org.jetbrains.annotations.Nullable;
 
 import java.lang.invoke.MethodHandles;
@@ -12,6 +13,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.StampedLock;
 
 public class ActiveSectionTracker {
+    private static final boolean UNDEFINED_SKYLIGHT_15 = !"0".equals(System.getenv("VOXY_SYNC_UNDEFINED_SKYLIGHT"));
 
     //Deserialize into the supplied section, returns true on success, false on failure
     public interface SectionLoader {int load(WorldSection section);}
@@ -155,7 +157,12 @@ public class ActiveSectionTracker {
                 //TODO: REWRITE THE section tracker _again_ to not be so shit and jank, and so that Arrays.fill is not 10% of the execution time
                 if (status == 1) {
                     //We need to set the data to air as it is undefined state
-                    Arrays.fill(section.data, 0);
+                    //Upstream 47053483: an undefined (not-in-storage) section used to be filled
+                    // with sky light 0, so every LOD face next to one was lit as if in a cave.
+                    // VOXY_SYNC_UNDEFINED_SKYLIGHT=0 restores the dark fill for A/B.
+                    int sky = UNDEFINED_SKYLIGHT_15 ? 15 : 0;
+                    int block = 0;
+                    Arrays.fill(section.data, Mapper.composeMappingId((byte) (sky|(block<<4)),0,0));
                 }
                 section.acquire(1);
             }
