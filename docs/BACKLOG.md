@@ -31,7 +31,7 @@ Every behavioural change ships an env kill switch (see `docs/DEVELOPMENT.md`). P
 | B2 | Plant tufts on the first ring at parity (bake, sampler, AO parity, mip-aware discard, edge-on fade) | done (measured) | 9 commits; knobs `VOXY_LOD_PLANT_*`, `VOXY_VX_LOD_AO_*`, `VOXY_LOD_MIP_DISCARD*` |
 | B3 | Leaves baked solid (dilation) vs vanilla cutout leaves | open (optional) | skip dilation for `LeavesBlock` behind a switch; risk: see-through holes at far distance |
 | B4 | No cast shadows beyond BSL `shadowDistance` (256) on the LOD ring | open (structural) | in-game slider experiment to 512/1024; sun-space LOD shadow map is the real fix (L) |
-| B5 | Plants beyond lvl 0: keep to lvl 1 with distance fade, ground-cover tint for culled plants, Mipper plant rule | open | plan steps S2/S4/S7 in memory; S7 changes persisted mips (storage version bump) |
+| B5 | Plants beyond lvl 0: keep to lvl 1 with distance fade, ground-cover tint for culled plants, Mipper plant rule | open | plan steps S2/S4/S7 in memory; S7 changes persisted mips (storage version bump) Before keeping plants past lvl 0: `quad_util.glsl` divides the plant indent (0.5) by lodScale, which turns crosses into inset hollow boxes at lvl >= 1 (the 'box' look); skip that division for plant-cross models first |
 | B6 | Green ring line during the first minute of a session | closed (user: transient world-gen, not bothersome) | |
 
 ## C. Robustness and stress tests (case 3)

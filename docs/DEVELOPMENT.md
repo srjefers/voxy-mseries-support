@@ -71,8 +71,8 @@ development:
 | `VOXY_BRIDGE_RESYNC=every` | Kill switch: re-specify IOSurfaces into GL on every acquire (pre-lever-C); default `once` per bridge per Metal frame |
 | `VOXY_FOG_SMOOTH_MS` | Fog colour smoothing constant (0 disables) |
 | `VOXY_METAL_DRAW_BATCH=0` | Kill switch: per-draw Java JNI indirect loop instead of the native batch (A/B on `[Metal-TIMING] jniDrawLoop`) |
-| `VOXY_MESH_XFACE_FIX=0` | Kill switch: pre-sync swapped -x/+x face-occlusion indices at section borders (upstream 1f985ce6) |
-| `VOXY_MESH_FACE_OCCLUDE=0` | Kill switch: pre-sync non-opaque face predicate (before upstream 6212d95c/514d0a0e/89b3dacc). A/B fences, panes, leaves, stairs at LOD 0-2; marker `[Voxy-SYNC] mesher face-occlusion predicate` |
+| `VOXY_MESH_XFACE_FIX=0` | Kill switch: pre-sync swapped -x/+x face-occlusion indices at section borders (upstream 1f985ce6). A no-op on Metal (the Metal bakery's occlusion bits are symmetric per axis); visible on GL only |
+| `VOXY_MESH_FACE_OCCLUDE=0` | Kill switch: pre-sync non-opaque face predicate (before upstream 6212d95c/514d0a0e/89b3dacc). On Metal the only visible difference is LOD-0 plant side faces next to an occluding neighbour: the Metal bakery marks fences, panes, walls, slabs and stairs fully opaque, so they never reach this predicate (a null A/B on them is expected). Metal test scene: a flower or crop in a 1-wide slot between two full blocks on the first LOD ring. On GL: fences, panes, walls, slabs, stairs at LOD 0-2; marker `[Voxy-SYNC] mesher face-occlusion predicate` |
 | `VOXY_MIP_BLOCKLIGHT_FIX=0` | Kill switch: pre-sync Mipper block-light packing (upstream 0eb618d1 fixed block light lost at every mip level ≥ 1). Stored mips only refresh on re-import; marker `[Voxy-SYNC] mip block-light packing` |
 | `VOXY_SHADER_DEFINE_VERSION=N` | Iris define emitted to packs: `#define VOXY N` (default 1, upstream 13230c27 contract v1); `0` restores the bare `#define VOXY`. Marker `[Voxy-SYNC] Iris shader define` |
 | `VOXY_SYNC_UNDEFINED_SKYLIGHT=0` | Kill switch: fill not-in-storage sections with sky light 0 again (pre upstream 47053483; dark patches next to unstored sections) |

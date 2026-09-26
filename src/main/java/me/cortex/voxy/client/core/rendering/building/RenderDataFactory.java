@@ -59,7 +59,8 @@ public class RenderDataFactory {
     //  (2) a neighbour's occluding face hides this face only when this face CAN be
     //      occluded (faceCanBeOccluded), the guard upstream had left commented out.
     // Both directions mesh MORE faces than before. VOXY_MESH_FACE_OCCLUDE=0 restores the
-    // pre-sync predicate for A/B (fences / panes / leaves / stairs at LOD 0-2).
+    // pre-sync predicate for A/B. On Metal the bakery marks fences/panes/walls/slabs/stairs fully opaque, so
+    // only LOD-0 plant side faces next to an occluding neighbour change; on GL, fences/panes/walls/slabs/stairs.
     private static final boolean MESH_FACE_OCCLUDE_FIX = !"0".equals(System.getenv("VOXY_MESH_FACE_OCCLUDE"));
 
     static {
