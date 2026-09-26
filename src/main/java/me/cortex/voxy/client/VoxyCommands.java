@@ -21,6 +21,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.dimension.DimensionType;
+import net.minecraft.world.level.storage.LevelResource;
 
 import java.io.File;
 import java.io.IOException;
@@ -50,6 +51,8 @@ public class VoxyCommands {
                                 .executes(VoxyCommands::importZip)
                                 .then(ClientCommandManager.argument("innerPath", StringArgumentType.string())
                                         .executes(VoxyCommands::importZip))))
+                .then(ClientCommandManager.literal("current")
+                        .executes(VoxyCommands::importCurrentWorldIn))
                 .then(ClientCommandManager.literal("cancel")
                         .executes(VoxyCommands::cancelImport));
 
@@ -194,6 +197,30 @@ public class VoxyCommands {
         } catch (IOException e) {}
 
         return sb.buildFuture();
+    }
+
+
+    private static int importCurrentWorldIn(CommandContext<FabricClientCommandSource> ctx) {
+        if (VoxyCommon.getInstance() == null) {
+            ctx.getSource().sendError(Component.translatable("Voxy must be enabled in settings to use this"));
+            return 1;
+        }
+
+        var localServer = Minecraft.getInstance().getSingleplayerServer();
+        if (localServer == null) {
+            ctx.getSource().sendError(Component.translatable("You must be in single player to use this command"));
+            return 1;
+        }
+        var regionPath = DimensionType.getStorageFolder(Minecraft.getInstance().level.dimension(), localServer.getWorldPath(LevelResource.ROOT)).resolve("region");
+        if ((!regionPath.toFile().exists())||!regionPath.toFile().isDirectory()) {
+            ctx.getSource().sendError(Component.translatable("Cannot find region folder for current dimension"));
+            return 1;
+        }
+        if (!fileBasedImporter(regionPath.toFile())) {
+            ctx.getSource().sendError(Component.translatable("Could not start the import: another import may already be running (/voxy import cancel)"));
+            return 1;
+        }
+        return 0;
     }
 
     private static int importWorld(CommandContext<FabricClientCommandSource> ctx) {

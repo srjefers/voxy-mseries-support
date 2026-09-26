@@ -379,18 +379,28 @@ public class WorldImporter implements IDataImporter {
                                 data.free();
                                 return;
                             }
+                            //fork: every queued chunk must be accounted exactly once (importChunkNBT
+                            // either counts it processed or un-counts it). A chunk that fails to decompress
+                            // or parse (e.g. a torn read of a region file the integrated server is writing
+                            // during '/voxy import current') used to stay in totalChunks forever, so the
+                            // completion gate never opened and the world stayed referenced.
+                            boolean accounted = false;
                             try {
                                 try (var decompressedData = this.decompress(b, data)) {
                                     if (decompressedData == null) {
                                         Logger.error("Error decompressing chunk data");
                                     } else {
                                         var nbt = NbtIo.read(decompressedData);
+                                        accounted = true;
                                         this.importChunkNBT(nbt, x, z);
                                     }
                                 }
                             } catch (Exception e) {
                                 throw new RuntimeException(e);
                             } finally {
+                                if (!accounted) {
+                                    this.totalChunks.decrementAndGet();
+                                }
                                 data.free();
                             }
                         });
