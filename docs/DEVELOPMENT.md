@@ -78,6 +78,7 @@ development:
 | `VOXY_SYNC_UNDEFINED_SKYLIGHT=0` | Kill switch: fill not-in-storage sections with sky light 0 again (pre upstream 47053483; dark patches next to unstored sections) |
 | `VOXY_SECTION_FREE_ASSERT=1` | Make the "Section freed while marked as dirty or in the save queue" check (upstream c7166d3f/c2dca44e) throw like upstream; fork default logs and keeps the section alive so its write is saved (the check runs inside the tracker stripe lock) |
 | `VOXY_SAVE_BACKPRESSURE=0` | Keep the unload path's save enqueue non-blocking (the B1 port as first applied): the save queue then has no bound and dirty sections stay resident under fast travel |
+| `VOXY_SHUTDOWN_WAIT_MS=N` | How long instance shutdown waits (after the save queue is drained) for a world whose sections are still referenced before leaving it open; default 30000, `0` = wait forever (upstream) |
 | `VOXY_SYNC_CHUNK_POS_CHECK=0` | Kill switch: skip the chunk-ring slot position check (upstream 6189ee38) in `voxy$cheekyGetChunk` |
 | `VOXY_NODE_UPLOAD_CAP_KB=N` | Geometry uploaded per async-node-manager run (default 1000 KB, upstream 36f85026 frame-spike smoothing); `0` = uncapped (pre-sync). Marker `[Voxy-SYNC] async node upload cap` |
 | `VOXY_GEOMETRY_ALLOC_ALIGN=1024` | Restore the 1024-element geometry allocation granule (upstream 72b3ade6 uses 128, ~20% less geometry memory). Marker `[Voxy-SYNC] geometry allocation granule` |

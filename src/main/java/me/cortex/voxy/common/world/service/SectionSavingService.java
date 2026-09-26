@@ -56,6 +56,11 @@ public class SectionSavingService {
                 section.acquire(); //Acquire the section for use
             }
 
+            //Fork: queue our own entry BEFORE stealing, so a stolen job that throws cannot leave this section
+            // flagged in-queue with our ref but no entry (never saved, never unloaded, world never idle).
+            this.saveQueue.add(new SaveEntry(in, section));
+            this.service.execute();
+
             //Hard limit the save count to prevent OOM
             if ((!nonBlocking) && this.getTaskCount() > SOFT_MAX_QUEUE_SIZE) {
                 //wait a bit
@@ -71,12 +76,14 @@ public class SectionSavingService {
                     if (!this.service.steal()) {
                         break;
                     }
-                    this.processJob();
+                    try {
+                        this.processJob();
+                    } catch (Throwable t) {
+                        Logger.error("Stolen save job failed, stopping the backpressure loop", t);
+                        break;
+                    }
                 }
             }
-
-            this.saveQueue.add(new SaveEntry(in, section));
-            this.service.execute();
             return true;
         }
         return false;

@@ -171,16 +171,22 @@ public final class WorldSection {
             throw new IllegalStateException("Section marked as free but has refs");
         }
         if (witness == 1 && (this.isDirty || this.inSaveQueue)) {
-            String msg = "Section freed while marked as dirty or in the save queue: " + (this.isDirty?"dirty, ":"") + (this.inSaveQueue?"saveQueue":"") + " " + WorldEngine.pprintPos(this.key);
+            boolean dirty = this.isDirty, queued = this.inSaveQueue;
             if (FREE_ASSERT) {
-                throw new IllegalStateException(msg);
+                throw new IllegalStateException("Section freed while marked as dirty or in the save queue: " + (dirty?"dirty, ":"") + (queued?"saveQueue":"") + " " + WorldEngine.pprintPos(this.key));
             }
             //default (log mode): refuse to free it. Freeing would lose the write, and the thread that dirtied it
-            // would then find a freed-but-dirty section on its own unload. Nobody can acquire a section at
-            // state 0, so restoring the live state is race-free; the dirtying thread's unload saves it.
-            me.cortex.voxy.common.Logger.error(msg + " (kept alive, will be saved)");
-            ATOMIC_STATE_HANDLE.compareAndSet(this, 0, 1);
-            return false;
+            // would then find a freed-but-dirty section on its own unload. Nobody can take a ref on a section at
+            // state 0, so restoring the live state right away is race-free; the dirtying thread's unload saves it.
+            boolean restored = ATOMIC_STATE_HANDLE.compareAndSet(this, 0, 1);
+            if (restored) {
+                me.cortex.voxy.common.Logger.error("Section freed while marked as dirty or in the save queue: " + (dirty?"dirty, ":"") + (queued?"saveQueue":"") + " " + WorldEngine.pprintPos(this.key) + " (kept alive, will be saved)");
+                return false;
+            }
+            //Only reachable through a refcount bug elsewhere (an unconditional acquire/release landed in the window):
+            // do not leave a non-live section in the cache, free it as before this fix and say so loudly.
+            me.cortex.voxy.common.Logger.error("Section keep-alive failed, state is " + (int) ATOMIC_STATE_HANDLE.get(this) + ", freeing it (refcount bug): " + WorldEngine.pprintPos(this.key));
+            return true;
         }
         return witness == 1;
     }
