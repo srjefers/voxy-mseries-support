@@ -22,6 +22,24 @@ import static org.lwjgl.opengl.GL33.*;
 
 public class IrisShaderPatch {
     public static final int VERSION = ((IntSupplier)()->1).getAsInt();
+    // Upstream 13230c27: packs written for Voxy >= 0.2.11 feature-gate with `#if VOXY >= N`;
+    // against the fork's previous bare `#define VOXY` jcpp reports "Bad token in expression",
+    // evaluates the #if as FALSE and continues (Iris never checks the error count), so every
+    // version-gated pack block silently disappears. 1 is the contract level — no depth-hack v2 (eda60134)
+    // or dynamic far plane v3 (534d58ec) yet, see docs/UPSTREAM-SYNC.md B5/B8.
+    // VOXY_SHADER_DEFINE_VERSION=N overrides; 0 restores the bare define (kill switch).
+    public static final int SHADER_DEFINE_VERSION = parseShaderDefineVersion();
+
+    private static int parseShaderDefineVersion() {
+        int v = 1;
+        String env = System.getenv("VOXY_SHADER_DEFINE_VERSION");
+        if (env != null && !env.isBlank()) {
+            try { v = Integer.parseInt(env.trim()); } catch (NumberFormatException ignored) {}
+        }
+        Logger.info("[Voxy-SYNC] Iris shader define: " + (v > 0 ? "#define VOXY " + v : "bare #define VOXY (VOXY_SHADER_DEFINE_VERSION=0)")
+                + (env != null ? " (env override)" : " (upstream 13230c27 contract v1; VOXY_SHADER_DEFINE_VERSION=0 reverts)"));
+        return v;
+    }
 
     public static final boolean IMPERSONATE_DISTANT_HORIZONS = System.getProperty("voxy.impersonateDHShader", "false").equalsIgnoreCase("true");
 
