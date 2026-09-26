@@ -2,6 +2,8 @@ package me.cortex.voxy.client.mixin.minecraft;
 
 import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.common.world.service.VoxelIngestService;
+import me.cortex.voxy.commonImpl.VoxyCommon;
+import me.cortex.voxy.commonImpl.VoxyInstance;
 import me.cortex.voxy.commonImpl.WorldIdentifier;
 import net.minecraft.client.multiplayer.ClientChunkCache;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -57,7 +59,7 @@ public abstract class MixinClientLevel {
         //TODO: is this _really_ needed, we should have enough processing power to not need todo it if its only a
         // block removal
         if (!updated.isAir()) return;
-
+        if (VoxyCommon.getInstance()==null) return;
         if (!VoxyConfig.CONFIG.ingestEnabled) return;//Only ingest if setting enabled
 
         var self = (Level)(Object)this;
