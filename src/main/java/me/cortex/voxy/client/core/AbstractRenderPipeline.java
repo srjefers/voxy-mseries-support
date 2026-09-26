@@ -709,7 +709,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                 temporalOpaqueDrawCount = org.lwjgl.system.MemoryUtil.memGetInt(p + 20);
             }
             int topNodeCount = this.traversal.getTopNodeCount();
-            int firstDispatchSize = (topNodeCount + 127) >> 7;
+            int firstDispatchSize = (topNodeCount + 31) >> 5;//HierarchicalOcclusionTraverser.LOCAL_WORK_SIZE_BITS = 5 (was >>7: logged 0 for 1..127 nodes)
             // fps over the 600-frame window between these logs — the perf A/B
             // matrix reads it straight from the log (paused-time windows show
             // up as implausibly low fps and are skipped by the reader).
