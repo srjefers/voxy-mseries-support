@@ -23,6 +23,13 @@ VOXY_FORCE_METAL=1 ./gradlew runClient
 `VOXY_FORCE_METAL=1` is the explicit opt-in for the Metal render path —
 without it Voxy disables itself on macOS and you get plain Sodium rendering.
 
+A dev run uses Java's default heap limit (25% of RAM). To measure what a
+launcher profile with `-Xmx6G` would see, cap it the same way:
+
+```bash
+VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G
+```
+
 To use the mod in a launcher profile, build the jar and drop it in `mods/`
 together with the matching Sodium version, then add the JVM arguments from
 [Opting in](#opting-in-and-java-memory):
@@ -81,7 +88,8 @@ Without `-Dvoxy.forceMetal=true` (or the environment variable
 | Voxy *Pixels² of subdivision size* | 128 | 96 | 96 |
 | Shader pack | none | BSL with *Shadow Distance* 128 and *Shadow Resolution* 1024† | BSL defaults |
 | Window | about 1080p | Retina window | 2848×1284 window |
-| java process in Activity Monitor | ≈7–9 GB† | ≈9–12 GB† | 13.5–16.7 GB (measured) |
+| java process in Activity Monitor | ≈7–9 GB† | ≈9–12 GB† | ≈15 GB in a world; ≈1.6 GB before the first world and ≈6 GB back on the title screen (measured, 12 GB heap limit) |
+| CPU (Activity Monitor, 100% = one core) | | | 110–230% while playing, 50–100% on the pause menu (measured, 16-core M4 Max) |
 
 - Graphics settings follow the chip and `-Xmx` follows the memory, so read
   each row on its own (for example, a base M2 with 24 GB uses the Minimum
@@ -90,9 +98,12 @@ Without `-Dvoxy.forceMetal=true` (or the environment variable
   render distance 256 chunks or less, Minecraft render distance 8 or less, no
   shader pack. Leave the geometry arena at its 1 GB default (see the last
   point below).
-- The Tested memory figure was measured before the geometry arena was
-  sized from RAM (commit `5b947233`); expect about 1 GB less on a 48 GB Mac
-  now†.
+- The Tested memory figure comes from a dev run with Java's default 12 GB
+  heap limit, measured over four leave-and-rejoin cycles without restarting
+  the game. It levelled off at about 15 GB instead of growing: the GPU side
+  drops to about 0.4 GB on every return to the title screen, and most of the
+  rest is Java heap that the JVM grew toward its limit. With `-Xmx6G` expect
+  roughly 3 GB less†.
 - A lower Minecraft render distance moves work to Voxy, which draws far
   terrain much more cheaply.
 - With BSL, lower *Fog Density LOD* to about 0.25 (see Known issues).
@@ -128,6 +139,8 @@ Minecraft's Java heap:
 - **F3 shows only the Java heap** (2.5 GB used of 12 GB in the tested
   session). Activity Monitor shows the whole process, including everything in
   the table above.
+- **Voxy's own F3 lines are hidden by default** in Minecraft 1.21.11. Press
+  F3+F6 to open *Debug Options* and enable the `voxy` entries.
 - **Do not give Java much more heap than it needs.** Java tends to grow into
   its `-Xmx` and rarely gives memory back, and on unified memory every GB of
   heap is a GB the GPU cannot use. Voxy's GPU memory is wired while in use, so
@@ -137,6 +150,25 @@ Minecraft's Java heap:
   arena is free, so an arena below about 768 MB evicts all the time and far
   LODs pop in and out. A full or fragmented arena delays new LODs instead of
   crashing.
+
+## Troubleshooting
+
+- **The shader pack turned itself off.** If Voxy cannot build its renderer
+  while a shader pack is active, Iris turns the pack off so the game keeps
+  running. Since commit `5294dd9d` it stays off only for that session, and
+  the log says why. Older builds also saved the change: turn the pack back on
+  in *Options → Video Settings → Shader Packs*.
+- **The world does not load after the shaders went off.** Builds before
+  `afcb801d` crashed on every world join without a shader pack. Update to a
+  newer build, or turn the pack back on as above.
+- **Voxy's lines are missing from F3.** Press F3+F6 and enable the `voxy`
+  entries in *Debug Options*.
+- **The java thread count grows each time you rejoin a world.** Each
+  singleplayer join adds about 6 threads that Voxy does not own. Vanilla
+  Minecraft keeps 3 network threads per join and stops at 32 in total.
+  Chunky adds 3 more, which exit after 5 idle minutes.
+- **Frame rate drops in steps.** With vsync on the frame rate snaps to 60,
+  40, 30 and so on. Turn vsync off to see the real cost.
 
 ## What works (alpha)
 
