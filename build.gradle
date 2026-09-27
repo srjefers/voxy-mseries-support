@@ -110,6 +110,13 @@ loom {
             if (System.getenv("VOXY_QUICKPLAY") != null) {
                 programArgs("--quickPlaySingleplayer", System.getenv("VOXY_QUICKPLAY"))
             }
+            // Optional heap cap for dev runs, to measure what a launcher profile with -Xmx sees:
+            // ./gradlew runClient -PrunXmx=6G (VOXY_RUN_XMX=6G works too). Without it the JVM default
+            // applies (25% of RAM, 12 GB on a 48 GB Mac) and Activity Monitor shows a larger process.
+            def runXmx = project.findProperty("runXmx") ?: System.getenv("VOXY_RUN_XMX")
+            if (runXmx) {
+                vmArg("-Xmx${runXmx}")
+            }
         }
     }
 }
