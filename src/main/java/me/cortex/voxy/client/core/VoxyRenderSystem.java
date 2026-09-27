@@ -963,6 +963,16 @@ public class VoxyRenderSystem {
 
     private boolean worldReleased;
 
+    private static final boolean SHUTDOWN_PER_STEP = !"0".equals(System.getenv("VOXY_SHUTDOWN_PER_STEP"));
+
+    private static void shutdownStep(String what, Runnable step) {
+        try {
+            step.run();
+        } catch (Throwable t) {
+            Logger.error("Error shutting down renderer component: " + what, t);
+        }
+    }
+
     private void shutdown0() {
         Logger.info("Flushing download stream");
         try {//fork: a throwing callback (dead node-manager worker) must not abort the teardown that follows
@@ -987,24 +997,46 @@ public class VoxyRenderSystem {
             }
         }
         Logger.info("Shutting down rendering");
-        try {
-            //Cleanup callbacks
-            this.worldIn.setDirtyCallback(null);
-            this.worldIn.getMapper().setBiomeCallback(null);
-            this.worldIn.getMapper().setStateCallback(null);
+        if (!SHUTDOWN_PER_STEP) {
+            try {
+                //Cleanup callbacks
+                this.worldIn.setDirtyCallback(null);
+                this.worldIn.getMapper().setBiomeCallback(null);
+                this.worldIn.getMapper().setStateCallback(null);
 
-            this.nodeManager.stop();
+                this.nodeManager.stop();
 
-            this.modelService.shutdown();
-            this.renderGen.shutdown();
-            this.traversal.free();
-            this.nodeCleaner.free();
+                this.modelService.shutdown();
+                this.renderGen.shutdown();
+                this.traversal.free();
+                this.nodeCleaner.free();
 
-            this.geometryData.free();
-            this.chunkBoundRenderer.free();
+                this.geometryData.free();
+                this.chunkBoundRenderer.free();
 
-            this.viewportSelector.free();
-        } catch (Exception e) {Logger.error("Error shutting down renderer components", e);}
+                this.viewportSelector.free();
+            } catch (Exception e) {Logger.error("Error shutting down renderer components", e);}
+        } else {
+            //Fork: one guarded step per component, same order. A throw in one step used to skip the rest:
+            // a failed nodeManager.stop() left the 'Model factory processor' thread running and the mesh
+            // service registered, which then made the instance's thread pool refuse to shut down.
+            // Identical to the block above when nothing throws. VOXY_SHUTDOWN_PER_STEP=0 restores it.
+            shutdownStep("world callbacks", () -> {
+                this.worldIn.setDirtyCallback(null);
+                this.worldIn.getMapper().setBiomeCallback(null);
+                this.worldIn.getMapper().setStateCallback(null);
+            });
+            //Lambdas, not method references: a method reference dereferences the field before the step's
+            // try, so a null component would throw past the guard.
+            shutdownStep("node manager", () -> this.nodeManager.stop());
+            shutdownStep("model service", () -> this.modelService.shutdown());
+            shutdownStep("render generation service", () -> this.renderGen.shutdown());
+            shutdownStep("traversal", () -> this.traversal.free());
+            shutdownStep("node cleaner", () -> this.nodeCleaner.free());
+            shutdownStep("geometry data", () -> this.geometryData.free());
+            shutdownStep("chunk bound renderer", () -> this.chunkBoundRenderer.free());
+            shutdownStep("viewport selector", () -> this.viewportSelector.free());
+        }
         Logger.info("Shutting down render pipeline");
         try {this.pipeline.free();} catch (Exception e){Logger.error("Error releasing render pipeline", e);}
 
