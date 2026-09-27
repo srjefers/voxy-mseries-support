@@ -140,7 +140,9 @@ Minecraft's Java heap:
   session). Activity Monitor shows the whole process, including everything in
   the table above.
 - **Voxy's own F3 lines are hidden by default** in Minecraft 1.21.11. Press
-  F3+F6 to open *Debug Options* and enable the `voxy` entries.
+  F3+F6 to open *Debug Options*, find the row named `debug` and set it to
+  *In Overlay* or *Always*. Voxy's rows are called `debug` and `version`, so
+  searching for "voxy" finds nothing. The `version` row is always shown.
 - **Do not give Java much more heap than it needs.** Java tends to grow into
   its `-Xmx` and rarely gives memory back, and on unified memory every GB of
   heap is a GB the GPU cannot use. Voxy's GPU memory is wired while in use, so
@@ -162,8 +164,8 @@ Minecraft's Java heap:
 - **The world does not load after the shaders went off.** Builds before
   `afcb801d` crashed on every world join without a shader pack. Update to a
   newer build, or turn the pack back on as above.
-- **Voxy's lines are missing from F3.** Press F3+F6 and enable the `voxy`
-  entries in *Debug Options*.
+- **Voxy's lines are missing from F3.** Press F3+F6 and set the row named
+  `debug` to *In Overlay* in *Debug Options*.
 - **The java thread count grows each time you rejoin a world.** Each
   singleplayer join adds about 6 threads that Voxy does not own. Vanilla
   Minecraft keeps 3 network threads per join and stops at 32 in total.
