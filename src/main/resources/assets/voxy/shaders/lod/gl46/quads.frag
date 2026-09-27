@@ -436,7 +436,16 @@ void main() {
     // cell visible instead of silently black/discarded.
     #ifdef VOXY_DEBUG_MAGENTA_MISSING
     if (colour.a == 0.0) {
+        #ifdef PATCHED_SHADER
+        // Material g-buffer path (shader pack): there is no outColour, so emit magenta through the pack
+        // emitter like the water debug arm above (lightMap 248/256 quantizes to nibble 15, bright).
+        // Without this the pack pipelines failed to compile with this debug knob on.
+        voxy_emitFragment(VoxyFragmentParameters(
+                vec4(1.0, 0.0, 1.0, 1.0), vec2(0.0), vec2(0.0), 0u, 0u,
+                vec2(248.0/256.0), vec4(1.0), 0u));
+        #else
         outColour = vec4(1.0, 0.0, 1.0, 1.0);
+        #endif
         return;
     }
     #endif

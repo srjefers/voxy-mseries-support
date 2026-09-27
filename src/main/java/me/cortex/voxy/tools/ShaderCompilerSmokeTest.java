@@ -61,7 +61,9 @@ public final class ShaderCompilerSmokeTest {
                 new ShaderCase("chunkoutline/outline.vsh", RuntimeShaderCompiler.Stage.VERTEX, empty, "chunkoutline/outline.vsh (M9 — integer-mix extension)"),
                 new ShaderCase("chunkoutline/outline.fsh", RuntimeShaderCompiler.Stage.FRAGMENT, empty, "chunkoutline/outline.fsh"),
                 new ShaderCase("lod/gl46/prep.comp", RuntimeShaderCompiler.Stage.COMPUTE, empty, "lod/gl46/prep.comp"),
-                new ShaderCase("hiz/hiz.comp", RuntimeShaderCompiler.Stage.COMPUTE, empty, "hiz/hiz.comp (subgroups)"),
+                // hiz/hiz.comp (subgroups) removed 2026-09-26: HiZBuffer2 is never created on any backend
+                // (Viewport comments it out), and its known MSL failure made this task exit 1 on every run,
+                // hiding new failures.
                 new ShaderCase("lod/gl46/cmdgen.comp", RuntimeShaderCompiler.Stage.COMPUTE, cmdgenA, "lod/gl46/cmdgen.comp + injected defines"),
                 new ShaderCase("lod/hierarchical/debug/setup.comp", RuntimeShaderCompiler.Stage.COMPUTE, empty, "lod/hierarchical/debug/setup.comp"),
                 new ShaderCase("util/scatter.comp", RuntimeShaderCompiler.Stage.COMPUTE,
@@ -258,6 +260,7 @@ public final class ShaderCompilerSmokeTest {
                 failMsl++;
             }
         }
+        int failLink = metalDevice != 0 ? linkLiveMdicPipelines(root, assetsBase, failures) : 0;
         long ms = (System.nanoTime() - start) / 1_000_000;
         System.out.println();
         System.out.printf("=== SPV: %d/%d  MSL: %d/%d  METAL LIB: %s  in %d ms ===%n",
@@ -270,14 +273,17 @@ public final class ShaderCompilerSmokeTest {
         }
     }
 
+    /** One live MDIC layer: its define set, whether it is the opaque layer, whether it writes the 3-plane material g-buffer. */
+    private record MdicLayer(String label, Map<String, String> defines, boolean opaque, boolean material, boolean contract) {}
+
     /**
-     * The MDIC terrain pipelines with the define sets the Metal backend builds BY DEFAULT today
-     * (MDICSectionRenderer, Metal branch, no env overrides), vertex and fragment, with and without a
-     * shader pack. The older hand-written cases above predate most of these defines, which let a
-     * fragment-only reference to the model buffer ship: without a pack the opaque pipeline did not
-     * compile and every world join crashed (2026-09-26). Keep this in sync with MDICSectionRenderer.
+     * The MDIC terrain pipelines with the define sets the Metal backend builds today (MDICSectionRenderer,
+     * Metal branch), for every pack state and the material kill switches. The older hand-written cases
+     * above predate most of these defines, which let a fragment-only reference to the model buffer ship:
+     * without a pack the opaque pipeline did not compile and every world join crashed (2026-09-26).
+     * Keep this in sync with MDICSectionRenderer.
      */
-    private static java.util.List<ShaderCase> liveMdicCases() {
+    private static java.util.List<MdicLayer> liveMdicLayers() {
         Map<String, String> common = new java.util.LinkedHashMap<>();
         common.put("NO_SHADE_FACE_TINT", "1.0f");
         common.put("UP_FACE_TINT", "1.0f");
@@ -303,40 +309,106 @@ public final class ShaderCompilerSmokeTest {
         Map<String, String> translucent = new java.util.LinkedHashMap<>(common);
         translucent.put("TRANSLUCENT", "");
         translucent.put("VOXY_WATER_FAR_ALPHA", "");
-        translucent.put("VOXY_TRANS_NEAR_CULL", "");
-        translucent.put("VOXY_TRANS_NEAR_CULL_XZ", "");
-        translucent.put("VOXY_TRANS_NEAR_CULL_RADIAL", "");
-        translucent.put("VOXY_TRANS_NEAR_CULL_MASKED", "");
-        translucent.put("VOXY_TRANS_NEAR_CULL_GHOST", "");
         translucent.put("VOXY_WATER_DEPTH_BIAS", "0");
+        // The near-cull is only compiled under the vx contract (MDICSectionRenderer).
+        Map<String, String> translucentContract = new java.util.LinkedHashMap<>(translucent);
+        translucentContract.put("VOXY_TRANS_NEAR_CULL", "");
+        translucentContract.put("VOXY_TRANS_NEAR_CULL_XZ", "");
+        translucentContract.put("VOXY_TRANS_NEAR_CULL_RADIAL", "");
+        translucentContract.put("VOXY_TRANS_NEAR_CULL_MASKED", "");
+        translucentContract.put("VOXY_TRANS_NEAR_CULL_GHOST", "");
 
+        java.util.List<MdicLayer> out = new java.util.ArrayList<>();
         // No shader pack: env fog on, LOD brightness compensation.
-        Map<String, String> opaqueNoPack = new java.util.LinkedHashMap<>(opaque);
-        opaqueNoPack.put("USE_ENV_FOG", "");
-        opaqueNoPack.put("VOXY_LOD_BRIGHTNESS", "0.9200");
-        Map<String, String> transNoPack = new java.util.LinkedHashMap<>(translucent);
-        transNoPack.put("USE_ENV_FOG", "");
-        // Shader pack (vx contract): both layers go through the material g-buffer emitter.
-        Map<String, String> opaquePack = new java.util.LinkedHashMap<>(opaque);
-        opaquePack.put("PATCHED_SHADER", "");
-        opaquePack.put("VOXY_VX_GBUFFER", "");
-        Map<String, String> transPack = new java.util.LinkedHashMap<>(translucent);
-        transPack.put("PATCHED_SHADER", "");
-        transPack.put("VOXY_VX_GBUFFER", "");
-
-        String emitter = me.cortex.voxy.client.core.util.MetalVxGbufferEmitter.SOURCE;
-        var V = RuntimeShaderCompiler.Stage.VERTEX;
-        var F = RuntimeShaderCompiler.Stage.FRAGMENT;
-        java.util.List<ShaderCase> out = new java.util.ArrayList<>();
-        out.add(new ShaderCase("lod/gl46/quads3.vert", V, opaqueNoPack, "MDIC live default: no pack, opaque (vert)"));
-        out.add(new ShaderCase("lod/gl46/quads.frag", F, opaqueNoPack, "MDIC live default: no pack, opaque (frag)"));
-        out.add(new ShaderCase("lod/gl46/quads3.vert", V, transNoPack, "MDIC live default: no pack, translucent (vert)"));
-        out.add(new ShaderCase("lod/gl46/quads.frag", F, transNoPack, "MDIC live default: no pack, translucent (frag)"));
-        out.add(new ShaderCase("lod/gl46/quads3.vert", V, opaquePack, "MDIC live default: shader pack, opaque (vert)"));
-        out.add(new ShaderCase("lod/gl46/quads.frag", F, opaquePack, "MDIC live default: shader pack, opaque (frag)", emitter));
-        out.add(new ShaderCase("lod/gl46/quads3.vert", V, transPack, "MDIC live default: shader pack, translucent (vert)"));
-        out.add(new ShaderCase("lod/gl46/quads.frag", F, transPack, "MDIC live default: shader pack, translucent (frag)", emitter));
+        out.add(new MdicLayer("no pack, opaque", with(opaque, "USE_ENV_FOG", "", "VOXY_LOD_BRIGHTNESS", "0.9200"), true, false, false));
+        out.add(new MdicLayer("no pack, translucent", with(translucent, "USE_ENV_FOG", ""), false, false, false));
+        // A pack without voxy.json (gbuffer inject): env fog off, brightness kept.
+        out.add(new MdicLayer("pack without contract, opaque", with(opaque, "VOXY_LOD_BRIGHTNESS", "0.9200"), true, false, false));
+        out.add(new MdicLayer("pack without contract, translucent", translucent, false, false, false));
+        // Contract pack (BSL): both layers go through the material g-buffer emitter.
+        out.add(new MdicLayer("contract pack, opaque", with(opaque, "PATCHED_SHADER", "", "VOXY_VX_GBUFFER", ""), true, true, true));
+        out.add(new MdicLayer("contract pack, translucent", with(translucentContract, "PATCHED_SHADER", "", "VOXY_VX_GBUFFER", ""), false, true, true));
+        // Contract pack with VOXY_VX_MATERIAL_OPAQUE=0: opaque back on the plain path.
+        out.add(new MdicLayer("contract pack, VOXY_VX_MATERIAL_OPAQUE=0, opaque", opaque, true, false, true));
+        // Contract pack with VOXY_VX_MATERIAL=0: neither layer patched, near-cull kept.
+        out.add(new MdicLayer("contract pack, VOXY_VX_MATERIAL=0, translucent", translucentContract, false, false, true));
+        // Debug knob that broke the pack path (VOXY_BAKERY_DEBUG_MISSING=1).
+        out.add(new MdicLayer("contract pack + magenta-missing debug, opaque",
+                with(opaque, "PATCHED_SHADER", "", "VOXY_VX_GBUFFER", "", "VOXY_DEBUG_MAGENTA_MISSING", ""), true, true, true));
+        out.add(new MdicLayer("contract pack + magenta-missing debug, translucent",
+                with(translucentContract, "PATCHED_SHADER", "", "VOXY_VX_GBUFFER", "", "VOXY_DEBUG_MAGENTA_MISSING", ""), false, true, true));
         return out;
+    }
+
+    private static Map<String, String> with(Map<String, String> base, String... kv) {
+        Map<String, String> m = new java.util.LinkedHashMap<>(base);
+        for (int i = 0; i + 1 < kv.length; i += 2) m.put(kv[i], kv[i + 1]);
+        return m;
+    }
+
+    private static java.util.List<ShaderCase> liveMdicCases() {
+        String emitter = me.cortex.voxy.client.core.util.MetalVxGbufferEmitter.SOURCE;
+        java.util.List<ShaderCase> out = new java.util.ArrayList<>();
+        for (MdicLayer l : liveMdicLayers()) {
+            out.add(new ShaderCase("lod/gl46/quads3.vert", RuntimeShaderCompiler.Stage.VERTEX, l.defines(), "MDIC live: " + l.label() + " (vert)"));
+            out.add(new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT, l.defines(), "MDIC live: " + l.label() + " (frag)",
+                    l.material() ? emitter : null));
+        }
+        return out;
+    }
+
+    /**
+     * Builds every live MDIC layer as a real Metal render pipeline, the way MDICSectionRenderer does, so a
+     * vertex/fragment interface mismatch (a varying guarded differently in quads3.vert and quads.frag) fails
+     * here instead of at world join: per-stage library compiles cannot see it. Returns the failure count.
+     */
+    private static int linkLiveMdicPipelines(Path root, Path assetsBase, StringBuilder failures) throws Exception {
+        me.cortex.voxy.client.core.metal.MetalRenderBackend backend;
+        try {
+            backend = new me.cortex.voxy.client.core.metal.MetalRenderBackend();
+        } catch (Throwable t) {
+            System.out.println("SKIP link (no Metal backend: " + t.getMessage() + ")");
+            return 0;
+        }
+        String vert = expandImports(root.resolve("lod/gl46/quads3.vert"), assetsBase);
+        String frag = expandImports(root.resolve("lod/gl46/quads.frag"), assetsBase);
+        String emitter = me.cortex.voxy.client.core.util.MetalVxGbufferEmitter.SOURCE;
+        final int RGBA8 = 0x8058;
+        int failed = 0;
+        try {
+            for (MdicLayer l : liveMdicLayers()) {
+                me.cortex.voxy.client.core.gpu.PipelineState state = l.opaque()
+                        ? new me.cortex.voxy.client.core.gpu.PipelineState(
+                                me.cortex.voxy.client.core.gpu.PipelineState.DepthState.DEFAULT,
+                                me.cortex.voxy.client.core.gpu.PipelineState.BlendState.OPAQUE,
+                                me.cortex.voxy.client.core.gpu.PipelineState.RasterState.NO_CULL)
+                        : new me.cortex.voxy.client.core.gpu.PipelineState(
+                                l.contract() ? me.cortex.voxy.client.core.gpu.PipelineState.DepthState.DEFAULT
+                                        : me.cortex.voxy.client.core.gpu.PipelineState.DepthState.TEST_NO_WRITE,
+                                l.material() ? me.cortex.voxy.client.core.gpu.PipelineState.BlendState.OPAQUE
+                                        : me.cortex.voxy.client.core.gpu.PipelineState.BlendState.PREMULTIPLIED_ALPHA,
+                                me.cortex.voxy.client.core.gpu.PipelineState.RasterState.NO_CULL);
+                int[] formats = l.material() ? new int[]{RGBA8, RGBA8, RGBA8} : new int[]{RGBA8};
+                String label = "MDIC live link: " + l.label();
+                try {
+                    var pso = backend.createGraphicsPipeline(new me.cortex.voxy.client.core.gpu.GraphicsPipelineDesc(
+                            vert, l.material() ? frag + emitter : frag, l.defines(),
+                            null, null, null, null, formats,
+                            me.cortex.voxy.client.core.gpu.VertexLayout.EMPTY, state, label));
+                    pso.close();
+                    System.out.printf("PASS link          %s%n", label);
+                } catch (Throwable t) {
+                    System.out.printf("FAIL link          %s%n", label);
+                    Throwable root0 = t;
+                    while (root0.getCause() != null) root0 = root0.getCause();
+                    failures.append("  ").append(label).append(" [LINK]: ").append(root0.getMessage()).append('\n');
+                    failed++;
+                }
+            }
+        } finally {
+            backend.shutdown();
+        }
+        return failed;
     }
 
     /** Resolve Voxy's #import &lt;ns:path&gt; directives recursively against the assets root. */
