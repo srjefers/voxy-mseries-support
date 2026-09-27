@@ -148,14 +148,14 @@ public class IrisUtil {
     }
 
     /**
-     * Fork (Metal): like {@link #disableIrisShaders()}, but for this session only. Iris's only public
+     * Fork (Metal): like {@link #disableIrisShaders()}, but without saving the disable. Iris's only public
      * disable (setShadersEnabledAndApply) saves enableShaders=false and then reloads, and the reload
      * re-reads the file, so the save cannot be skipped. The finally blocks put the user's saved value
      * back on disk once the reload is done, including when the nested renderer rebuild inside that
-     * reload throws, and keep the in-memory state off for the rest of the session. Before this a single
-     * renderer failure with a pack active (the A11 test knob, a shader transpile error) silently turned
-     * the pack off for every later launch. Iris saves again if the user changes an Iris setting later in
-     * the same session.
+     * reload throws, and leave the in-memory state off. Before this a single renderer failure with a pack
+     * active (the A11 test knob, a shader transpile error) silently turned the pack off for every later
+     * launch. Iris re-reads the file on its own reloads, so reloading shaders (R) or turning them back on
+     * tries the pack again; changing an Iris setting in the same session saves the in-memory value.
      */
     public static void disableIrisShadersForSession(Throwable cause) {
         if (IRIS_INSTALLED) disableIrisShadersForSession0(cause);
@@ -164,10 +164,10 @@ public class IrisUtil {
         var cfg = net.irisshaders.iris.Iris.getIrisConfig();
         boolean saved = cfg.areShadersEnabled();
         String pack = cfg.getShaderPackName().orElse("?");
-        Logger.error("Voxy could not build its renderer with shader pack '" + pack + "'; shaders are OFF for"
-                + " this session only (iris.properties keeps enableShaders=" + saved + "). Re-enable them in"
-                + " Options > Video Settings > Shader Packs. VOXY_IRIS_DISABLE_PERSIST=1 restores upstream's"
-                + " saved disable. Cause: " + cause);
+        Logger.error("Voxy could not build its renderer with shader pack '" + pack + "'; shaders are OFF until"
+                + " you reload them (R) or turn them back on in Options > Video Settings > Shader Packs, which"
+                + " tries the pack again. iris.properties keeps enableShaders=" + saved + ", so the next launch"
+                + " tries it too. VOXY_IRIS_DISABLE_PERSIST=1 restores upstream's saved disable. Cause: " + cause);
         try {
             IrisApi.getInstance().getConfig().setShadersEnabledAndApply(false);
         } finally {

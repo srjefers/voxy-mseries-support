@@ -44,8 +44,15 @@ public class RenderPipelineFactory {
         } else if (!glBackend && IrisUtil.IRIS_INSTALLED) {
             //Fork: this used to say "Voxy's Iris integration only runs on OpenGL", which has not been
             // true since the Metal vx contract; it is printed whenever no contract pack is active.
-            Logger.info("No shader pack with a Voxy contract is active (shaders off, or a pack without"
-                    + " voxy.json); Voxy renders LODs with its NormalRenderPipeline.");
+            String why;
+            if (!IrisUtil.irisShaderPackEnabled()) {
+                why = "shaders are off";
+            } else if ("0".equals(System.getenv("VOXY_VX_MATERIAL"))) {
+                why = "the vx material pipeline is disabled by VOXY_VX_MATERIAL=0";
+            } else {
+                why = "the active pack has no voxy.json, or its Iris pipeline is not built yet (g-buffer inject path)";
+            }
+            Logger.info("Voxy renders LODs with its NormalRenderPipeline: " + why + ".");
         }
         if (pipeline == null) {
             pipeline = new NormalRenderPipeline(nodeManager, nodeCleaner, traversal, frexSupplier);

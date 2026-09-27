@@ -155,9 +155,10 @@ Minecraft's Java heap:
 
 - **The shader pack turned itself off.** If Voxy cannot build its renderer
   while a shader pack is active, Iris turns the pack off so the game keeps
-  running. Since commit `5294dd9d` it stays off only for that session, and
-  the log says why. Older builds also saved the change: turn the pack back on
-  in *Options → Video Settings → Shader Packs*.
+  running. Since commit `5294dd9d` that change is not saved, and the log says
+  why. Reloading shaders (R) or turning the pack back on tries it again, and
+  so does the next launch. Older builds saved the change: turn the pack back
+  on in *Options → Video Settings → Shader Packs*.
 - **The world does not load after the shaders went off.** Builds before
   `afcb801d` crashed on every world join without a shader pack. Update to a
   newer build, or turn the pack back on as above.

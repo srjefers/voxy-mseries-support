@@ -72,20 +72,24 @@ public class UnifiedServiceThreadPool {
     public void shutdown() {
         if (!SHUTDOWN_FINALLY) {
             this.serviceManager.shutdown();
-            this.releaseWorkers();
+            this.releaseWorkers(false);
             return;
         }
         try {
             this.serviceManager.shutdown();
         } finally {
-            this.releaseWorkers();
+            this.releaseWorkers(true);
         }
     }
 
-    private void releaseWorkers() {
+    private void releaseWorkers(boolean pruneDead) {
         this.selfBlock.release(10000);
         while (true) {
             synchronized (this.threads) {
+                //A worker killed by an Error (or the runJob/shutdown race) never removes itself, so waiting for
+                // it would hang the disconnect forever. A dead thread cannot be parked in acquire, so dropping it
+                // keeps selfBlock.free() safe.
+                if (pruneDead) this.threads.removeIf(t -> !t.isAlive());
                 if (this.threads.isEmpty()) {
                     break;
                 }
