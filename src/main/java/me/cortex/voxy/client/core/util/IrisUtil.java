@@ -6,6 +6,7 @@ import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
 import net.caffeinemc.mods.sodium.client.util.FogParameters;
 import net.fabricmc.loader.api.FabricLoader;
 import net.irisshaders.iris.Iris;
+import me.cortex.voxy.common.Logger;
 import net.irisshaders.iris.api.v0.IrisApi;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.shadows.ShadowRenderer;
@@ -144,5 +145,40 @@ public class IrisUtil {
     }
     private static void disableIrisShaders0() {
         IrisApi.getInstance().getConfig().setShadersEnabledAndApply(false);//Disable shaders
+    }
+
+    /**
+     * Fork (Metal): like {@link #disableIrisShaders()}, but for this session only. Iris's only public
+     * disable (setShadersEnabledAndApply) saves enableShaders=false and then reloads, and the reload
+     * re-reads the file, so the save cannot be skipped. The finally blocks put the user's saved value
+     * back on disk once the reload is done, including when the nested renderer rebuild inside that
+     * reload throws, and keep the in-memory state off for the rest of the session. Before this a single
+     * renderer failure with a pack active (the A11 test knob, a shader transpile error) silently turned
+     * the pack off for every later launch. Iris saves again if the user changes an Iris setting later in
+     * the same session.
+     */
+    public static void disableIrisShadersForSession(Throwable cause) {
+        if (IRIS_INSTALLED) disableIrisShadersForSession0(cause);
+    }
+    private static void disableIrisShadersForSession0(Throwable cause) {
+        var cfg = net.irisshaders.iris.Iris.getIrisConfig();
+        boolean saved = cfg.areShadersEnabled();
+        String pack = cfg.getShaderPackName().orElse("?");
+        Logger.error("Voxy could not build its renderer with shader pack '" + pack + "'; shaders are OFF for"
+                + " this session only (iris.properties keeps enableShaders=" + saved + "). Re-enable them in"
+                + " Options > Video Settings > Shader Packs. VOXY_IRIS_DISABLE_PERSIST=1 restores upstream's"
+                + " saved disable. Cause: " + cause);
+        try {
+            IrisApi.getInstance().getConfig().setShadersEnabledAndApply(false);
+        } finally {
+            try {
+                cfg.setShadersEnabled(saved);
+                cfg.save();
+            } catch (java.io.IOException io) {
+                Logger.error("Could not restore enableShaders in iris.properties", io);
+            } finally {
+                cfg.setShadersEnabled(false);
+            }
+        }
     }
 }

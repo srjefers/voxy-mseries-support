@@ -42,8 +42,10 @@ public class RenderPipelineFactory {
                         + "falling back to NormalRenderPipeline.");
             }
         } else if (!glBackend && IrisUtil.IRIS_INSTALLED) {
-            Logger.warn("Iris is installed but Voxy's Iris integration only runs on OpenGL; "
-                    + "Voxy will use its NormalRenderPipeline (no shader-pack support) on this backend.");
+            //Fork: this used to say "Voxy's Iris integration only runs on OpenGL", which has not been
+            // true since the Metal vx contract; it is printed whenever no contract pack is active.
+            Logger.info("No shader pack with a Voxy contract is active (shaders off, or a pack without"
+                    + " voxy.json); Voxy renders LODs with its NormalRenderPipeline.");
         }
         if (pipeline == null) {
             pipeline = new NormalRenderPipeline(nodeManager, nodeCleaner, traversal, frexSupplier);
