@@ -88,7 +88,7 @@ Without `-Dvoxy.forceMetal=true` (or the environment variable
 | Voxy *Pixels² of subdivision size* | 128 | 96 | 96 |
 | Shader pack | none | BSL with *Shadow Distance* 128 and *Shadow Resolution* 1024† | BSL defaults |
 | Window | about 1080p | Retina window | 2848×1284 window |
-| java process in Activity Monitor | ≈7–9 GB† | ≈9–12 GB† | ≈15 GB in a world; ≈1.6 GB before the first world and ≈6 GB back on the title screen (measured, 12 GB heap limit) |
+| java process in Activity Monitor | ≈7–9 GB† | ≈9–12 GB† | ≈12–13 GB in a world with `-Xmx6G`, ≈15–16 GB with the default 12 GB limit; ≈1.6 GB before the first world (measured) |
 | CPU (Activity Monitor, 100% = one core) | | | 110–230% while playing, 50–100% on the pause menu (measured, 16-core M4 Max) |
 
 - Graphics settings follow the chip and `-Xmx` follows the memory, so read
@@ -98,12 +98,12 @@ Without `-Dvoxy.forceMetal=true` (or the environment variable
   render distance 256 chunks or less, Minecraft render distance 8 or less, no
   shader pack. Leave the geometry arena at its 1 GB default (see the last
   point below).
-- The Tested memory figure comes from a dev run with Java's default 12 GB
-  heap limit, measured over four leave-and-rejoin cycles without restarting
-  the game. It levelled off at about 15 GB instead of growing: the GPU side
-  drops to about 0.4 GB on every return to the title screen, and most of the
-  rest is Java heap that the JVM grew toward its limit. With `-Xmx6G` expect
-  roughly 3 GB less†.
+- The Tested memory figures were measured over several leave-and-rejoin
+  cycles without restarting the game. Memory levels off instead of growing:
+  the GPU side, about 4.2 GB in a world, drops to about 0.4 GB on every
+  return to the title screen. Most of the difference between the two figures
+  is Java heap, which the JVM grows toward its limit, so `-Xmx6G` saves
+  about 3 GB and played smoothly in testing.
 - A lower Minecraft render distance moves work to Voxy, which draws far
   terrain much more cheaply.
 - With BSL, lower *Fog Density LOD* to about 0.25 (see Known issues).
@@ -167,7 +167,8 @@ Minecraft's Java heap:
 - **The java thread count grows each time you rejoin a world.** Each
   singleplayer join adds about 6 threads that Voxy does not own. Vanilla
   Minecraft keeps 3 network threads per join and stops at 32 in total.
-  Chunky adds 3 more, which exit after 5 idle minutes.
+  Chunky adds 3 more, which exit after 5 idle minutes. Thread dumps over
+  seven rejoins showed Voxy's own threads staying constant.
 - **Frame rate drops in steps.** With vsync on the frame rate snaps to 60,
   40, 30 and so on. Turn vsync off to see the real cost.
 
