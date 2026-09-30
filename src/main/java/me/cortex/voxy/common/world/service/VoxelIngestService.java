@@ -6,6 +6,7 @@ import me.cortex.voxy.common.thread.ServiceManager;
 import me.cortex.voxy.common.voxelization.ILightingSupplier;
 import me.cortex.voxy.common.voxelization.VoxelizedSection;
 import me.cortex.voxy.common.voxelization.WorldConversionFactory;
+import me.cortex.voxy.common.voxelization.WorldVoxilizedSectionMipper;
 import me.cortex.voxy.common.world.WorldEngine;
 import me.cortex.voxy.common.world.WorldUpdater;
 import me.cortex.voxy.commonImpl.VoxyCommon;
@@ -47,13 +48,13 @@ public class VoxelIngestService {
             WorldUpdater.insertUpdate(task.world, vs.zero());
         } else {
             VoxelizedSection csec = WorldConversionFactory.convert(
-                    SECTION_CACHE.get(),
+                    vs,
                     task.world.getMapper(),
                     section.getStates(),
                     section.getBiomes(),
                     getLightingSupplier(task)
             );
-            WorldConversionFactory.mipSection(csec, task.world.getMapper());
+            WorldVoxilizedSectionMipper.mipSection(csec, task.world.getMapper());
             WorldUpdater.insertUpdate(task.world, csec);
         }
     }
@@ -131,6 +132,7 @@ public class VoxelIngestService {
             for (var section : chunk.getSections()) {
                 i++;
                 if (section == null || !shouldIngestSection(section, chunk.getPos().x, i, chunk.getPos().z)) continue;
+                engine.markActive();
                 this.ingestQueue.add(new IngestSection(chunk.getPos().x, i, chunk.getPos().z, engine, section, null, null));
                 try {
                     this.service.execute();
@@ -173,6 +175,7 @@ public class VoxelIngestService {
             //}
 
             DIAG_ENQUEUE_COUNT.incrementAndGet();
+            engine.markActive();
             this.ingestQueue.add(new IngestSection(chunk.getPos().x, i, chunk.getPos().z, engine, section, bl, sl));//TODO: fixme, this is technically not safe todo on the chunk load ingest, we need to copy the section data so it cant be modified while being read
             try {
                 this.service.execute();

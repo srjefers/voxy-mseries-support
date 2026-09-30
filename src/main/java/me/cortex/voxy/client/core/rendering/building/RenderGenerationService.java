@@ -153,6 +153,7 @@ public class RenderGenerationService {
         }
 
         if (section == null) {
+            me.cortex.voxy.client.core.SectionProbe.record(this.world,task.position,"build","no stored section");
             if (this.resultConsumer != null) {
                 this.resultConsumer.accept(BuiltSection.empty(task.position));
             }
@@ -272,6 +273,7 @@ public class RenderGenerationService {
         }
 
         if (mesh != null) {//If the mesh is null it means it didnt finish, so dont submit
+            if (me.cortex.voxy.client.core.SectionProbe.enabled(this.world)) me.cortex.voxy.client.core.SectionProbe.record(this.world,mesh.position,"build", "quads="+(mesh.isEmpty()?0:mesh.geometryBuffer.size/8)+",aabb="+mesh.aabb+",children="+mesh.childExistence);
             if (this.resultConsumer != null) {
                 this.resultConsumer.accept(mesh);
             } else {
@@ -281,7 +283,10 @@ public class RenderGenerationService {
     }
 
 
+    public WorldEngine getWorld() { return this.world; }
+
     public void enqueueTask(long pos) {
+        me.cortex.voxy.client.core.SectionProbe.record(this.world,pos,"queued","requested");
         if (!this.service.isLive()) {
             return;
         }

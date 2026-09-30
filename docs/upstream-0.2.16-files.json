@@ -1,0 +1,1414 @@
+{
+  "repository_full_name": "MCRcortex/voxy",
+  "base": "ee7ec50d4428cf28253d628ac5e2ed3fbf67e7a0",
+  "head": "59b62bee821518e06612e1d5c2c58c487bda761d",
+  "status": "ahead",
+  "ahead_by": 266,
+  "behind_by": 0,
+  "total_commits": 266,
+  "too_large": null,
+  "base_commit": {
+    "sha": "ee7ec50d4428cf28253d628ac5e2ed3fbf67e7a0",
+    "url": "https://api.github.com/repos/MCRcortex/voxy/commits/ee7ec50d4428cf28253d628ac5e2ed3fbf67e7a0",
+    "html_url": "https://github.com/MCRcortex/voxy/commit/ee7ec50d4428cf28253d628ac5e2ed3fbf67e7a0"
+  },
+  "merge_base_commit": {
+    "sha": "ee7ec50d4428cf28253d628ac5e2ed3fbf67e7a0",
+    "url": "https://api.github.com/repos/MCRcortex/voxy/commits/ee7ec50d4428cf28253d628ac5e2ed3fbf67e7a0",
+    "html_url": "https://github.com/MCRcortex/voxy/commit/ee7ec50d4428cf28253d628ac5e2ed3fbf67e7a0"
+  },
+  "files": [
+    {
+      "filename": ".github/workflows/manual-artifact.yml",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 3,
+      "changes": 7,
+      "previous_filename": null
+    },
+    {
+      "filename": "build.gradle",
+      "status": "modified",
+      "additions": 24,
+      "deletions": 15,
+      "changes": 39,
+      "previous_filename": null
+    },
+    {
+      "filename": "gradle.properties",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 3,
+      "changes": 6,
+      "previous_filename": null
+    },
+    {
+      "filename": "gradle/wrapper/gradle-wrapper.properties",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/ClientImportManager.java",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/ClientSessionEvents.java",
+      "status": "added",
+      "additions": 29,
+      "deletions": 0,
+      "changes": 29,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/DebugEntries.java",
+      "status": "added",
+      "additions": 67,
+      "deletions": 0,
+      "changes": 67,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/ICheekyClientChunkCache.java",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 0,
+      "changes": 2,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/VoxyClient.java",
+      "status": "modified",
+      "additions": 28,
+      "deletions": 36,
+      "changes": 64,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/VoxyClientInstance.java",
+      "status": "modified",
+      "additions": 16,
+      "deletions": 59,
+      "changes": 75,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/VoxyCommands.java",
+      "status": "modified",
+      "additions": 49,
+      "deletions": 9,
+      "changes": 58,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/VoxyDebugScreenEntry.java",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 2,
+      "changes": 3,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/config/IConfigPageSetter.java",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 8,
+      "changes": 8,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/config/ModMenuIntegration.java",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 2,
+      "changes": 3,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/config/SodiumConfigBuilder.java",
+      "status": "modified",
+      "additions": 150,
+      "deletions": 20,
+      "changes": 170,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/config/VoxyConfig.java",
+      "status": "modified",
+      "additions": 22,
+      "deletions": 1,
+      "changes": 23,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java",
+      "status": "modified",
+      "additions": 44,
+      "deletions": 34,
+      "changes": 78,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/AbstractRenderPipeline.java",
+      "status": "modified",
+      "additions": 40,
+      "deletions": 36,
+      "changes": 76,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/IGetVoxyRenderSystem.java",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 4,
+      "changes": 8,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/IrisVoxyRenderPipeline.java",
+      "status": "modified",
+      "additions": 42,
+      "deletions": 6,
+      "changes": 48,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/NormalRenderPipeline.java",
+      "status": "modified",
+      "additions": 36,
+      "deletions": 38,
+      "changes": 74,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/RenderPipelineFactory.java",
+      "status": "modified",
+      "additions": 5,
+      "deletions": 5,
+      "changes": 10,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/RenderProperties.java",
+      "status": "added",
+      "additions": 72,
+      "deletions": 0,
+      "changes": 72,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/RenderResourceReuse.java",
+      "status": "added",
+      "additions": 132,
+      "deletions": 0,
+      "changes": 132,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/SSAO.java",
+      "status": "added",
+      "additions": 182,
+      "deletions": 0,
+      "changes": 182,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/VoxyRenderSystem.java",
+      "status": "modified",
+      "additions": 95,
+      "deletions": 56,
+      "changes": 151,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/gl/Capabilities.java",
+      "status": "modified",
+      "additions": 39,
+      "deletions": 27,
+      "changes": 66,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/gl/GlTexture.java",
+      "status": "modified",
+      "additions": 29,
+      "deletions": 1,
+      "changes": 30,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/gl/shader/Shader.java",
+      "status": "modified",
+      "additions": 8,
+      "deletions": 1,
+      "changes": 9,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/gl/shader/ShaderLoader.java",
+      "status": "modified",
+      "additions": 51,
+      "deletions": 4,
+      "changes": 55,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/model/MipGen.java",
+      "status": "modified",
+      "additions": 0,
+      "deletions": 1,
+      "changes": 1,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/model/ModelBakerySubsystem.java",
+      "status": "modified",
+      "additions": 25,
+      "deletions": 40,
+      "changes": 65,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/model/ModelFactory.java",
+      "status": "modified",
+      "additions": 136,
+      "deletions": 89,
+      "changes": 225,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/model/ModelQueries.java",
+      "status": "modified",
+      "additions": 33,
+      "deletions": 1,
+      "changes": 34,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/model/ModelStore.java",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 3,
+      "changes": 6,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/model/TextureUtils.java",
+      "status": "modified",
+      "additions": 54,
+      "deletions": 6,
+      "changes": 60,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/model/bakery/BudgetBufferRenderer.java",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 96,
+      "changes": 96,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/model/bakery/GlViewCapture.java",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 98,
+      "changes": 98,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/model/bakery/ReuseVertexConsumer.java",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 2,
+      "changes": 3,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/model/bakery/SoftwareModelTextureBakery.java",
+      "status": "renamed",
+      "additions": 81,
+      "deletions": 135,
+      "changes": 216,
+      "previous_filename": "src/main/java/me/cortex/voxy/client/core/model/bakery/ModelTextureBakery.java"
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/model/bakery/SoftwareRasterizer.java",
+      "status": "added",
+      "additions": 267,
+      "deletions": 0,
+      "changes": 267,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/ChunkBoundRenderer.java",
+      "status": "modified",
+      "additions": 25,
+      "deletions": 16,
+      "changes": 41,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/RenderDistanceTracker.java",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 0,
+      "changes": 2,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/Viewport.java",
+      "status": "modified",
+      "additions": 11,
+      "deletions": 5,
+      "changes": 16,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/building/BuiltSection.java",
+      "status": "modified",
+      "additions": 8,
+      "deletions": 3,
+      "changes": 11,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/building/OccupancySet.java",
+      "status": "added",
+      "additions": 105,
+      "deletions": 0,
+      "changes": 105,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/building/OccupancySet2.java",
+      "status": "added",
+      "additions": 97,
+      "deletions": 0,
+      "changes": 97,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/building/RenderDataFactory.java",
+      "status": "modified",
+      "additions": 247,
+      "deletions": 111,
+      "changes": 358,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/building/RenderGenerationService.java",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 6,
+      "changes": 7,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/hierachical/AsyncNodeManager.java",
+      "status": "modified",
+      "additions": 40,
+      "deletions": 10,
+      "changes": 50,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/hierachical/HierarchicalOcclusionTraverser.java",
+      "status": "modified",
+      "additions": 58,
+      "deletions": 20,
+      "changes": 78,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/hierachical/NodeCleaner.java",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 3,
+      "changes": 7,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/hierachical/NodeManager.java",
+      "status": "modified",
+      "additions": 6,
+      "deletions": 8,
+      "changes": 14,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/hierachical/NodeStore.java",
+      "status": "modified",
+      "additions": 7,
+      "deletions": 5,
+      "changes": 12,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/hierachical/TestNodeManager.java",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/post/FullscreenBlit.java",
+      "status": "modified",
+      "additions": 13,
+      "deletions": 9,
+      "changes": 22,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/section/backend/AbstractSectionRenderer.java",
+      "status": "modified",
+      "additions": 5,
+      "deletions": 1,
+      "changes": 6,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/section/backend/mdic/MDICSectionRenderer.java",
+      "status": "modified",
+      "additions": 39,
+      "deletions": 12,
+      "changes": 51,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/section/backend/mdic/MDICViewport.java",
+      "status": "modified",
+      "additions": 5,
+      "deletions": 3,
+      "changes": 8,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/section/geometry/BasicAsyncGeometryManager.java",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 2,
+      "changes": 4,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/section/geometry/BasicSectionGeometryData.java",
+      "status": "modified",
+      "additions": 40,
+      "deletions": 17,
+      "changes": 57,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/section/geometry/BasicSectionGeometryManager.java",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 1,
+      "changes": 3,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/section/geometry/IGeometryData.java",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 0,
+      "changes": 2,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/util/DepthFramebuffer.java",
+      "status": "modified",
+      "additions": 12,
+      "deletions": 5,
+      "changes": 17,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/util/DownloadStream.java",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 1,
+      "changes": 4,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/util/HiZBuffer.java",
+      "status": "modified",
+      "additions": 14,
+      "deletions": 9,
+      "changes": 23,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/util/LightMapHelper.java",
+      "status": "modified",
+      "additions": 5,
+      "deletions": 1,
+      "changes": 6,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/rendering/util/UploadStream.java",
+      "status": "modified",
+      "additions": 19,
+      "deletions": 4,
+      "changes": 23,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/util/ExpandingObjectAllocationList.java",
+      "status": "modified",
+      "additions": 12,
+      "deletions": 1,
+      "changes": 13,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/util/GPUTiming.java",
+      "status": "modified",
+      "additions": 69,
+      "deletions": 27,
+      "changes": 96,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/util/IrisUtil.java",
+      "status": "modified",
+      "additions": 24,
+      "deletions": 2,
+      "changes": 26,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/util/RingUtil.java",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 78,
+      "changes": 78,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/core/util/ScanMesher2D.java",
+      "status": "modified",
+      "additions": 8,
+      "deletions": 4,
+      "changes": 12,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/iris/IrisShaderPatch.java",
+      "status": "modified",
+      "additions": 18,
+      "deletions": 5,
+      "changes": 23,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/iris/IrisVoxyRenderPipelineData.java",
+      "status": "modified",
+      "additions": 28,
+      "deletions": 2,
+      "changes": 30,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/iris/VoxySamplers.java",
+      "status": "modified",
+      "additions": 5,
+      "deletions": 4,
+      "changes": 9,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/iris/VoxyUniforms.java",
+      "status": "modified",
+      "additions": 10,
+      "deletions": 9,
+      "changes": 19,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/iris/MixinIrisRenderingPipeline.java",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/iris/MixinLevelRenderer.java",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/iris/MixinPackRenderTargetDirectives.java",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 23,
+      "changes": 23,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/iris/MixinStandardMacros.java",
+      "status": "modified",
+      "additions": 7,
+      "deletions": 2,
+      "changes": 9,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinClientChunkCache.java",
+      "status": "modified",
+      "additions": 12,
+      "deletions": 2,
+      "changes": 14,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinClientLevel.java",
+      "status": "modified",
+      "additions": 13,
+      "deletions": 7,
+      "changes": 20,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinClientPacketListener.java",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 11,
+      "changes": 14,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinDebugScreenEntryList.java",
+      "status": "modified",
+      "additions": 8,
+      "deletions": 0,
+      "changes": 8,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinFogRenderer.java",
+      "status": "modified",
+      "additions": 6,
+      "deletions": 4,
+      "changes": 10,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinGPUSelect.java",
+      "status": "renamed",
+      "additions": 7,
+      "deletions": 4,
+      "changes": 11,
+      "previous_filename": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinWindow.java"
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinGlDebug.java",
+      "status": "modified",
+      "additions": 14,
+      "deletions": 1,
+      "changes": 15,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinLayerLightSectionStorage.java",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 16,
+      "changes": 16,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinLevelRenderer.java",
+      "status": "modified",
+      "additions": 14,
+      "deletions": 10,
+      "changes": 24,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinMinecraft.java",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 14,
+      "changes": 18,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/nvidium/MixinRenderPipeline.java",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 3,
+      "changes": 7,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/sodium/MixinDefaultChunkRenderer.java",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 5,
+      "changes": 9,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/sodium/MixinRenderRegionManager.java",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 9,
+      "changes": 10,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/sodium/MixinRenderSectionManager.java",
+      "status": "modified",
+      "additions": 18,
+      "deletions": 11,
+      "changes": 29,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/client/mixin/sodium/MixinVideoSettingsScreen.java",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 34,
+      "changes": 34,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/DebugUtils.java",
+      "status": "added",
+      "additions": 111,
+      "deletions": 0,
+      "changes": 111,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/Logger.java",
+      "status": "modified",
+      "additions": 8,
+      "deletions": 6,
+      "changes": 14,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/StorageConfigUtil.java",
+      "status": "added",
+      "additions": 71,
+      "deletions": 0,
+      "changes": 71,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/WorldConfigStorage.java",
+      "status": "added",
+      "additions": 183,
+      "deletions": 0,
+      "changes": 183,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/ConfigBuildCtx.java",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 0,
+      "changes": 1,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/IMappingStorage.java",
+      "status": "modified",
+      "additions": 0,
+      "deletions": 1,
+      "changes": 1,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/IStoredSectionPositionIterator.java",
+      "status": "added",
+      "additions": 7,
+      "deletions": 0,
+      "changes": 7,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/Serialization.java",
+      "status": "modified",
+      "additions": 6,
+      "deletions": 2,
+      "changes": 8,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/compressors/LZ4Compressor.java",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 4,
+      "changes": 8,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/compressors/ZSTDCompressor.java",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 4,
+      "changes": 8,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/section/SectionSerializationStorage.java",
+      "status": "modified",
+      "additions": 6,
+      "deletions": 5,
+      "changes": 11,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/section/SectionStorage.java",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 1,
+      "changes": 3,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/storage/StorageBackend.java",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 1,
+      "changes": 3,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/storage/inmemory/MemoryStorageBackend.java",
+      "status": "modified",
+      "additions": 11,
+      "deletions": 2,
+      "changes": 13,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/storage/lmdb/LMDBStorageBackend.java",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 2,
+      "changes": 4,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/storage/other/CompressionStorageAdaptor.java",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/storage/other/DelegatingStorageAdaptor.java",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/storage/other/FragmentedStorageBackendAdaptor.java",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 2,
+      "changes": 4,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/storage/other/ReadonlyCachingLayer.java",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/storage/redis/RedisStorageBackend.java",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/config/storage/rocksdb/RocksDBStorageBackend.java",
+      "status": "modified",
+      "additions": 38,
+      "deletions": 17,
+      "changes": 55,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/util/MessageQueue.java",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 76,
+      "changes": 76,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/util/MultiGson.java",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 106,
+      "changes": 106,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/util/ResizingThreadLocalMemoryBuffer.java",
+      "status": "added",
+      "additions": 37,
+      "deletions": 0,
+      "changes": 37,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/util/ThreadUtils.java",
+      "status": "modified",
+      "additions": 10,
+      "deletions": 2,
+      "changes": 12,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/util/UnsafeUtil.java",
+      "status": "modified",
+      "additions": 24,
+      "deletions": 0,
+      "changes": 24,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/util/cpu/CpuLayout.java",
+      "status": "modified",
+      "additions": 10,
+      "deletions": 6,
+      "changes": 16,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/voxelization/WorldConversionFactory.java",
+      "status": "modified",
+      "additions": 32,
+      "deletions": 74,
+      "changes": 106,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/voxelization/WorldVoxilizedSectionMipper.java",
+      "status": "added",
+      "additions": 77,
+      "deletions": 0,
+      "changes": 77,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/world/ActiveSectionTracker.java",
+      "status": "modified",
+      "additions": 42,
+      "deletions": 11,
+      "changes": 53,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/world/LoadedPositionTracker.java",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 366,
+      "changes": 366,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/world/SaveLoadSystem.java",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 153,
+      "changes": 153,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/world/SaveLoadSystem2.java",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 452,
+      "changes": 452,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/world/SaveLoadSystem3.java",
+      "status": "modified",
+      "additions": 21,
+      "deletions": 19,
+      "changes": 40,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/world/WorldEngine.java",
+      "status": "modified",
+      "additions": 9,
+      "deletions": 5,
+      "changes": 14,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/world/WorldSection.java",
+      "status": "modified",
+      "additions": 24,
+      "deletions": 8,
+      "changes": 32,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/world/WorldUpdater.java",
+      "status": "modified",
+      "additions": 70,
+      "deletions": 69,
+      "changes": 139,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/world/other/Mapper.java",
+      "status": "modified",
+      "additions": 6,
+      "deletions": 0,
+      "changes": 6,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/world/other/Mipper.java",
+      "status": "modified",
+      "additions": 6,
+      "deletions": 2,
+      "changes": 8,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/world/service/SectionSavingService.java",
+      "status": "modified",
+      "additions": 15,
+      "deletions": 6,
+      "changes": 21,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/common/world/service/VoxelIngestService.java",
+      "status": "modified",
+      "additions": 5,
+      "deletions": 3,
+      "changes": 8,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/commonImpl/VoxyCommon.java",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/commonImpl/VoxyInstance.java",
+      "status": "modified",
+      "additions": 20,
+      "deletions": 1,
+      "changes": 21,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/commonImpl/WorldIdentifier.java",
+      "status": "modified",
+      "additions": 48,
+      "deletions": 0,
+      "changes": 48,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/commonImpl/configuration/VoxyConfigStore.java",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 117,
+      "changes": 117,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/commonImpl/importers/DHImporter.java",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 2,
+      "changes": 5,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/java/me/cortex/voxy/commonImpl/importers/WorldImporter.java",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 1,
+      "changes": 3,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/lang/en_us.json",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 2,
+      "changes": 4,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/bakery/buffercopy.comp",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 28,
+      "changes": 28,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/bakery/bufferreorder.comp",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 36,
+      "changes": 36,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/bakery/position_tex.fsh",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 15,
+      "changes": 15,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/bakery/position_tex.vsh",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 15,
+      "changes": 15,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/chunkoutline/outline.vsh",
+      "status": "modified",
+      "additions": 17,
+      "deletions": 8,
+      "changes": 25,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/hiz/blit.fsh",
+      "status": "modified",
+      "additions": 5,
+      "deletions": 3,
+      "changes": 8,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/hiz/blit.vsh",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 1,
+      "changes": 4,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/lod/gl46/bindings.glsl",
+      "status": "modified",
+      "additions": 0,
+      "deletions": 10,
+      "changes": 10,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/lod/gl46/cull/raster.vert",
+      "status": "modified",
+      "additions": 26,
+      "deletions": 4,
+      "changes": 30,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/lod/gl46/quads.frag",
+      "status": "modified",
+      "additions": 11,
+      "deletions": 7,
+      "changes": 18,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/lod/gl46/quads3.vert",
+      "status": "modified",
+      "additions": 30,
+      "deletions": 3,
+      "changes": 33,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/lod/hierarchical/node.glsl",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 11,
+      "changes": 14,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/lod/hierarchical/screenspace.glsl",
+      "status": "modified",
+      "additions": 65,
+      "deletions": 34,
+      "changes": 99,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/lod/hierarchical/traversal_dev.comp",
+      "status": "modified",
+      "additions": 36,
+      "deletions": 3,
+      "changes": 39,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/lod/lighting.glsl",
+      "status": "added",
+      "additions": 19,
+      "deletions": 0,
+      "changes": 19,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/lod/pos_util.glsl",
+      "status": "added",
+      "additions": 18,
+      "deletions": 0,
+      "changes": 18,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/lod/quad_format.glsl",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/lod/quad_util.glsl",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 16,
+      "changes": 20,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/lod/section.glsl",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 8,
+      "changes": 11,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/post/blit_texture_depth_cutout.frag",
+      "status": "modified",
+      "additions": 11,
+      "deletions": 5,
+      "changes": 16,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/post/depth0.frag",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 1,
+      "changes": 3,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/post/fullscreen.vert",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 1,
+      "changes": 4,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/post/fullscreen2.vert",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 1,
+      "changes": 3,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/post/setup_stencil_depth.frag",
+      "status": "added",
+      "additions": 14,
+      "deletions": 0,
+      "changes": 14,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/post/ssao.comp",
+      "status": "modified",
+      "additions": 225,
+      "deletions": 70,
+      "changes": 295,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/assets/voxy/shaders/util/depthutils.glsl",
+      "status": "added",
+      "additions": 67,
+      "deletions": 0,
+      "changes": 67,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/client.voxy.mixins.json",
+      "status": "modified",
+      "additions": 5,
+      "deletions": 5,
+      "changes": 10,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/common.voxy.mixins.json",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 1,
+      "changes": 5,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/fabric.mod.json",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 1,
+      "changes": 5,
+      "previous_filename": null
+    },
+    {
+      "filename": "src/main/resources/voxy.accesswidener",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 1,
+      "changes": 4,
+      "previous_filename": null
+    }
+  ]
+}

@@ -23,49 +23,48 @@ public class MipGen {
         return bx+by*MODEL_TEXTURE_SIZE*3;
     }
 
-    private static void solidify(long baseAddr, byte msk) {
-        for (int idx = 0; idx < 6; idx++) {
-            if (((msk>>idx)&1)==0) continue;
-            int bx = (idx>>1)*MODEL_TEXTURE_SIZE;
-            int by = (idx&1)*MODEL_TEXTURE_SIZE;
-            long cAddr = baseAddr + (long)(bx+by*MODEL_TEXTURE_SIZE*3)*4;
-            Arrays.fill(SCRATCH, (short) -1);
-            for (int y = 0; y<MODEL_TEXTURE_SIZE;y++) {
-                for (int x = 0; x<MODEL_TEXTURE_SIZE;x++) {
-                    int colour = MemoryUtil.memGetInt(cAddr+(x+y*MODEL_TEXTURE_SIZE*3)*4);
-                    if ((colour&0xFF000000)!=0) {
-                        int pos = x+y*MODEL_TEXTURE_SIZE;
-                        SCRATCH[pos] = ((short)pos);
-                        QUEUE.enqueue((byte) pos);
-                    }
-                }
-            }
+    private static final int[] CELL = new int[MODEL_TEXTURE_SIZE * MODEL_TEXTURE_SIZE];
 
-            while (!QUEUE.isEmpty()) {
-                int pos = Byte.toUnsignedInt(QUEUE.dequeueByte());
-                int x = pos&(MODEL_TEXTURE_SIZE-1);
-                int y = pos/MODEL_TEXTURE_SIZE;//this better be turned into a bitshift
-                short newVal = (short) (SCRATCH[pos]+(short) 0x0100);
-                for (int D = 3; D!=-1; D--) {
-                    int d = 2*(D&1)-1;
-                    int x2 = x+(((D&2)==2)?d:0);
-                    int y2 = y+(((D&2)==0)?d:0);
-                    if (x2<0||x2>=MODEL_TEXTURE_SIZE||y2<0||y2>=MODEL_TEXTURE_SIZE) continue;
-                    int pos2 = x2+y2*MODEL_TEXTURE_SIZE;
-                    if ((newVal&0xFF00)<(SCRATCH[pos2]&0xFF00)) {
-                        SCRATCH[pos2] = newVal;
-                        QUEUE.enqueue((byte) pos2);
-                    }
+    /** Render-thread RGB dilation shared by static bakes and animated sprite frames. */
+    public static void dilateRgb(int[] cell) {
+        if (cell.length != SCRATCH.length) throw new IllegalArgumentException("Wrong bake cell size");
+        Arrays.fill(SCRATCH, (short) -1);
+        for (int pos = 0; pos < cell.length; pos++) {
+            if ((cell[pos] >>> 24) != 0) {
+                SCRATCH[pos] = (short) pos;
+                QUEUE.enqueue((byte) pos);
+            }
+        }
+        if (QUEUE.isEmpty()) return;
+        while (!QUEUE.isEmpty()) {
+            int pos = Byte.toUnsignedInt(QUEUE.dequeueByte());
+            int x = pos % MODEL_TEXTURE_SIZE, y = pos / MODEL_TEXTURE_SIZE;
+            short next = (short) (SCRATCH[pos] + 0x0100);
+            for (int direction = 3; direction >= 0; direction--) {
+                int delta = 2 * (direction & 1) - 1;
+                int nx = x + ((direction & 2) == 2 ? delta : 0);
+                int ny = y + ((direction & 2) == 0 ? delta : 0);
+                if (nx < 0 || nx >= MODEL_TEXTURE_SIZE || ny < 0 || ny >= MODEL_TEXTURE_SIZE) continue;
+                int neighbor = nx + ny * MODEL_TEXTURE_SIZE;
+                if ((next & 0xff00) < (SCRATCH[neighbor] & 0xff00)) {
+                    SCRATCH[neighbor] = next;
+                    QUEUE.enqueue((byte) neighbor);
                 }
             }
+        }
+        for (int pos = 0; pos < cell.length; pos++) {
+            int source = Short.toUnsignedInt(SCRATCH[pos]);
+            if ((source & 0xff00) != 0) cell[pos] = cell[source & 0xff] & 0x00ffffff;
+        }
+    }
 
-            for (int i = 0; i < MODEL_TEXTURE_SIZE*MODEL_TEXTURE_SIZE; i++) {
-                int d = Short.toUnsignedInt(SCRATCH[i]);
-                if ((d&0xFF00)!=0) {
-                    int c = MemoryUtil.memGetInt(baseAddr+getOffset(bx, by, d&0xFF)*4)&0x00FFFFFF;
-                    MemoryUtil.memPutInt(baseAddr+getOffset(bx, by, i)*4, c);
-                }
-            }
+    private static void solidify(long baseAddr, byte mask) {
+        for (int face = 0; face < 6; face++) {
+            if (((mask >> face) & 1) == 0) continue;
+            int x = (face >> 1) * MODEL_TEXTURE_SIZE, y = (face & 1) * MODEL_TEXTURE_SIZE;
+            for (int i = 0; i < CELL.length; i++) CELL[i] = MemoryUtil.memGetInt(baseAddr + getOffset(x, y, i) * 4);
+            dilateRgb(CELL);
+            for (int i = 0; i < CELL.length; i++) MemoryUtil.memPutInt(baseAddr + getOffset(x, y, i) * 4, CELL[i]);
         }
     }
 

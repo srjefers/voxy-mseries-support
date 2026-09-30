@@ -21,7 +21,8 @@ import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL33.*;
 
 public class IrisShaderPatch {
-    public static final int VERSION = ((IntSupplier)()->1).getAsInt();
+    public static final int VERSION = 1;
+    public static final int SHADER_DEFINE_VERSION = 1;
 
     public static final boolean IMPERSONATE_DISTANT_HORIZONS = System.getProperty("voxy.impersonateDHShader", "false").equalsIgnoreCase("true");
 

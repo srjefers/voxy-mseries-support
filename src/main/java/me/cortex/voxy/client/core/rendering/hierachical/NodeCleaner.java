@@ -127,7 +127,7 @@ public class NodeCleaner {
 
     public void tick(IGpuBuffer nodeDataBuffer) {
         this.visibilityId++;
-        if (!this.shouldCleanGeometry()) return;
+        if (!this.shouldCleanGeometry() || this.nodeManager.getCurrentMaxNodeId() == 0) return;
 
         this.outputBuffer.fill(this.nodeManager.maxNodeCount - 2);
 

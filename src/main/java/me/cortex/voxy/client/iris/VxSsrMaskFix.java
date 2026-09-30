@@ -43,13 +43,17 @@ public final class VxSsrMaskFix {
     private static boolean loggedMask, loggedRay, warnedMask, warnedRay, warnedWaterId;
 
     public static boolean enabled() {
-        if (!ENABLED) return false;
+        if (!ENABLED || !isAllowed(Boolean.getBoolean("voxy.bslCompatibility"))) return false;
         try {
             return me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
                     != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
         } catch (Throwable t) {
             return false;
         }
+    }
+
+    private static boolean isAllowed(boolean bslCompatibility) {
+        return bslCompatibility;
     }
 
     // deferred1 (and world-dimension copies): identified by the vx branch.

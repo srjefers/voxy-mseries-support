@@ -334,7 +334,7 @@ public class ModelFactory {
             if (this.waterAnimator != null
                     && upload instanceof ModelBakeResultUpload bake
                     && bake.waterAnimFaces != 0) {
-                this.waterAnimator.register(bake.modelId, bake.waterAnimFaces);
+                this.waterAnimator.register(bake.modelId, bake.waterAnimFaces, bake.texture);
             }
             upload.upload(this.storage);
             DIAG_ATLAS_UPLOADS.incrementAndGet();
@@ -354,6 +354,7 @@ public class ModelFactory {
         private final MemoryBuffer texture = new MemoryBuffer((2L*3*computeSizeWithMips(MODEL_TEXTURE_SIZE))*4);
 
         public int modelId = -1;
+        public byte[] tintWeights;
 
         /** Metal water animation: face mask (WaterAnimator.STILL_WATER_FACES)
          * set on the factory thread for source-water fluid bakes; consumed on
@@ -364,6 +365,7 @@ public class ModelFactory {
         public @Nullable MemoryBuffer biomeUpload;
 
         public void upload(ModelStore store) {//Uploads and resets for reuse
+            if (store.tintWeights != null && this.tintWeights != null) store.tintWeights.upload(this.modelId, this.tintWeights);
             this.upload(store.modelBuffer, store.modelColourBuffer, store.textures);
         }
 
@@ -548,8 +550,8 @@ public class ModelFactory {
         }
 
         // Metal fluid surface height (2026-06-10): the Metal capture path
-        // synthesizes depth metadata from alpha (MetalViewCapture.emitToStream
-        // writes 0x80/0 — no real depth bits), so computeModelDepth returns 0
+        // records coverage/tint independently, but still has no real depth
+        // bits in MetalViewCapture.emitToStream, so computeModelDepth returns 0
         // for the fluid UP face and the LOD water plane lands at the full
         // block top (1.0) instead of MC's 8/9 ≈ 0.889 — a visible step at the
         // LOD<->MC water seam and a 0.111-block eye-level window where the two
@@ -608,17 +610,18 @@ public class ModelFactory {
         metadata |= isFluid?16:0;//Is a fluid
 
         metadata |= cullsSame?32:0;
+        metadata |= (long)(blockState.getLightEmission() & 15) << 7;
 
         // Cross-model vegetation (VegetationBlock: grass/flowers/saplings/ferns on
         // 1.21.11 — BushBlock is now the decorative bush block) has no UP/DOWN bake
         // and the mesher scales its side quads to the full 2^L cell, so a single
         // blade that wins the Mipper's representative-voxel selection becomes a
-        // hollow green cube shell at distance. Flag it (128 → bit 55 after the
-        // face-loop shift; bits 48-54 are taken) so RenderDataFactory can treat far
+        // hollow green cube shell at distance. Flag it (2048 → bit 59 after the
+        // face-loop shift; bits 55-58 hold emission) so RenderDataFactory can treat far
         // plant voxels as air. Waterlogged plants are excluded: culling the voxel
         // would also cull its fluid overlay (containsFluid rides the same entry).
         metadata |= ((!isFluid) && blockState.getFluidState().isEmpty()
-                && blockState.getBlock() instanceof VegetationBlock)?128:0;
+                && blockState.getBlock() instanceof VegetationBlock)?2048:0;
 
         boolean fullyOpaque = true;
 
@@ -769,6 +772,7 @@ public class ModelFactory {
         //TODO callback to inject extra data into the model data
 
 
+        uploadResult.tintWeights = ModelTintData.pack(textureData);
         MipGen.putTextures(darkenedTinting, textureData, uploadResult.texture);
 
         //glGenerateTextureMipmap(this.textures.id);

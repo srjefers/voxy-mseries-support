@@ -412,6 +412,9 @@ public class VoxyRenderSystem {
         return this.smoothedFog;
     }
 
+    private final FrameTransformHistory frameTransforms = new FrameTransformHistory();
+    public FrameTransformHistory getFrameTransforms() { return this.frameTransforms; }
+
     public Viewport<?> setupViewport(ChunkRenderMatrices matrices, FogParameters fogParameters, double cameraX, double cameraY, double cameraZ) {
         var viewport = this.getViewport();
         if (viewport == null) {
@@ -474,7 +477,7 @@ public class VoxyRenderSystem {
                 && me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
                         != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
             // The projection's FOV includes spyglass zoom (getFov(..., true) in
-            // makeProjectionMatrix) but the HOT traversal's minSSS is uploaded
+            // computeProjectionMat) but the HOT traversal's minSSS is uploaded
             // FOV-independent — zooming inflates every node's screenspace area
             // ~170x, so the walk demands 3-4 finer LOD levels that each need a
             // request→build→upload round trip (~3s of pop-in). Scale minSSS by
@@ -569,6 +572,8 @@ public class VoxyRenderSystem {
             viewport.frameId++;
         }
 
+        this.frameTransforms.advance(this, WorldFrameCapture.frame(), width, height,
+                IrisUtil.shadowsBeingRendered(), viewport.projection, viewport.modelView);
         return viewport;
     }
 
@@ -807,34 +812,20 @@ public class VoxyRenderSystem {
         }
     }
 
-    private static Matrix4f makeProjectionMatrix(float near, float far) {
-        //TODO: use the existing projection matrix use mulLocal by the inverse of the projection and then mulLocal our projection
-
-        var projection = new Matrix4f();
-        var client = Minecraft.getInstance();
-        var gameRenderer = client.gameRenderer;//tickCounter.getTickDelta(true);
-
-        float fov = gameRenderer.getFov(gameRenderer.getMainCamera(), client.getDeltaTracker().getGameTimeDeltaPartialTick(true), true);
-
-        projection.setPerspective(fov * 0.01745329238474369f,
-                (float) client.getWindow().getWidth() / (float)client.getWindow().getHeight(),
-                near, far);
-        return projection;
-    }
-
-    //TODO: Make a reverse z buffer
+    // Adapted from upstream 98d800a: keep Minecraft's actual raw projection and camera extras.
+    // Metal's existing clip distances and depth convention are intentionally retained here.
     private static Matrix4f computeProjectionMat(Matrix4fc base) {
-        //THis is a wild and insane problem to have
-        // at short render distances the vanilla terrain doesnt end up covering the 16f near plane voxy uses
-        // meaning that it explodes (due to near plane clipping).. _badly_ with the rastered culling being wrong in rare cases for the immediate
-        // sections rendered after the vanilla render distance
-        float nearVoxy = Minecraft.getInstance().gameRenderer.getRenderDistance()<=32.0f?8f:16f;
+        var client = Minecraft.getInstance();
+        var renderer = client.gameRenderer;
+        float fov = renderer.getFov(renderer.getMainCamera(), client.getDeltaTracker().getGameTimeDeltaPartialTick(true), true);
+        var raw = renderer.getProjectionMatrix(fov);
+        var cameraExtra = raw.invert(new Matrix4f()).mul(base);
+        float nearVoxy = renderer.getRenderDistance() <= 32.0f ? 8f : 16f;
         nearVoxy = VoxyClient.disableSodiumChunkRender()?0.1f:nearVoxy;
-
-        return base.mulLocal(
-                makeProjectionMatrix(0.05f, Minecraft.getInstance().gameRenderer.getDepthFar()).invert(),
-                new Matrix4f()
-        ).mulLocal(makeProjectionMatrix(nearVoxy, 16*3000));
+        float farVoxy = 16 * 3000;
+        return cameraExtra.mulLocal(new Matrix4f(raw)
+                .m22((farVoxy + nearVoxy) / (nearVoxy - farVoxy))
+                .m32((farVoxy + farVoxy) * nearVoxy / (nearVoxy - farVoxy)));
     }
 
     private boolean frexStillHasWork() {
@@ -883,6 +874,9 @@ public class VoxyRenderSystem {
     }
 
     public void shutdown() {
+        WorldFrameCapture.release(this);
+        me.cortex.voxy.client.core.rendering.SodiumDrawCoverage.INSTANCE.release(this.pipeline);
+        SectionProbe.stop(this.worldIn);
         Logger.info("Flushing download stream");
         DownloadStream.INSTANCE.flushWaitClear();
         // World-rejoin fix: UploadStream is a process-lifetime singleton but

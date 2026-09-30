@@ -58,8 +58,11 @@ public class AsyncNodeManager {
     public final int maxNodeCount;
     private final long geometryCapacity;
     private volatile boolean running = true;
+    private volatile Throwable uncaughtException;
+    private boolean stopped;
 
     private final NodeManager manager;
+    private final WorldEngine probeWorld;
     private final BasicAsyncGeometryManager geometryManager;
     private final IGeometryData geometryData;
     private final SectionUpdateRouter router;
@@ -84,6 +87,7 @@ public class AsyncNodeManager {
         //Note: geometry data is the data store/source, not the management, it is just a raw store of data
         // it MUST ONLY be accessed on the render thread
         // AsyncNodeManager will use an AsyncGeometryManager as the manager for the data store, and sync the results on the render thread
+        this.probeWorld = renderService.getWorld();
         this.geometryData = geometryData;
         this.geometryCapacity = ((BasicSectionGeometryData)geometryData).getGeometryCapacityBytes();
 
@@ -95,8 +99,13 @@ public class AsyncNodeManager {
                     this.run();
                 }
             } catch (Exception e) {
-                Logger.error("Critical error occurred in async processor, things will be broken", e);
+                Logger.error("Critical error occurred in async processor", e);
+                throw e;
             }
+        });
+        this.thread.setUncaughtExceptionHandler((thread, failure) -> {
+            this.uncaughtException = failure;
+            this.running = false;
         });
         this.thread.setName("Async Node Manager");
         this.thread.setDaemon(true);// don't block JVM shutdown if this thread is stuck
@@ -260,12 +269,16 @@ public class AsyncNodeManager {
 
         //Limit uploading as well as by geometry capacity being available
         // must have 50 mb of free geometry space to upload
-        for (int limit = 0; limit < 300 && ((this.geometryCapacity-this.geometryManager.getGeometryUsedBytes())>50_000_000L); limit++) {
+        long estimatedUploadBytes = 0;
+        for (int limit = 0; limit < 300 && estimatedUploadBytes < (1_000L << 10)
+                && this.geometryCapacity - this.geometryManager.getGeometryUsedBytes() > 50_000_000L; limit++) {
             var job = this.geometryUpdateQueue.poll();
             if (job == null)
                 break;
             workDone++;
+            long uploadBytes = job.geometryBuffer == null ? 0 : job.geometryBuffer.size;
             this.manager.processGeometryResult(job);
+            estimatedUploadBytes += uploadBytes;
         }
 
         while (true) {//Process all request batches
@@ -466,6 +479,10 @@ public class AsyncNodeManager {
 
                     //Write update data
                     this.geometryManager.writeMetadataSplit(val, ptrA, ptrB);
+                    if (me.cortex.voxy.client.core.SectionProbe.enabled(this.probeWorld)) {
+                        long position=((long)MemoryUtil.memGetInt(ptrA)<<32)|Integer.toUnsignedLong(MemoryUtil.memGetInt(ptrA+4));
+                        me.cortex.voxy.client.core.SectionProbe.record(this.probeWorld,position,"metadata",Integer.toString(val));
+                    }
                 }
                 ids.clear();
             }
@@ -502,6 +519,7 @@ public class AsyncNodeManager {
     private IntConsumer tlnAddCallback; private IntConsumer tlnRemoveCallback;
     //Render thread synchronization
     public void tick(IGpuBuffer nodeBuffer, NodeCleaner cleaner) {//TODO: dont pass nodeBuffer here??, do something else thats better
+        this.checkWorkerFailure();
         var results = (SyncResults)RESULT_HANDLE.getAndSet(this, null);//Acquire the results
         if (results == null) {//There are no new results to process, return
             return;
@@ -652,7 +670,12 @@ public class AsyncNodeManager {
     private final LongOpenHashSet tlnAdd = new LongOpenHashSet();
     private final LongOpenHashSet tlnRem = new LongOpenHashSet();
 
+    private void checkWorkerFailure() {
+        if (this.uncaughtException != null) throw new RuntimeException("Async node worker failed", this.uncaughtException);
+    }
+
     private void addWork() {
+        this.checkWorkerFailure();
         if (!this.running) throw new IllegalStateException("Not running");
         if (this.workCounter.getAndIncrement() == 0) {
             LockSupport.unpark(this.thread);
@@ -741,9 +764,10 @@ public class AsyncNodeManager {
     }
 
     public void stop() {
-        if (!this.running) {
+        if (this.stopped) {
             throw new IllegalStateException();
         }
+        this.stopped = true;
         this.running = false;
         LockSupport.unpark(this.thread);
         try {
@@ -811,7 +835,11 @@ public class AsyncNodeManager {
         return this.workCounter.get()!=0 || RESULT_HANDLE.get(this) != null;
     }
 
+    public WorldEngine getWorld() { return this.probeWorld; }
+
     public void worldEvent(WorldSection section, int flags, int neighborMask) {
+        if (me.cortex.voxy.client.core.SectionProbe.enabled(this.probeWorld))
+            me.cortex.voxy.client.core.SectionProbe.record(this.probeWorld,section.key,"ingest","changes="+flags+",children="+section.getNonEmptyChildren());
         DIAG_WORLD_EVENT_COUNT.incrementAndGet();
         //If there is any change, we need to clear the geometry cache before emitting update
         this.geometryCache.clear(section.key);

@@ -86,7 +86,7 @@ public class LMDBStorageBackend extends StorageBackend {
     }
 
     @Override
-    public void iterateStoredSectionPositions(LongConsumer consumer) {
+    public void iteratePositions(int level, LongConsumer consumer) {
         throw new IllegalStateException("Not yet implemented");
     }
 

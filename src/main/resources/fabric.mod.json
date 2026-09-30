@@ -4,7 +4,8 @@
   "version": "${version}",
   "custom": {
     "commit": "${commit}",
-    "buildtime": "${buildtime}"
+    "buildtime": "${buildtime}",
+    "buildLabel": "${buildLabel}"
   },
   "name": "Voxy",
   "description": "Far distance rendering mod utilising LoDs",
@@ -41,7 +42,7 @@
     "minecraft": ["1.21.11"],
     "fabricloader": ">=0.14.22",
     "fabric-api": ">=0.91.1",
-    "sodium": "=0.8.1"
+    "sodium": "=0.8.11"
   },
   "accessWidener": "voxy.accesswidener"
 }

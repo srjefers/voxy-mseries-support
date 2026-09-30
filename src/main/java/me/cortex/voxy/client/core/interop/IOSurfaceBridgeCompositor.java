@@ -3,6 +3,10 @@ package me.cortex.voxy.client.core.interop;
 import me.cortex.voxy.client.core.metal.MetalNative;
 import me.cortex.voxy.common.Logger;
 import net.minecraft.client.Minecraft;
+import com.mojang.blaze3d.opengl.GlDevice;
+import com.mojang.blaze3d.opengl.GlTexture;
+import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.systems.RenderSystem;
 
 import static org.lwjgl.opengl.GL11C.GL_LINEAR;
 import static org.lwjgl.opengl.GL11C.GL_BLEND;
@@ -86,20 +90,13 @@ import static org.lwjgl.opengl.GL30C.glGenFramebuffers;
 import static org.lwjgl.opengl.GL30C.glGenVertexArrays;
 
 /**
- * Composites a Voxy IOSurfaceBridge's contents into the currently bound
- * GL_DRAW_FRAMEBUFFER. Lazy-binds the IOSurface to a GL_TEXTURE_RECTANGLE
+ * Composites a Voxy IOSurfaceBridge's contents into Minecraft's main
+ * render target. Lazy-binds the IOSurface to a GL_TEXTURE_RECTANGLE
  * once (via {@code CGLTexImageIOSurface2D}) and reuses a transient source
  * FBO with that texture as COLOR_ATTACHMENT0.
  *
- * Caller responsibility: must invoke from a code path where MC's main
- * render target FBO is the active GL_DRAW_FRAMEBUFFER. Verified call
- * sites are inside Sodium's chunk render (mixin into
- * {@code DefaultChunkRenderer.render} BEFORE its end() call) — there MC
- * has bound the main RT for chunk drawing. Calling from
- * {@code LevelRenderer.renderLevel}'s RETURN doesn't work because by
- * then MC has already unbound to FBO 0, so a blit there ends up in the
- * window backbuffer (which MC then overwrites with its own RT→window
- * blit, hiding our output).
+ * Called inside Sodium's chunk render. Resolve the destination through
+ * Minecraft's public texture API and preserve the caller's GL state.
  */
 public final class IOSurfaceBridgeCompositor {
 
@@ -186,7 +183,7 @@ public final class IOSurfaceBridgeCompositor {
 
     private IOSurfaceBridgeCompositor() {}
 
-    /** Composite the bridge's contents into the currently bound DRAW framebuffer. */
+    /** Composite the bridge's contents into Minecraft's main render target. */
     public static void composite(IOSurfaceBridge bridge) {
         composite(bridge, USE_BLIT);
     }
@@ -199,140 +196,69 @@ public final class IOSurfaceBridgeCompositor {
      */
     public static void composite(IOSurfaceBridge bridge, boolean useBlit) {
         if (disabled || bridge == null || bridge.ioSurfaceHandle() == 0) return;
+        var mainRT = Minecraft.getInstance().getMainRenderTarget();
+        int fbo = resolveMcMainFbo(mainRT);
+        if (fbo > 0) compositeToFramebuffer(bridge, useBlit, fbo, mainRT.width, mainRT.height);
+    }
 
-        // (Re)bind on first use or after the bridge re-allocated (resize).
-        if (compositeGlTex == 0 || boundIoSurface != bridge.ioSurfaceHandle()) {
-            if (!rebind(bridge)) {
-                disabled = true;
-                return;
+    /** Explicit destination keeps framebuffer resolution separate from GL/Metal composition. */
+    static boolean compositeToFramebuffer(IOSurfaceBridge bridge, boolean useBlit, int targetFbo, int width, int height) {
+        if (disabled || bridge == null || bridge.ioSurfaceHandle() == 0
+                || targetFbo <= 0 || width <= 0 || height <= 0) return false;
+
+        try (var state = new GlInteropState()) {
+            glActiveTexture(GL_TEXTURE0);
+            boolean newSurface = compositeGlTex == 0 || boundIoSurface != bridge.ioSurfaceHandle();
+            // Metal submit waits for completion. Re-specifying the IOSurface each frame
+            // also invalidates GL's cached copy; a failed refresh must never display it.
+            if (!(newSurface ? rebind(bridge) : bridge.bindToGlTexture(compositeGlTex))) {
+                if (!bridgeBindingFailed) Logger.warn("IOSurfaceBridgeCompositor: bridge binding failed; skipping composition");
+                bridgeBindingFailed = true;
+                return false;
             }
-        }
-
-        // Fix (2026-05-25, Step 1): re-specify the GL texture from the
-        // IOSurface every frame so GL picks up Metal's latest completed write.
-        // The IOSurface↔GL texture is bound once (CGLTexImageIOSurface2D in
-        // rebind); after that GL serves it from its own texture cache, which
-        // does NOT reliably observe Metal's external writes. submit()'s
-        // waitUntilCompleted already guarantees Metal finished writing the
-        // IOSurface before we get here, but without re-specifying, GL
-        // alternately sees the fresh content and a stale/previous copy
-        // frame-to-frame — that incoherence is the LOD "flicker between
-        // texture and transparent" the user sees even with a static camera
-        // and atlas (all bake/atlas/geometry counters flat). Re-calling
-        // CGLTexImageIOSurface2D invalidates GL's cache and re-points the
-        // texture at the IOSurface's current bytes. Save/restore the
-        // rectangle-texture binding because composite() runs inside Sodium's
-        // chunk render and must not leak GL state.
-        int prevActiveTex0 = glGetInteger(GL_ACTIVE_TEXTURE);
-        glActiveTexture(GL_TEXTURE0);
-        int prevTexRect0 = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
-        bridge.bindToGlTexture(compositeGlTex);
-        glBindTexture(GL_TEXTURE_RECTANGLE, prevTexRect0);
-        glActiveTexture(prevActiveTex0);
-
-        var mc = Minecraft.getInstance();
-        var mainRT = mc.getMainRenderTarget();
-        int fbw = mainRT.width;
-        int fbh = mainRT.height;
-
-        int prevReadFb = glGetInteger(GL_READ_FRAMEBUFFER_BINDING);
-        int prevDrawFb = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
-
-        // 2026-05-14: at HEAD of Sodium's render(), DRAW_FRAMEBUFFER is
-        // typically FBO 0 (the system default), NOT MC's main RT. With
-        // MC 1.21+'s blaze3d, the level renders into MC's RenderTarget,
-        // not the system FB. So a blit-to-FBO-0 lands somewhere the user
-        // never sees (or gets overwritten by MC's final present). Resolve
-        // the GL FBO id from MC's RenderTarget.colorTexture (a GlTexture)
-        // via reflection on the private `firstFboId` field — public API
-        // doesn't expose it on this MC version.
-        int mcDrawFbo = resolveMcMainFbo(mainRT);
-        if (mcDrawFbo <= 0) {
-            // Fall back to whatever DRAW_FBO was bound — preserves M12
-            // behaviour if resolution fails.
-            mcDrawFbo = prevDrawFb;
-        }
-
-        if (useBlit) {
-            glBindFramebuffer(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER, mcDrawFbo);
+            bridgeBindingFailed = false;
             glBindFramebuffer(GL_READ_FRAMEBUFFER, compositeFbo);
-            // Y-flip: Metal textures are top-left origin, GL framebuffers bottom-left.
-            org.lwjgl.opengl.GL30C.glBlitFramebuffer(0, 0, fbw, fbh,
-                              0, fbh, fbw, 0,
-                              GL_COLOR_BUFFER_BIT, GL_LINEAR);
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFb);
-            glBindFramebuffer(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER, prevDrawFb);
+            if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) return false;
 
-            blitFrameCounter++;
-            if ((blitFrameCounter % 600) == 1) {
-                Logger.info("IOSurfaceBridgeCompositor: blit to MC mainRT +IOSurface-resync (fbo=" + mcDrawFbo + ", prevDraw=" + prevDrawFb + ") size " + fbw + "x" + fbh + " frame=" + blitFrameCounter);
+            if (!useBlit && !ensureCompositeProgram()) {
+                disabled = true;
+                return false;
             }
-            return;
-        }
-
-        // Alpha-discard shader composite. composite() runs inside Sodium's
-        // chunk render, so every state we touch is saved and restored
-        // bit-for-bit or Sodium's SOLID pass would draw with our program.
-        if (!ensureCompositeProgram()) {
-            disabled = true;
-            return;
-        }
-        int prevProgram = glGetInteger(GL_CURRENT_PROGRAM);
-        int prevVao = glGetInteger(GL_VERTEX_ARRAY_BINDING);
-        int prevActiveTex = glGetInteger(GL_ACTIVE_TEXTURE);
-        int[] prevViewport = new int[4];
-        glGetIntegerv(GL_VIEWPORT, prevViewport);
-        boolean prevBlend = glIsEnabled(GL_BLEND);
-        boolean prevDepth = glIsEnabled(GL_DEPTH_TEST);
-        boolean prevCull  = glIsEnabled(GL_CULL_FACE);
-        int prevBlendSrcRgb   = glGetInteger(GL_BLEND_SRC_RGB);
-        int prevBlendDstRgb   = glGetInteger(GL_BLEND_DST_RGB);
-        int prevBlendSrcAlpha = glGetInteger(GL_BLEND_SRC_ALPHA);
-        int prevBlendDstAlpha = glGetInteger(GL_BLEND_DST_ALPHA);
-        glActiveTexture(GL_TEXTURE0);
-        int prevTexRect = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
-
-        glBindFramebuffer(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER, mcDrawFbo);
-        // Y-flip happens in the vertex shader's (1.0 - uv.y). Sampler2DRect
-        // takes texel coords (0..size), so uSize is the size in pixels.
-        glViewport(0, 0, fbw, fbh);
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
-        // The shader hard-discards alpha<=0.001 pixels and writes the rest
-        // straight to colour — no blending: water pixels already blended
-        // against the fog-coloured clear in the bridge, so re-blending here
-        // would double-darken them. Disabling BLEND also sidesteps Sodium's
-        // previous BLEND state polluting our writes.
-        glDisable(GL_BLEND);
-
-        glUseProgram(compositeProgram);
-        glBindVertexArray(compositeVao);
-        glBindTexture(GL_TEXTURE_RECTANGLE, compositeGlTex);
-        glUniform1i(uniformBridge, 0);
-        glUniform2f(uniformSize, (float) fbw, (float) fbh);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
-        // Restore — order matters: rebind the texture target before
-        // switching active unit back, restore blend func before re-enabling
-        // BLEND so Sodium's next draw sees the right state.
-        glBindTexture(GL_TEXTURE_RECTANGLE, prevTexRect);
-        glActiveTexture(prevActiveTex);
-        glUseProgram(prevProgram);
-        glBindVertexArray(prevVao);
-        glBlendFuncSeparate(prevBlendSrcRgb, prevBlendDstRgb,
-                            prevBlendSrcAlpha, prevBlendDstAlpha);
-        if (prevBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
-        if (prevDepth) glEnable(GL_DEPTH_TEST);
-        if (prevCull)  glEnable(GL_CULL_FACE);
-        glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
-        glBindFramebuffer(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER, prevDrawFb);
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFb);
-
-        blitFrameCounter++;
-        if ((blitFrameCounter % 600) == 1) {
-            Logger.info("IOSurfaceBridgeCompositor: shader-composite to MC mainRT (fbo=" + mcDrawFbo + ", prevDraw=" + prevDrawFb + ") size " + fbw + "x" + fbh + " frame=" + blitFrameCounter);
+            glBindFramebuffer(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER, targetFbo);
+            if (glCheckFramebufferStatus(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) return false;
+            // Blits respect scissor; shader draws also inherit stencil and color writes.
+            org.lwjgl.opengl.GL11C.glDisable(org.lwjgl.opengl.GL11C.GL_SCISSOR_TEST);
+            if (useBlit) {
+                // Y-flip: Metal textures have a top-left origin.
+                org.lwjgl.opengl.GL30C.glBlitFramebuffer(0, 0, bridge.width(), bridge.height(),
+                        0, height, width, 0, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+            } else {
+                glViewport(0, 0, width, height);
+                glDisable(GL_DEPTH_TEST);
+                glDisable(GL_CULL_FACE);
+                glDisable(GL_BLEND);
+                glDisable(org.lwjgl.opengl.GL11C.GL_STENCIL_TEST);
+                org.lwjgl.opengl.GL11C.glColorMask(true, true, true, true);
+                // Sampler 0 uses the rectangle texture's nearest/clamp parameters;
+                // Sodium/Iris mipmapped samplers make sampler2DRect read black.
+                org.lwjgl.opengl.GL33C.glBindSampler(0, 0);
+                glUseProgram(compositeProgram);
+                glBindVertexArray(compositeVao);
+                glBindTexture(GL_TEXTURE_RECTANGLE, compositeGlTex);
+                glUniform1i(uniformBridge, 0);
+                glUniform2f(uniformSize, bridge.width(), bridge.height());
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            }
+            if ((++blitFrameCounter % 600) == 1) {
+                Logger.info("IOSurfaceBridgeCompositor: " + (useBlit ? "blit" : "shader")
+                        + " to MC mainRT +IOSurface-resync (fbo=" + targetFbo
+                        + ") size " + width + "x" + height + " frame=" + blitFrameCounter);
+            }
+            return true;
         }
     }
+
+    private static boolean bridgeBindingFailed;
 
     /**
      * Iris gbuffer injection: draw the LOD color bridge into the CURRENTLY
@@ -767,48 +693,19 @@ public final class IOSurfaceBridgeCompositor {
         return true;
     }
 
-    /**
-     * Resolve the GL framebuffer id backing MC's main RenderTarget. MC 1.21+
-     * doesn't expose this directly; we go through the color GpuTexture which
-     * on the GL backend is a {@code com.mojang.blaze3d.opengl.GlTexture}
-     * with a private {@code firstFboId}. Cached after first successful read.
-     */
-    private static int cachedMcMainFbo = -1;
-    private static Object cachedMcMainColorTex;
-    private static java.lang.reflect.Field firstFboIdField;
-    private static int resolveMcMainFbo(com.mojang.blaze3d.pipeline.RenderTarget mainRT) {
+    /** Use the mapped public API, which owns FBO creation and depth-attachment caching. */
+    private static int resolveMcMainFbo(RenderTarget mainRT) {
+        if (!(RenderSystem.getDevice() instanceof GlDevice device)
+                || !(mainRT.getColorTexture() instanceof GlTexture color) || color.isClosed()) return -1;
+        // On macOS, emulated DSA may bind an FBO while creating it. Restore actual
+        // bindings as well as the engine's own cached bindings restored by getFbo().
+        int readFbo = glGetInteger(GL_READ_FRAMEBUFFER_BINDING);
+        int drawFbo = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
         try {
-            Object colorTex = mainRT.getColorTexture();
-            if (colorTex == null) return cachedMcMainFbo;
-            if (colorTex == cachedMcMainColorTex && cachedMcMainFbo > 0) {
-                return cachedMcMainFbo;
-            }
-            cachedMcMainColorTex = colorTex;
-            if (firstFboIdField == null
-                    || !firstFboIdField.getDeclaringClass().isInstance(colorTex)) {
-                Class<?> c = colorTex.getClass();
-                while (c != null && c != Object.class) {
-                    try {
-                        firstFboIdField = c.getDeclaredField("firstFboId");
-                        firstFboIdField.setAccessible(true);
-                        break;
-                    } catch (NoSuchFieldException ignored) {
-                        c = c.getSuperclass();
-                    }
-                }
-                if (firstFboIdField == null) {
-                    Logger.warn("IOSurfaceBridgeCompositor: could not locate firstFboId on " + colorTex.getClass().getName());
-                    return cachedMcMainFbo;
-                }
-            }
-            int fbo = firstFboIdField.getInt(colorTex);
-            if (fbo > 0) {
-                cachedMcMainFbo = fbo;
-            }
-            return cachedMcMainFbo;
-        } catch (Throwable t) {
-            Logger.warn("IOSurfaceBridgeCompositor: failed to resolve MC mainRT FBO", t);
-            return cachedMcMainFbo;
+            return color.getFbo(device.directStateAccess(), mainRT.getDepthTexture());
+        } finally {
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, readFbo);
+            glBindFramebuffer(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER, drawFbo);
         }
     }
 
@@ -822,6 +719,7 @@ public final class IOSurfaceBridgeCompositor {
     }
 
     private static boolean rebind0(IOSurfaceBridge bridge) {
+        boundIoSurface = 0;
         if (compositeGlTex != 0) {
             glDeleteTextures(compositeGlTex);
             compositeGlTex = 0;
@@ -831,7 +729,6 @@ public final class IOSurfaceBridgeCompositor {
             compositeFbo = 0;
         }
         if (MetalNative.cglGetCurrentContext() == 0) {
-            Logger.warn("IOSurfaceBridgeCompositor: no current CGL context — composite disabled");
             return false;
         }
         compositeGlTex = glGenTextures();
@@ -845,13 +742,10 @@ public final class IOSurfaceBridgeCompositor {
         glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         if (!bridge.bindToGlTexture(compositeGlTex)) {
-            Logger.error("IOSurfaceBridgeCompositor: bindToGlTexture failed");
             glDeleteTextures(compositeGlTex);
             compositeGlTex = 0;
             return false;
         }
-        boundIoSurface = bridge.ioSurfaceHandle();
-
         compositeFbo = glGenFramebuffers();
         int prevReadFb = glGetInteger(GL_READ_FRAMEBUFFER_BINDING);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, compositeFbo);
@@ -869,6 +763,7 @@ public final class IOSurfaceBridgeCompositor {
             return false;
         }
 
+        boundIoSurface = bridge.ioSurfaceHandle();
         Logger.info("IOSurfaceBridgeCompositor: bridge bound to GL tex " + compositeGlTex
                 + ", composite FBO " + compositeFbo + " (status=COMPLETE), ready");
         return true;
@@ -913,6 +808,8 @@ public final class IOSurfaceBridgeCompositor {
         if (vs == 0 || fs == 0) {
             if (vs != 0) glDeleteShader(vs);
             if (fs != 0) glDeleteShader(fs);
+            org.lwjgl.opengl.GL30C.glDeleteVertexArrays(compositeVao);
+            compositeVao = 0;
             return false;
         }
 
@@ -926,6 +823,8 @@ public final class IOSurfaceBridgeCompositor {
             Logger.error("IOSurfaceBridgeCompositor: composite program link failed: "
                     + glGetProgramInfoLog(program));
             glDeleteProgram(program);
+            org.lwjgl.opengl.GL30C.glDeleteVertexArrays(compositeVao);
+            compositeVao = 0;
             return false;
         }
         compositeProgram = program;

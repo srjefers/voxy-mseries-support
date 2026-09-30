@@ -15,12 +15,7 @@ public class RenderPipelineFactory {
     public static AbstractRenderPipeline createPipeline(AsyncNodeManager nodeManager, NodeCleaner nodeCleaner, HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier) {
         //Note this is where will choose/create e.g. IrisRenderPipeline or normal pipeline
         AbstractRenderPipeline pipeline = null;
-        // M9 gate: Iris transforms GLSL via its own pipeline and binds directly
-        // to MC's OpenGL context. None of that survives the move to Metal/Vulkan
-        // until a parallel Iris-on-encoder rewrite lands (out of M9 scope; the
-        // user accepted "Mac launches without Iris in M14, phase 2 evaluates with
-        // data" as part of the original plan). On non-OpenGL backends, skip the
-        // Iris path entirely so the NormalRenderPipeline fallback runs.
+        // OpenGL uses the Iris renderer; Metal shades its material bridge with contract-1 pack programs.
         boolean glBackend = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
                 == me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
         if (glBackend && IrisUtil.IRIS_INSTALLED && IrisUtil.SHADER_SUPPORT) {
@@ -28,14 +23,7 @@ public class RenderPipelineFactory {
         } else if (!glBackend && IrisUtil.IRIS_INSTALLED
                 && !"0".equals(System.getenv("VOXY_VX_MATERIAL"))
                 && IrisUtil.vxContractActive()) {
-            // Phase C (issue #11): Metal native vx contract — the LOD pass renders
-            // a material g-buffer the pack's voxy_opaque/voxy_translucent shades
-            // GL-side. Default ON when the pack ships the contract (2026-07-03):
-            // without it the translucent inject is a flat passthrough, so the
-            // pack's voxy_translucent never runs and LOD water stays vanilla
-            // blue next to the pack-shaded near water. VOXY_VX_MATERIAL=0 is the
-            // kill switch; falls through to NormalRenderPipeline (flat Phase
-            // D-lite water) when disabled or if the contract data isn't available.
+            // Prepare both contract stages before selecting the Metal material renderer.
             pipeline = createMetalVxPipeline(nodeManager, nodeCleaner, traversal, frexSupplier);
             if (pipeline == null) {
                 Logger.warn("VOXY_VX_MATERIAL=1 but the Metal vx material pipeline could not be created; "
@@ -61,11 +49,16 @@ public class RenderPipelineFactory {
             if (pipeData == null) {
                 return null;
             }
-            Logger.info("Creating Metal vx material render pipeline (Phase C)");
+            Logger.info("Creating Metal contract-1 material render pipeline");
             try {
+                if (!me.cortex.voxy.client.core.util.MetalVxResolvePass.prepare(pipeData, irisPipe)) {
+                    throw new IllegalStateException("The pack's opaque/translucent material programs did not both compile; see their shader logs");
+                }
                 return new MetalVxRenderPipeline(pipeData, nodeManager, nodeCleaner, traversal, frexSupplier);
             } catch (Exception e) {
                 Logger.error("Failed to create Metal vx material render pipeline", e);
+                me.cortex.voxy.client.core.util.MetalVxResolvePass.reset();
+                IrisUtil.disableIrisShaders();
                 return null;
             }
         }

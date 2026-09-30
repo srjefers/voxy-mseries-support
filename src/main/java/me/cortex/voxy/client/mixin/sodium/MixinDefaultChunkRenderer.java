@@ -78,6 +78,43 @@ public abstract class MixinDefaultChunkRenderer extends ShaderChunkRenderer {
         }
     }
 
+    @Inject(method = "render", at = @At("RETURN"))
+    private void voxy$probePassComplete(ChunkRenderMatrices matrices, CommandList commands,
+            ChunkRenderListIterable lists, TerrainRenderPass pass, CameraTransform camera,
+            FogParameters fog, boolean indexed, GpuSampler sampler, CallbackInfo ci) {
+        String stage=pass==DefaultTerrainRenderPasses.SOLID?"sodium-solid":
+                pass==DefaultTerrainRenderPasses.CUTOUT?"sodium-cutout":"sodium-translucent";
+        me.cortex.voxy.client.core.MatchedFrameProbe.stage(stage);
+    }
+
+    /** Prepare the exact batches Sodium will submit before any LOD coverage is consumed. */
+    @Unique
+    private void voxy$prepareDrawCoverage(me.cortex.voxy.client.core.VoxyRenderSystem renderer,
+            CommandList commands, ChunkRenderListIterable lists, CameraTransform camera, boolean indexed) {
+        if (RenderBackendFactory.get().getType() != BackendType.METAL) return;
+        var coverage=me.cortex.voxy.client.core.rendering.SodiumDrawCoverage.INSTANCE;
+        var generation=me.cortex.voxy.client.core.rendering.SectionCoverageTracker.INSTANCE.currentGeneration();
+        long frame=me.cortex.voxy.client.core.WorldFrameCapture.frame();
+        if (!coverage.begin(renderer.getPipeline(),generation,frame)) return;
+        for (var pass : new TerrainRenderPass[]{DefaultTerrainRenderPasses.SOLID,
+                DefaultTerrainRenderPasses.CUTOUT,DefaultTerrainRenderPasses.TRANSLUCENT}) {
+            this.voxy$preflightSodiumSharedIndexBuffer(commands,lists,pass,camera,indexed);
+            var positions=new java.util.HashSet<Long>();
+            var iterator=lists.iterator(pass.isTranslucent());
+            while (iterator.hasNext()) {
+                var list=iterator.next();
+                var storage=list.getRegion().getStorage(pass);
+                if (storage!=null) positions.addAll(me.cortex.voxy.client.core.rendering.SodiumDrawableSections.collect(
+                        list,storage,list.getRegion().getCachedBatch(pass),pass.isTranslucent()));
+            }
+            String name=pass==DefaultTerrainRenderPasses.SOLID?"solid":
+                    pass==DefaultTerrainRenderPasses.CUTOUT?"cutout":"translucent";
+            coverage.publish(renderer.getPipeline(),generation,frame,name,positions);
+            if (me.cortex.voxy.client.core.SectionProbe.shouldCaptureDraws(renderer.getEngine(),name,System.nanoTime()))
+                me.cortex.voxy.client.core.SectionProbe.recordDraws(renderer.getEngine(),name,positions,System.nanoTime());
+        }
+    }
+
     /** [Metal-CULL] probe: raw GL_CULL_FACE at the head of Sodium's TRANSLUCENT pass
      *  (before Sodium's tracked applyPipelineState, which is a no-op when
      *  GlStateManager's shadow copy already says "enabled"). Logs transitions
@@ -124,8 +161,10 @@ public abstract class MixinDefaultChunkRenderer extends ShaderChunkRenderer {
 
     @Unique
     private void doRender(ChunkRenderMatrices matrices, CommandList commandList, ChunkRenderListIterable renderLists, TerrainRenderPass renderPass, CameraTransform camera, FogParameters fogParameters, boolean indexedRenderingEnabled) {
+        if (RenderBackendFactory.get().getType() == BackendType.METAL && IrisUtil.shadowsBeingRendered()) return;
         voxy$cullProbe(renderPass);
-        this.voxy$preflightSodiumSharedIndexBuffer(commandList, renderLists, renderPass, camera, indexedRenderingEnabled);
+        if (renderPass != DefaultTerrainRenderPasses.SOLID)
+            this.voxy$preflightSodiumSharedIndexBuffer(commandList, renderLists, renderPass, camera, indexedRenderingEnabled);
 
         if (renderPass == DefaultTerrainRenderPasses.SOLID) {
             var renderer = ((IGetVoxyRenderSystem) Minecraft.getInstance().levelRenderer).getVoxyRenderSystem();
@@ -142,69 +181,17 @@ public abstract class MixinDefaultChunkRenderer extends ShaderChunkRenderer {
                 if (gbufferInject && IrisUtil.shadowsBeingRendered()) {
                     return;
                 }
+                var pipeline=renderer.getPipeline();
+                if (pipeline instanceof me.cortex.voxy.client.core.MetalVxRenderPipeline material && !material.beginMaterialFrame()) return;
                 Viewport<?> viewport = null;
-                // The stale-viewport reuse is for the GL Iris pipeline only
-                // (Iris captures matrices through its own hooks there). On
-                // Metal the NormalRenderPipeline runs regardless of packs, so
-                // the full per-frame setupViewport must always happen.
-                if (IrisUtil.irisShaderPackEnabled() && !metal) {
-                    viewport = renderer.getViewport();
-                } else {
-                    viewport = renderer.setupViewport(matrices, fogParameters, camera.x, camera.y, camera.z);
-                }
+                viewport = me.cortex.voxy.client.core.WorldFrameCapture.prepare(renderer,
+                        matrices, fogParameters, camera.x, camera.y, camera.z);
+                this.voxy$prepareDrawCoverage(renderer, commandList, renderLists, camera, indexedRenderingEnabled);
                 renderer.renderOpaque(viewport);
 
-                var pipeline = renderer.getPipeline();
                 if (pipeline != null && pipeline.metalBridge() != null) {
-                    if (pipeline.vxOpaqueMaterialMode()
-                            && pipeline instanceof me.cortex.voxy.client.core.MetalVxRenderPipeline mvp
-                            && pipeline.metalVxOpaque0() != null
-                            && pipeline.metalDepthBridge() != null) {
-                        // FULL material path (A/B only, VOXY_VX_MATERIAL_OPAQUE=1): run the
-                        // pack's voxy_opaque AND voxy_translucent over the material g-buffer.
-                        // Darkens far opaque (BSL deferred shading of grazing LOD) — not the
-                        // mergeable shape; kept for comparison.
-                        var irisPipe = net.irisshaders.iris.Iris.getPipelineManager().getPipelineNullable();
-                        if (irisPipe instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline irp) {
-                            int oP0 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxOpaque0());
-                            int oP1 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxOpaque1());
-                            int oP2 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxOpaque2());
-                            int oD  = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalDepthBridge());
-                            int tP0 = pipeline.metalVxTrans0() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans0()) : 0;
-                            int tP1 = pipeline.metalVxTrans1() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans1()) : 0;
-                            int tP2 = pipeline.metalVxTrans2() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans2()) : 0;
-                            int tD  = pipeline.metalDepthTransBridge() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalDepthTransBridge()) : 0;
-                            me.cortex.voxy.client.core.util.MetalVxResolvePass.resolve(
-                                    mvp.getPipelineData(), irp,
-                                    oP0, oP1, oP2, oD, tP0, tP1, tP2, tD,
-                                    viewport.width, viewport.height);
-                        }
-                    } else if (pipeline.vxMaterialMode()
-                            && pipeline instanceof me.cortex.voxy.client.core.MetalVxRenderPipeline mvp2
-                            && pipeline.metalVxTrans0() != null
-                            && pipeline.metalDepthTransBridge() != null) {
-                        // TRANS-ONLY (issue #11, the mergeable shape): opaque LODs go through
-                        // the proven Phase-B inject (bridge colour + vxDepthTexOpaque, untouched
-                        // vs dev); ONLY the translucent (water) layer runs voxy_translucent over
-                        // its material g-buffer → colortex16, so water gets real BSL shading.
-                        // 4th arg (transDepthBridge, non-null by the branch guard): the
-                        // inject's seafloor water-column dim needs the LOD trans depth to
-                        // reconstruct the water column above each opaque pixel. transBridge
-                        // stays null, so the Phase-D passthrough (which needs BOTH) stays
-                        // off and colortex16 is still written only by resolveTranslucentOnly.
-                        me.cortex.voxy.client.core.util.VxContractInjector.inject(viewport,
-                                pipeline.metalBridge(), pipeline.metalDepthBridge(), null,
-                                pipeline.metalDepthTransBridge());
-                        var irisPipe = net.irisshaders.iris.Iris.getPipelineManager().getPipelineNullable();
-                        if (irisPipe instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline irp) {
-                            int tP0 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans0());
-                            int tP1 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans1());
-                            int tP2 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans2());
-                            int tD  = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalDepthTransBridge());
-                            me.cortex.voxy.client.core.util.MetalVxResolvePass.resolveTranslucentOnly(
-                                    mvp2.getPipelineData(), irp, tP0, tP1, tP2, tD,
-                                    viewport.width, viewport.height);
-                        }
+                    if (pipeline instanceof me.cortex.voxy.client.core.MetalVxRenderPipeline material) {
+                        material.resolveMaterialFrame(viewport);
                     } else if (IrisUtil.vxContractActive()) {
                         // Native vx contract (milestone issue #9): hand the
                         // LOD depth to the pack's vxDepthTexOpaque/Trans
@@ -239,7 +226,6 @@ public abstract class MixinDefaultChunkRenderer extends ShaderChunkRenderer {
 
         boolean useBlockFaceCulling = SodiumClientMod.options().performance.useBlockFaceCulling;
         boolean indexedRendering = renderPass.isTranslucent() && indexedRenderingEnabled;
-        if (indexedRendering) return;
 
         var iterator = renderLists.iterator(renderPass.isTranslucent());
         while (iterator.hasNext()) {
@@ -251,9 +237,9 @@ public abstract class MixinDefaultChunkRenderer extends ShaderChunkRenderer {
             MultiDrawBatch batch = region.getCachedBatch(renderPass);
             if (!batch.isFilled) {
                 voxy$fillCommandBuffer(batch, region, storage, renderList, camera, renderPass,
-                        useBlockFaceCulling, false);
+                        useBlockFaceCulling, indexedRendering);
             }
-            if (!batch.isEmpty()) {
+            if (!indexedRendering && !batch.isEmpty()) {
                 if (!this.voxy$ensureSharedIndexBufferCapacityWithoutMapping(commandList, batch.getIndexBufferSize())) {
                     batch.size = 0;
                     batch.isFilled = true;

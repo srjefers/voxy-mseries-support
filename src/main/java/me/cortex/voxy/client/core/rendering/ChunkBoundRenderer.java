@@ -1,7 +1,6 @@
 package me.cortex.voxy.client.core.rendering;
 
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
-import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import me.cortex.voxy.client.core.AbstractRenderPipeline;
 import me.cortex.voxy.client.core.gl.GlGraphicsPipeline;
 import me.cortex.voxy.client.core.gl.shader.ShaderLoader;
@@ -15,6 +14,7 @@ import me.cortex.voxy.client.core.gpu.RenderEncoder;
 import me.cortex.voxy.client.core.gpu.RenderPassDesc;
 import me.cortex.voxy.client.core.gpu.VertexLayout;
 import me.cortex.voxy.client.core.rendering.util.MetalMvpUtil;
+import me.cortex.voxy.client.core.rendering.util.NativeUniformWriter;
 import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
 import me.cortex.voxy.client.core.rendering.util.UploadStream;
 import me.cortex.voxy.common.Logger;
@@ -64,7 +64,8 @@ import static org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER;
  * inside MC's loaded-chunk volume. {@link #clearMetal} mirrors the GL
  * gate's clear-to-0 branch.
  *
- * 2026-07-14 trans split (Metal only, VOXY_BOUND_TRANS_SPLIT=0 reverts):
+ * Translucent split (shader-contract near-cull only; VOXY_BOUND_TRANS_SPLIT=0 disables,
+ * =all forces the legacy split for diagnostics):
  * TRANSLUCENT-ONLY built sections (open-ocean water surface — Sodium built
  * the water plane but the seafloor section below never builds under the
  * visibility graph) used to extend the mask to their AABB back face like any
@@ -88,14 +89,18 @@ public class ChunkBoundRenderer {
     /** SSBO binding for the chunk-position array. */
     private static final int CHUNK_POS_BINDING = 1;
 
-    /** Kill switch for the trans-only coverage-epsilon split (default ON on Metal). */
-    private static final boolean TRANS_SPLIT =
-            !"0".equals(System.getenv("VOXY_BOUND_TRANS_SPLIT"));
-
-    /** The split only exists off-GL: the GL backend keeps the single-set path byte-identical. */
+    /** Epsilon coverage is needed only when the shader contract also culls near translucent LODs. */
     private static boolean splitActive() {
-        return TRANS_SPLIT && RenderBackendFactory.get().getType()
-                != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+        return splitActive(RenderBackendFactory.get().getType(),
+                me.cortex.voxy.client.core.util.IrisUtil.vxContractActive(),
+                !"0".equals(String.valueOf(System.getenv("VOXY_TRANS_NEAR_CULL")).trim()), System.getenv("VOXY_BOUND_TRANS_SPLIT"));
+    }
+
+    static boolean splitActive(me.cortex.voxy.client.core.gpu.BackendType backend,
+                               boolean contract, boolean nearCull, String setting) {
+        String mode = setting == null ? "" : setting.trim();
+        return backend != me.cortex.voxy.client.core.gpu.BackendType.OPENGL && !"0".equals(mode)
+                && ("all".equalsIgnoreCase(mode) || (contract && nearCull));
     }
 
     /**
@@ -109,51 +114,13 @@ public class ChunkBoundRenderer {
         long[] idx2chunk = new long[INIT_MAX_CHUNK_COUNT];
         IGpuBuffer posBuffer = RenderBackendFactory.get().createBuffer(INIT_MAX_CHUNK_COUNT * 8); // ivec2 per entry
 
-        final LongOpenHashSet addQueue = new LongOpenHashSet();
-        final LongOpenHashSet remQueue = new LongOpenHashSet();
-
         InstanceSet() {
             this.chunk2idx.defaultReturnValue(-1);
-        }
-
-        void add(long pos) {
-            if (!this.remQueue.remove(pos)) {
-                this.addQueue.add(pos);
-            }
-        }
-
-        void remove(long pos) {
-            if (!this.addQueue.remove(pos)) {
-                this.remQueue.add(pos);
-            }
-        }
-
-        /** Queued for add or already resident — used to route removals/reclassifies. */
-        boolean tracks(long pos) {
-            return this.addQueue.contains(pos) || this.chunk2idx.containsKey(pos);
-        }
-
-        void drainRemovals() {
-            if (!this.remQueue.isEmpty()) {
-                boolean wasEmpty = this.chunk2idx.isEmpty();
-                this.remQueue.forEach(this::_remPos);
-                this.remQueue.clear();
-                if (!wasEmpty) UploadStream.INSTANCE.commit();
-            }
-        }
-
-        void drainAdds() {
-            if (!this.addQueue.isEmpty()) {
-                this.addQueue.forEach(this::_addPos);
-                this.addQueue.clear();
-                UploadStream.INSTANCE.commit();
-            }
         }
 
         private void _remPos(long pos) {
             int idx = this.chunk2idx.remove(pos);
             if (idx == -1) {
-                Logger.warn("Chunk not in map: " + pos);
                 return;
             }
             if (idx == this.chunk2idx.size()) {
@@ -177,7 +144,6 @@ public class ChunkBoundRenderer {
 
         private void _addPos(long pos) {
             if (this.chunk2idx.containsKey(pos)) {
-                Logger.warn("Chunk already in map: " + pos);
                 return;
             }
             this.ensureSize1();//Resize if needed
@@ -236,72 +202,46 @@ public class ChunkBoundRenderer {
     /** Cached GL program id for the raw glUseProgram path; 0 on non-GL backends. */
     private final int glProgram;
 
-    /**
-     * Round 23: static mirror of Sodium's built-section set, maintained by
-     * MixinRenderSectionManager independent of renderer lifetime. A Voxy
-     * renderer reload (pack toggle / config) constructs a FRESH
-     * ChunkBoundRenderer, but Sodium's already-built sections never
-     * re-transition, so the mask stayed empty until sections rebuilt —
-     * during which the SOLID-head LOD depth inject stomped every real
-     * terrain pixel. New instances seed their addQueue from this mirror.
-     * Cleared when Sodium recreates its RenderSectionManager (level/render-
-     * distance change) so stale entries can't mask-discard LODs over
-     * chunks Sodium no longer renders.
-     *
-     * Trans split: kept as TWO sets so re-seeds preserve each section's
-     * opaque/trans-only class.
-     */
-    private static final LongOpenHashSet MIRROR_OPAQUE = new LongOpenHashSet();
-    private static final LongOpenHashSet MIRROR_TRANS_ONLY = new LongOpenHashSet();
+    private final SectionCoverageTracker.Subscription coverage;
 
-    public static synchronized void mirrorAdd(long pos, boolean hasOpaque) {
-        if (hasOpaque) {
-            MIRROR_TRANS_ONLY.remove(pos);
-            MIRROR_OPAQUE.add(pos);
-        } else {
-            MIRROR_OPAQUE.remove(pos);
-            MIRROR_TRANS_ONLY.add(pos);
+    private void applyCoverage() {
+        boolean metal = RenderBackendFactory.get().getType() != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+        var update = this.coverage.drain();
+        if (update.reset()) this.reset();
+        Map<Long, SectionCoverageTracker.Coverage> changes = update.changes();
+        if (metal) {
+            changes = SodiumDrawCoverage.INSTANCE.mask(this.pipeline, SectionCoverageTracker.INSTANCE.currentGeneration(),
+                    me.cortex.voxy.client.core.WorldFrameCapture.frame());
+            boolean removed = removeAbsent(this.primary, changes);
+            if (this.epsSet != null) removed |= removeAbsent(this.epsSet, changes);
+            if (removed) UploadStream.INSTANCE.commit();
         }
-    }
-
-    public static synchronized void mirrorRemove(long pos) {
-        MIRROR_OPAQUE.remove(pos);
-        MIRROR_TRANS_ONLY.remove(pos);
-    }
-
-    public static synchronized void mirrorReset() {
-        MIRROR_OPAQUE.clear();
-        MIRROR_TRANS_ONLY.clear();
-    }
-
-    /**
-     * A section REBUILT in place (built→built, no flag transition) may flip
-     * between opaque and trans-only (sand pillar removed from a water
-     * section, …). Updates the mirror and reports whether the class changed
-     * so the caller can re-route the live instance sets.
-     */
-    public static synchronized boolean mirrorReclass(long pos, boolean hasOpaque) {
-        boolean inOpaque = MIRROR_OPAQUE.contains(pos);
-        boolean inTrans = MIRROR_TRANS_ONLY.contains(pos);
-        if (!inOpaque && !inTrans) {
-            return false; // not tracked (never transitioned to built through the mixin)
-        }
-        if (hasOpaque == inOpaque) {
-            return false;
-        }
-        mirrorAdd(pos, hasOpaque);
-        return true;
-    }
-
-    private void seedFromMirror() {
-        synchronized (ChunkBoundRenderer.class) {
-            this.primary.addQueue.addAll(MIRROR_OPAQUE);
-            if (this.epsSet != null) {
-                this.epsSet.addQueue.addAll(MIRROR_TRANS_ONLY);
+        for (var entry : changes.entrySet()) {
+            long pos = entry.getKey();
+            var state = entry.getValue();
+            if (state == SectionCoverageTracker.Coverage.NONE) {
+                this.primary._remPos(pos);
+                if (this.epsSet != null) this.epsSet._remPos(pos);
+            } else if (this.epsSet != null && state == SectionCoverageTracker.Coverage.TRANSLUCENT) {
+                this.primary._remPos(pos);
+                this.epsSet._addPos(pos);
+            } else if (state == SectionCoverageTracker.Coverage.OPAQUE
+                    || !metal) {
+                if (this.epsSet != null) this.epsSet._remPos(pos);
+                this.primary._addPos(pos);
             } else {
-                this.primary.addQueue.addAll(MIRROR_TRANS_ONLY);
+                this.primary._remPos(pos);
             }
         }
+        if (!changes.isEmpty()) UploadStream.INSTANCE.commit();
+    }
+
+    private static boolean removeAbsent(InstanceSet instances, Map<Long, SectionCoverageTracker.Coverage> current) {
+        boolean removed = false;
+        for (long position : instances.chunk2idx.keySet().toLongArray()) {
+            if (!current.containsKey(position)) { instances._remPos(position); removed = true; }
+        }
+        return removed;
     }
 
     /** Throttle for the split-counts diagnostic log (~10s at 60fps). */
@@ -311,8 +251,7 @@ public class ChunkBoundRenderer {
 
     public ChunkBoundRenderer(AbstractRenderPipeline pipeline) {
         this.pipeline = pipeline;
-        this.epsSet = splitActive() ? new InstanceSet() : null;
-        this.seedFromMirror();
+        this.epsSet = pipeline.materialPolicy().legacyWater() && splitActive() ? new InstanceSet() : null;
 
         String vert = ShaderLoader.parse("voxy:chunkoutline/outline.vsh");
         String taa = pipeline.taaFunction("getTAA");
@@ -370,28 +309,16 @@ public class ChunkBoundRenderer {
         } else {
             this.epsPipeline = null;
             this.epsUniformBuffer = null;
+            if (RenderBackendFactory.get().getType() != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+                Logger.info("[Metal-LODTEST] bound-mask trans split OFF: using full section bounds");
+            }
         }
-    }
-
-    public void addSection(long pos, boolean hasOpaque) {
-        if (this.epsSet != null && !hasOpaque) {
-            this.epsSet.add(pos);
-        } else {
-            this.primary.add(pos);
-        }
-    }
-
-    public void removeSection(long pos) {
-        if (this.epsSet != null && this.epsSet.tracks(pos)) {
-            this.epsSet.remove(pos);
-        } else {
-            this.primary.remove(pos);
-        }
+        this.coverage = SectionCoverageTracker.INSTANCE.subscribe();
     }
 
     //Bind and render, changing as little gl state as possible so that the caller may configure how it wants to render
     public void render(Viewport<?> viewport) {
-        this.primary.drainRemovals();
+        this.applyCoverage();
 
         this.uploadSceneUniform(this.uniformBuffer, viewport, false, this.primary.chunk2idx.size());
 
@@ -438,7 +365,6 @@ public class ChunkBoundRenderer {
         }
 
 
-        this.primary.drainAdds();
     }
 
     /**
@@ -473,7 +399,7 @@ public class ChunkBoundRenderer {
                 (float) (viewport.cameraX - sx),
                 (float) (viewport.cameraY - sy),
                 (float) (viewport.cameraZ - sz));
-        negInnerSec.getToAddress(ptr + 80);
+        NativeUniformWriter.putVector3f(ptr + 80, negInnerSec);
         float renderDistance = Math.max(Minecraft.getInstance().gameRenderer.getRenderDistance(), 20 * 16);
         MemoryUtil.memPutFloat(ptr + 92, renderDistance);
 
@@ -481,7 +407,7 @@ public class ChunkBoundRenderer {
         if (metalNdcRemap && MetalMvpUtil.METAL_NDC_REMAP) {
             MetalMvpUtil.applyNdcRemap(mvp);
         }
-        mvp.getToAddress(ptr);
+        NativeUniformWriter.putMatrix4f(ptr, mvp);
 
         UploadStream.INSTANCE.commit();
     }
@@ -508,17 +434,7 @@ public class ChunkBoundRenderer {
      */
     public void renderMetal(Viewport<?> viewport, RenderBackend backend) {
         if (viewport.width <= 0 || viewport.height <= 0) return; // mirrors runPipelineMetal's guard
-        this.primary.drainRemovals();
-        if (this.epsSet != null) this.epsSet.drainRemovals();
-        // Round 23: drain the ADD queue BEFORE the mask draw, not after.
-        // Adds are enqueued during Sodium's setupTerrain (section upload),
-        // which runs earlier in the same frame — draining after the draw
-        // meant every freshly built section was rendered by Sodium for >=1
-        // frame while ABSENT from the mask, so the SOLID-head LOD depth
-        // inject stomped its pixels (real-terrain flicker during camera
-        // movement; the dominant underwater x-ray trigger).
-        this.primary.drainAdds();
-        if (this.epsSet != null) this.epsSet.drainAdds();
+        this.applyCoverage();
 
         int count = this.primary.chunk2idx.size();
         int epsCount = this.epsSet != null ? this.epsSet.chunk2idx.size() : 0;
@@ -533,6 +449,7 @@ public class ChunkBoundRenderer {
         }
 
         try (RenderEncoder encoder = backend.beginRenderPass(boundDepthPass(viewport))) {
+            this.pipeline.bindUniforms(encoder);
             if (count > 0) {
                 encoder.setPipeline(this.rasterPipeline);
                 encoder.setViewport(0, 0, viewport.width, viewport.height, 0, 1);
@@ -619,6 +536,7 @@ public class ChunkBoundRenderer {
     }
 
     public void free() {
+        this.coverage.close();
         this.rasterPipeline.close();
         this.uniformBuffer.free();
         this.primary.free();

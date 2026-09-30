@@ -1133,24 +1133,6 @@ These are intentionally not in git and will appear in `git status`:
 
 ---
 
-## Plan file
-
-The live plan (used during planning sessions) lives at:
-
-`/Users/jargueta/.claude-personal/plans/context-en-el-prancy-sunrise.md`
-
-Has the full strategic context. Read it for higher-level architectural decisions and risk analysis.
-
----
-
-## Communication style with user
-
-- User is bilingual; defaults to **Spanish**, English is OK.
-- Defaults to **auto mode** — wants visible progress, status updates, fewer questions per chunk.
-- Has Voxy installed via Modrinth at `~/Library/Application Support/ModrinthApp/profiles/Voxy-m-series-support-test/` for eventual real-MC testing.
-- Asks for honest scope estimates and pushes for progress; respects "pause for hygiene" recommendations when made with reasoning.
-
----
 
 ## Next-session playbook
 

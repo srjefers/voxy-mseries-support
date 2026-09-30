@@ -43,12 +43,18 @@ public class MixinIrisRenderingPipeline implements IGetVoxyPatchData, IGetIrisVo
 
     @Inject(method = "beginLevelRendering", at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/opengl/GlStateManager;_activeTexture(I)V", shift = At.Shift.BEFORE), remap = false)
     private void voxy$injectViewportSetup(CallbackInfo ci) {
-        if (IrisUtil.CAPTURED_VIEWPORT_PARAMETERS != null) {
-            var renderer = ((IGetVoxyRenderSystem) Minecraft.getInstance().levelRenderer).getVoxyRenderSystem();
-            if (renderer != null) {
-                IrisUtil.CAPTURED_VIEWPORT_PARAMETERS.apply(renderer);
-            }
-        }
+        if (IrisUtil.shadowsBeingRendered()) return;
+        var renderer = ((IGetVoxyRenderSystem) Minecraft.getInstance().levelRenderer).getVoxyRenderSystem();
+        if (renderer != null) me.cortex.voxy.client.core.WorldFrameCapture.prepare(renderer);
+    }
+
+    @Inject(method = "beginTranslucents", at = @At("RETURN"), remap = false)
+    private void voxy$probeDeferred(CallbackInfo ci) {
+        me.cortex.voxy.client.core.MatchedFrameProbe.stage("iris-deferred-complete");
+    }
+    @Inject(method = "finalizeLevelRendering", at = @At("RETURN"), remap = false)
+    private void voxy$probeFinal(CallbackInfo ci) {
+        me.cortex.voxy.client.core.MatchedFrameProbe.stage("iris-final-complete");
     }
 
     @Override

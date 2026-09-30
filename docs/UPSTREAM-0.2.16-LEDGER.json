@@ -1,0 +1,1602 @@
+{
+  "target": "59b62bee821518e06612e1d5c2c58c487bda761d",
+  "common_ancestor": "ee7ec50d4428cf28253d628ac5e2ed3fbf67e7a0",
+  "upstream_commits": 266,
+  "changed_files": 174,
+  "counts": {
+    "deferred": 95,
+    "adapted": 34,
+    "already present": 2,
+    "imported": 43
+  },
+  "source_attribution": "source_commit identifies the immutable source snapshot, not necessarily the commit that first authored a change.",
+  "exclusions": [
+    "Software bakery/model atlas replacement",
+    "Reverse-depth renderer overhaul",
+    "SSAO/occupancy GPU pipeline",
+    "Shader contracts 2/3",
+    "Newer Minecraft/Sodium APIs and GL-only resource assumptions",
+    "Broad configuration/storage-path redesign"
+  ],
+  "files": [
+    {
+      "file": ".github/workflows/manual-artifact.yml",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "0c9fd29846b69731ccb1a1ee819ae5857d212943060df1cd00845d05e8dfd22a",
+      "adapted_sha256": "6abe3b393a12ed4af4a547a4fd99401e76ad164b2afccc0b628b8ea6f5a24d70",
+      "reason": "Keep local Mac build/deployment workflow; upstream CI artifacts do not validate Apple Metal."
+    },
+    {
+      "file": "build.gradle",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "a98f172be5bc948a3affa08560a26abdc35665c269afd8b910016aedb83b93ae",
+      "adapted_sha256": "75960a3c9790f3364faee232c7c9e2f536763c283c4d2e8e0aa693fd725ecff1",
+      "reason": "Keep Loom 1.16.1, Sodium 0.8.11, ARM64 RocksDB/Shaderc/SPVC packaging; import RocksDB 10.9.1 after existing-database tests; add identity, test-only dependencies and honest retained-native build checks."
+    },
+    {
+      "file": "gradle.properties",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "ec1aec44dcd10c834bccf2c697cf8e69700b0a18e85faf4e2299d67224961993",
+      "adapted_sha256": "845e48cd91f5aae1c4d007f4302841936a36cbaa3ea5ba622f4c524bd643aa88",
+      "reason": "Set 0.2.16-metal.preview; retain Minecraft 1.21.11 and the newer working Loom/Sodium toolchain."
+    },
+    {
+      "file": "gradle/wrapper/gradle-wrapper.properties",
+      "upstream_change": "modified",
+      "status": "already present",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "8f888347121731501127d9078d69b2b61fa2fe097d7cea2b28db536855301093",
+      "adapted_sha256": "8f888347121731501127d9078d69b2b61fa2fe097d7cea2b28db536855301093",
+      "reason": "Gradle 9.4.1 was already locally installed for Loom 1.16.1; pin matches that wrapper."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/ClientImportManager.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "771000a298740b0031d56fdcbe9afc38b5796dbfd74e41de7b3fd62335a152ac",
+      "adapted_sha256": "771000a298740b0031d56fdcbe9afc38b5796dbfd74e41de7b3fd62335a152ac",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/ClientSessionEvents.java",
+      "upstream_change": "added",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "04f2cc810a1af8b32474a5e4051846623ec9383c03108e2631d5a22a41511a66",
+      "adapted_sha256": "04f2cc810a1af8b32474a5e4051846623ec9383c03108e2631d5a22a41511a66",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/DebugEntries.java",
+      "upstream_change": "added",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "3ada75be3bf93556ab0f7486dd0bb9496f3d4c82d0f8be240a5ec880034c4ce9",
+      "adapted_sha256": null,
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/ICheekyClientChunkCache.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "abe57a52a001969c6b4eb291346569e17dd0da75baf57eaec49a6514aebcb51b",
+      "adapted_sha256": "abe57a52a001969c6b4eb291346569e17dd0da75baf57eaec49a6514aebcb51b",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/VoxyClient.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "8e85f8d5f2738042c29c1bd04fe3ad88bf90ca255782ea9212270680d263c79d",
+      "adapted_sha256": "23fcf856bea31e32b1e2a91062ab98ebe67e8054ab4f57675cb2b25d98cada55",
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/VoxyClientInstance.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "10a695ebfa9e70650b70ff2c97c60895e75f0e800755c83d572582012a87babb",
+      "adapted_sha256": "198536221869565c040a34c5bb8ff6334052db9de47989685de73a86ea31d718",
+      "reason": "Import shared storage configuration/context and session ownership; preserve existing paths, version-1 config and valid custom configuration bytes."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/VoxyCommands.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "21f816024aef23e7db2923b05e87ff049d4d0c58f9e7f57f3b8a69e8020e99bb",
+      "adapted_sha256": "5207ec93f73c8e8b621007ff0b4f9607a763c53d5c5898c0e40dbe7029b69c51",
+      "reason": "Import compatible commands, including current-world import and explicit verification/repair; retain legacy renderer shutdown command."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/VoxyDebugScreenEntry.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "c4ed93a2934dbf4a88fe4f1dcbf436f4325042b30660f1142949bbc95af1b86b",
+      "adapted_sha256": "01d04a2bcc5f765dc6b19dcc6ed2f88dd48c279b367d4a4bd87616214f417c8c",
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/config/IConfigPageSetter.java",
+      "upstream_change": "removed",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": "ebe0a45cd7d805506014215b170f550bd8361d41432a6b2a7a52ecc03e6c718e",
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/config/ModMenuIntegration.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "8717d679f34d88bc6151711e95419e454af4d87d3668a236250cb1df023a30ae",
+      "adapted_sha256": "f964c451f89878b6b0bdb02dd0c270dbd536c38dce7c38697d40b998f89837e0",
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/config/SodiumConfigBuilder.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "a9d5f5b9a1a2542618a8eb18de0029c93b266eb286f54a1cf4b9512b239b633c",
+      "adapted_sha256": "a5ae530fdb1b867f12a53c73ad5104802dc4898b4d960f4cf5d8789fcd820063",
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/config/VoxyConfig.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "911bf963ee18ee9a864eefb6658cd75339b066ef5bf61dcd77c4d21a8d768a13",
+      "adapted_sha256": "f0ae0c51ca3abffdff683e53c84b6d9ff2c3eb5e4c4f3d04ebeb434cf0ec6f64",
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/config/VoxyConfigMenu.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "eb56cd6d6836fb6cf56d16dae7afcf4e09b72a2f26f4bad3d266994077d59730",
+      "adapted_sha256": "2d053b9c0e13f3ee999fe721c82e5d4b7414af151f315ceb0609022af057eda7",
+      "reason": "Reload renderer when Sodium builder-thread ownership changes; use authoritative session state; preserve compatible Sodium 0.8.11 menu."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/AbstractRenderPipeline.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "94f4487aa076f702f80ef23341cfe640b0459a1bebf9610087176e5c96ac1b45",
+      "adapted_sha256": "a38ce4c7f7226207b2185596e2721bcf1e7a4868e2e19de188f3d416a00c685d",
+      "reason": "Extract Metal frame/resource ownership; keep public renderer API and existing depth convention. Upstream reverse-depth, software bakery and SSAO orchestration deferred."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/IGetVoxyRenderSystem.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "c439439e39eddd5dfd7a424662b60c868431b1bd04e0891f0f53f87123b39591",
+      "adapted_sha256": "0484f19cad612a5e22b893754a697ed932a75f4c17f607139be95e8d17bbefe4",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port.",
+      "adapted_fix_commits": [
+        "98d800adec877ea21e53e29333840e347972d610"
+      ]
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/IrisVoxyRenderPipeline.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "c70f38c061d33409edfcf642b2d40ec02f1b4c8ce04deff7251d086ede381a0c",
+      "adapted_sha256": "c1a72010d58525590a37309953ecd150e98bfce1f03ec678737e845fe7e17360",
+      "reason": "Upstream GL-only Iris/reverse-depth or contracts 2/3 path; Metal uses its separately prepared contract-1 material bridge."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/NormalRenderPipeline.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "5780fb08c21a125def92f529d70b52f04b38fd6bccef9dbff0b53adf202d6c7d",
+      "adapted_sha256": "98c7362356782c58eebfbf8a7efd7a66f593f84a0d6d62c0e695776a63c8c753",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/RenderPipelineFactory.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "9c055901594a5e221cd86aca9f0192b14a11de7c5f8925a4081c818da6efb13e",
+      "adapted_sha256": "d4d1702db629cbba0f9e4e6f02181ececd7940dc97267f76c382d3a6a74845b5",
+      "reason": "Prepare both material stages before selecting Metal contract-1; report failures and disable shaders on preparation failure. Upstream OpenGL renderer selection remains backend-specific."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/RenderProperties.java",
+      "upstream_change": "added",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "9d9c1d608dd9fa7b4793982e6842635b4ec276b397f1a4b290624d7844fe233a",
+      "adapted_sha256": null,
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/RenderResourceReuse.java",
+      "upstream_change": "added",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "37ad4c7694833c1e5f02da97a1207902c069e24d60b9dc94dfa59ec854b5af7a",
+      "adapted_sha256": null,
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/SSAO.java",
+      "upstream_change": "added",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "368a9702c59c8bb6a2f68abb832b68f5331a96209ee8ac3273d9e837069ea2d0",
+      "adapted_sha256": null,
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/VoxyRenderSystem.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "76934a446438c73715f26b04d633b476936f0b62ae1b21a644c0d29779c6dfe2",
+      "adapted_sha256": "f0b02b6cf9bd901079ff57b8351dcfa5fa7374d02a580634246a94530414e714",
+      "reason": "Adapt projection commit 98d800adec877ea21e53e29333840e347972d610 using Minecraft raw projection plus additional camera transforms; preserve Metal clip/depth conventions.",
+      "adapted_fix_commits": [
+        "98d800adec877ea21e53e29333840e347972d610"
+      ]
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/gl/Capabilities.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "cdf0261e421727d5867d3f720cdbec111dd61f0345a6b772b5f8876cdde07989",
+      "adapted_sha256": "37aa3473e33f6754b9021f9e942f7b2842d090ecbf3886af580067506cf50f1e",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/gl/GlTexture.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "58e512298003c1cee9839b03fb296c01584d58329cd90eb287fec5ea61b0c09e",
+      "adapted_sha256": "ee4991a1e256ee167bcfdecab61ba39b9ae041154d41a3c3ced41a3fb27a4a96",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/gl/shader/Shader.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "bb1caebbdc54e8c2bc8c15734106824df9c1a6cf8ff66bba48b01807b6f233d2",
+      "adapted_sha256": "3c52df8c96e331922a0889ca5fae84a584c2685bade17d5d6a227bcc4e570bff",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/gl/shader/ShaderLoader.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "c543f50d6bb2f3c14be6c28558cab61b624eb9210f1ba009bf990c6e6191d3ed",
+      "adapted_sha256": "6d54536046a9d2ab349f287498e5635afa90234e77bbaa1991e1902c4b471c02",
+      "reason": "Use owned nested-include parsing and remove included version directives; retain Metal printf stripping and fork debugging behavior."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/model/MipGen.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "fd1c789e5a3cd6052974aeb328b68faa0d74f67b4e25259df6a70bfcda172f0f",
+      "adapted_sha256": "707eb9f4657aeb6488a10964a30dab17a4f09af0151556744d46f97f6a450036",
+      "reason": "Coupled to upstream software bakery/model-atlas replacement; retain the working Metal bakery and atlas layout."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/model/ModelBakerySubsystem.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "33b6abadf54664d4b2b44d14d4ed9f9e74312154d0448796b6563b74dcd3ddfa",
+      "adapted_sha256": "ad50aad6a2f4faa96d7917bf9f1d9c2e7f9a2f1660460a4b44b2cdd967a6480a",
+      "reason": "Coupled to upstream software bakery/model-atlas replacement; retain the working Metal bakery and atlas layout."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/model/ModelFactory.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "76c73634457c980f02022633a9b606c0c32a0ff624bec15a7b14b41332b06f43",
+      "adapted_sha256": "8551f5d4a334db8dd9be9ade847ce9522f48db5cd7b7c97219a1e1936e1b6258",
+      "reason": "Import CPU light-emission metadata; move Metal plant flag to bit 59 to avoid emission overlap; retain Metal bakery, atlas, fluid and GPU model layouts. Software bakery/atlas replacement deferred."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/model/ModelQueries.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "3e876975d234dbb68deac26a7a22947478435ce8884e49da311cf78115168046",
+      "adapted_sha256": "8d38a49106be5aaab3c1fe47ed9fde16b0613257141803706a022372496eff8c",
+      "reason": "Import emission/face-query helpers; keep Metal plant query in distinct metadata bit 59."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/model/ModelStore.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "6fca0418f9f2620befbc44983e62c208e7893920b32e29cddfef27b14d6696fb",
+      "adapted_sha256": "dc2414691b4893e3d03041d8ef372cbba5ba1f0a33472d1c71966d40c2cda959",
+      "reason": "Coupled to upstream software bakery/model-atlas replacement; retain the working Metal bakery and atlas layout."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/model/TextureUtils.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "bf28c5e58db388ae88ab9ec816172d96bcaf99f72559d1655769b028b3ea5bb1",
+      "adapted_sha256": "d3bf7335c698ac6f214138c2d32e5f25a9f939a7a76c5b3e6b1d31005ecc76d5",
+      "reason": "Coupled to upstream software bakery/model-atlas replacement; retain the working Metal bakery and atlas layout."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/model/bakery/BudgetBufferRenderer.java",
+      "upstream_change": "removed",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": "d2a327720c630d99fd57fe0c14c835a5eae466b2715eecd78ac21b172ebee9b8",
+      "reason": "Coupled to upstream software bakery/model-atlas replacement; retain the working Metal bakery and atlas layout."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/model/bakery/GlViewCapture.java",
+      "upstream_change": "removed",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": "a03393a49925d05282815599e5223fca8e815b4ce626bc2ef5645b839bcebe81",
+      "reason": "Coupled to upstream software bakery/model-atlas replacement; retain the working Metal bakery and atlas layout."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/model/bakery/ReuseVertexConsumer.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "787208d3ccf9a2b76ab0c70ba49452bc99d5a2ba0fb78e8814343c5eefbb12a0",
+      "adapted_sha256": "e673b7fb5040ba00c732288426e24ed630d2f9bdc1093b638be25e67c59b5384",
+      "reason": "Coupled to upstream software bakery/model-atlas replacement; retain the working Metal bakery and atlas layout."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/model/bakery/SoftwareModelTextureBakery.java",
+      "upstream_change": "renamed",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "e255eb10e17e57960717b7bedac0fb74851d32702d99703b3b0aa4971b92a472",
+      "adapted_sha256": null,
+      "reason": "Coupled to upstream software bakery/model-atlas replacement; retain the working Metal bakery and atlas layout."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/model/bakery/SoftwareRasterizer.java",
+      "upstream_change": "added",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "2df3dab5c089ff665e51ac053be5ccbdcde2e9f2366d0a603b02d526b1c77700",
+      "adapted_sha256": null,
+      "reason": "Coupled to upstream software bakery/model-atlas replacement; retain the working Metal bakery and atlas layout."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/ChunkBoundRenderer.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "a0dee0ef5f81780bd87ff2d8afb6abcefc723247a8bc44d3640c6691279b16ef",
+      "adapted_sha256": "6b88e03fcfa01d75b1944d54287531016c99c42474a2a6eb8a5bd066e6576e53",
+      "reason": "Replace mirror queues with generation-scoped uploaded-terrain coverage, idempotent frame consolidation and one-time seeding. Keep current GPU uniform/depth layout; use explicit native writes and pack TAA uniforms.",
+      "adapted_fix_commits": [
+        "9d355aa1636e57d5743984774c0fe08069c47daa"
+      ]
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/RenderDistanceTracker.java",
+      "upstream_change": "modified",
+      "status": "already present",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "0dc8efef64bfc09318245580fd8e365c3299cc0e1cc36d22f81f4aec0c27d8a1",
+      "adapted_sha256": "f18a26ff8efa62e8ca6046d0a32d5a67a1002db176e643d12c77e785058da3db",
+      "reason": "Only a process-rate TODO comment differs; behavior is already present. No distance or arbitrary frame-delay changes made."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/Viewport.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "708d11f850cbe06933f1469653362aa72a13e44e2b0d831fa2e722c50a7faa3e",
+      "adapted_sha256": "fd18905bef4a670678f6f0c40f0e454edb1bcd61eaf9a1700caf4204acbdfa29",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/building/BuiltSection.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "7c3f751ca840d41086e0673428364248380240973fabe037b82babdee41bc78e",
+      "adapted_sha256": "ca70c64c0acc47ce1135ee4a2a8b7a99d5aa9e2b5db3b5377d6519ec029868fc",
+      "reason": "New occupancy allocation belongs to deferred occupancy/SSAO pipeline and changes mesh ownership/layout; retain Metal mesh contract."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/building/OccupancySet.java",
+      "upstream_change": "added",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "cc327794fbd02d5c05351a29163abdd1036fbf665b028e42907dfe3c6ef51003",
+      "adapted_sha256": null,
+      "reason": "Deferred occupancy/SSAO generation; no compatible consumer in retained Metal draw pipeline."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/building/OccupancySet2.java",
+      "upstream_change": "added",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "e5a9e418d6847cd7dc69f500c56d234bf353103f7b7d69207c833d6241fb37e8",
+      "adapted_sha256": null,
+      "reason": "Deferred occupancy/SSAO generation; no compatible consumer in retained Metal draw pipeline."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/building/RenderDataFactory.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "c23ef98045d7381df3132ade8cfaf80b75a051ba8b879b3aaa8d196630b3d895",
+      "adapted_sha256": "04ecafe44d5334757263c1e63189841b7b26b5498302aff409201a64bab14404",
+      "reason": "Import bounds, face-occlusion and emission-light corrections into existing Metal plant/fluid mesher. Clamp emission on emitted quads while preserving sky light. Occupancy/SSAO changes deferred."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/building/RenderGenerationService.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "bbda8eff66a630c1614859c34bbab830307fa40f20d9b63203718cfbc737e349",
+      "adapted_sha256": "2364da60bff07bd6bf54c432ccc1d3d7375bd30b2040480b812b517cac8e7b7c",
+      "reason": "Upstream removes bakery throttling/sleep after software bakery changes. Retain the Metal bakery scheduling boundary until that replacement is adapted and measured."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/hierachical/AsyncNodeManager.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "c2e31b20bee5bb37b464b52eea2973c1d4175d29e30229b063dc77548e735358",
+      "adapted_sha256": "c7d7eb91ecfc0fe2d5f78f08f018e562d7d9e8b86ea226c471b58cdd23640ab0",
+      "reason": "Bound uploads between whole meshes; propagate worker failures and permit failed-worker shutdown. Preserve Metal queues, visibility waits and existing geometry ownership."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/hierachical/HierarchicalOcclusionTraverser.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "7272b3df761fe698eea3cee4ee96395870e18be0e8949c16cd92f3dc7cb38302",
+      "adapted_sha256": "b237026f2a0c278dd4300feeba7e139c02859bffdc13bf07678504474e642f6b",
+      "reason": "Retain explicit JOML-free uniform upload and Metal compute bindings. Upstream reverse-depth projection/node shader overhaul deferred."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/hierachical/NodeCleaner.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "3791225c69b202d924fb3e2751f7026c9f18c0935e3f4d0474ed9bd35834859d",
+      "adapted_sha256": "2949b1953c0528e6f35f031ad044bb5ea66af430932a119a5884b1bfca76f4af",
+      "reason": "Skip zero-node dispatch/readback; retain existing Metal/GL buffer layouts and cleanup algorithm."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/hierachical/NodeManager.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "b5e74da1789655d90641d6f0a2980af7f115086c5834750dcf409f96fc7f52ea",
+      "adapted_sha256": "94616311257f944e7b4e27c9083a8b4f147533bab497328bbe7031451bbd7aca",
+      "reason": "Import bounded request-allocation construction; preserve fork node child-state ABI and traversal interfaces."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/hierachical/NodeStore.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "dcdc10e8c2c5164212b6ab60e6c60e327da13fb7f0e229580b65cccd38177801",
+      "adapted_sha256": "0667494e20b0cb5596ef812c5a287828cfbb8110272d1bd8ee269fc9184443dc",
+      "reason": "Correct/validate 19-bit request ID mask without corrupting leaf state; retain Metal GPU bit 1 child-readiness interpretation."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/hierachical/TestNodeManager.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "205b2ff011ec52c929ff4b6e4291103a1ce515416d162dd6104f2d55c74966f9",
+      "adapted_sha256": "e984fc65d07c82740a1cb9145b021a197c1d59adbaa8a95b45bd43009da2b213",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/post/FullscreenBlit.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "43bbbd5b14de0d217416ab53a4144fe66d5f512fa03d6d0bf3edc78288704b41",
+      "adapted_sha256": "4b223dc19e39b02695b31f1f1b159f2d34427b19638242eaba81cf412dd4ab43",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/section/backend/AbstractSectionRenderer.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "dedac3ffed47ca6e7c1517217b85b1de21d89adbccfb29825db844e15d0ee85b",
+      "adapted_sha256": "0430a534076ca89bc56dcfba964dc063e3eb0e521ab3edac80c6194815128a84",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/section/backend/mdic/MDICSectionRenderer.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "c30cf6d905eb3525f57ee10b38fd650384c36ea56dfb7179f7e794bff9797c30",
+      "adapted_sha256": "7c1297b352a18f798e92d146e46c11130dc4cad4b5dcdd6f867cf797866bad1a",
+      "reason": "Keep Metal draw/indirect-command ABI and explicit uniform writes; bind actual contract TAA uniforms to terrain. Upstream GL reverse-depth, occupancy and SSAO renderer deferred."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/section/backend/mdic/MDICViewport.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "0f7196fea836c40be9e1c8ab6347b215e346e6f62bbf08e158cde8a8d118f053",
+      "adapted_sha256": "dbf572271c4874800b48f476a46fafc66c32d6aee3867f209500d5118deb456b",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/section/geometry/BasicAsyncGeometryManager.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "ec6bd03aa8e42fe929dba3464c0fd72656ef49e3a1f5a66e21779bcf97106ed9",
+      "adapted_sha256": "ec6bd03aa8e42fe929dba3464c0fd72656ef49e3a1f5a66e21779bcf97106ed9",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/section/geometry/BasicSectionGeometryData.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "02d228eb7f07a8976f6ff5e12a2cc81bee4ef775ec65eab696db7a55a710cfc9",
+      "adapted_sha256": "8cb5f06eb7f734698ed9db2fbb8fcf9dbca83105e20b442b97f4e43f77eaa5de",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/section/geometry/BasicSectionGeometryManager.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "71a30f4fa77ce63791fa6cecc5d3cd4247eca5055cfdd46a49247e24f5f0cdc9",
+      "adapted_sha256": "4c8e66675bc19038ae4525bd0ffacf4b0b140be9f5e510fef6d392f5678e954b",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/section/geometry/IGeometryData.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "ded2e0ae2ee40e8cc3ed9301cbbac6b4fec451d87ddd58cf5ddaf266aaf032da",
+      "adapted_sha256": "56728f17b8a9801427b39bede1f2a41d92d940b3e2e9d576d10e42c0ef01ba1c",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/util/DepthFramebuffer.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "3acd5eac1186b3b7ef9da77382afe1c40ac7035c1e19b32c8a1d96f3203a68c8",
+      "adapted_sha256": "af7c21c31326f1da7f3bdb75c3f7753b65d6ce39699742a3c90f7d82d0284a5f",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/util/DownloadStream.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "023b3e26f182b24c4c304c957c7731ec32b0e980bf15fa858110ade16d0f8f50",
+      "adapted_sha256": "60b731bdeecffb2539ff48baaa56366a8fe423baead195769b86450511179f1c",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/util/HiZBuffer.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "a3569cc97dbd09e3f707f8d39938db657da0c9edca6a770bc63272284e6a7dad",
+      "adapted_sha256": "85582520f4102ffb00fb6a50362d826e5e5040312284bc0ac09296f6386c8921",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/util/LightMapHelper.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "3bcc285a66bc98ae9a2b89cf2daac8f64fee17418ac040ae99d9c05dbc23ff7f",
+      "adapted_sha256": "ed1c84d7743c96cf32922a56f845dea3222c530f76c17e031ee58964e1296b61",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/rendering/util/UploadStream.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "ecd01b20de9e6bfa01edbaad5b3fc7a227c30f1223c823c864029c0b786670ad",
+      "adapted_sha256": "7c03501c1eea2a82e4895f8f64c28664ae2ce7b06f43ffd32709ea8653c06521",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/util/ExpandingObjectAllocationList.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "931675331cd6accf99e12bdc0c780598785449b3752b76f49f1933f098e8d5fc",
+      "adapted_sha256": "931675331cd6accf99e12bdc0c780598785449b3752b76f49f1933f098e8d5fc",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/util/GPUTiming.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "93f0720565b95654619351e287713008087c0154b68cebab5cbbe4a865845eef",
+      "adapted_sha256": "b937fb0fd369358b52166e1ade06236c147015d3cebb36b05f021a1772f80cb0",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/util/IrisUtil.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "2b90cadd42819eb63dfcc962fa2de41ed9f44ec872a24702e87875b324ef78bc",
+      "adapted_sha256": "580742e4f2b4d89f528d81bab835d32c9fb3cd9f5b0d751a009098ae4e5dac81",
+      "reason": "Retain fork Metal material/injection routing; upstream helper assumes GL-only newer shader contracts. Concrete unsupported-version errors remain in IrisShaderPatch."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/util/RingUtil.java",
+      "upstream_change": "removed",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": "c8dc3b973268cc51eba0ab2caa18cf9b28b3df1ea3b5a83aafdff3baa7e25c79",
+      "reason": "Upstream renderer/resource API depends on GL buffers, occupancy, reverse-depth or software bakery; retained Metal backend requires a coherent later port."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/core/util/ScanMesher2D.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "7e078ae5ed25af53c763341414f1926d43fc28d0498a01a637738ff3a4d82853",
+      "adapted_sha256": "2320999534227131465e8737ee880a4452651b95bc7c87f03003300e03c67168",
+      "reason": "Upstream adds a private forwarding helper without a demonstrated behavior/performance benefit; retain existing working Metal mesher."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/iris/IrisShaderPatch.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "203a006aa39faab064ad5e0842f68adea7e0b39cd9f7dca09c6b7905b0f73e8d",
+      "adapted_sha256": "69e0cf684811ae9893324790eaefc371daf75683f2d84f6a83ca415a0bf2ca0f",
+      "reason": "Advertise/accept numeric contract 1 only; actual Complementary contract parsed and compiled. Contracts 2/3 deferred pending far-plane/depth adaptation."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/iris/IrisVoxyRenderPipelineData.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "7dfd82b3a49bc74f96b50fa935ff91a7ad667111b9072ff0a84c5379b6a1a7cf",
+      "adapted_sha256": "46aa1530404cf33d9387443352649db9797296b48e0567d4a5f97e29e59099a9",
+      "reason": "Replace all Metal-reachable vector/matrix direct-address writers with explicit std140-safe native writes; preserve live targets, sampler ordering and uniform callbacks. Newer contract data extensions deferred."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/iris/VoxySamplers.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "7d1790b443d91fa47601ae27590db24318edf4a0106959154c49c9b82c4354a8",
+      "adapted_sha256": "e8d5e616be8b00617b8e88493008da9b43ef403e3cdfc00438c2867df1102537",
+      "reason": "Upstream GL-only Iris/reverse-depth or contracts 2/3 path; Metal uses its separately prepared contract-1 material bridge."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/iris/VoxyUniforms.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "99ab7ddabcfd44e1e01d2a55ac2677782e6390fa729cc72931c178ec8232fb92",
+      "adapted_sha256": "5fc770c50284c41aa344651608512d02541d1c515c4774ef3b737e540172b1c4",
+      "reason": "Upstream GL-only Iris/reverse-depth or contracts 2/3 path; Metal uses its separately prepared contract-1 material bridge."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/iris/MixinIrisRenderingPipeline.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "60823c3dbd11dc26ac173b459b03297932983c8b48bcfaabb26f181161698585",
+      "adapted_sha256": "3bd407cabeba592dec7deab3d36fea524f9c10748dd7d4aa8a9a7641e8602822",
+      "reason": "Upstream GL-only Iris/reverse-depth or contracts 2/3 path; Metal uses its separately prepared contract-1 material bridge."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/iris/MixinLevelRenderer.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "25808aedccc0c5fa2c4bf67a4b19b37d26b4b0494b7fbbecfd5dae6e20027a11",
+      "adapted_sha256": null,
+      "reason": "Upstream GL-only Iris/reverse-depth or contracts 2/3 path; Metal uses its separately prepared contract-1 material bridge."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/iris/MixinPackRenderTargetDirectives.java",
+      "upstream_change": "removed",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": "30f5d43f4c839c51a5b48fcd79ac71e50948d253738bfb96b00ca144a7e0a416",
+      "reason": "Upstream GL-only Iris/reverse-depth or contracts 2/3 path; Metal uses its separately prepared contract-1 material bridge."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/iris/MixinStandardMacros.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "1aaf44c0bf61184dc8732efd3e6d21f0b7a28b2508a891a0ceab133a8fc67dee",
+      "adapted_sha256": "71ea08166b9bc0d5cb6ac505e502548b00199d1ae9f00cd6e23c23a7d13dae71",
+      "reason": "Advertise numeric VOXY 1 through Iris 1.10.7 macro API, without claiming contracts 2/3."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinClientChunkCache.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "c0324b2227848f3007b4fce6e6a2d9df1b76bedc80e91ddd6c16644401695cfe",
+      "adapted_sha256": "c0324b2227848f3007b4fce6e6a2d9df1b76bedc80e91ddd6c16644401695cfe",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinClientLevel.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "eed706e80118d3e2bdaca7aeb94754445d713b6d4aa1d99907087175e438ad08",
+      "adapted_sha256": "eed706e80118d3e2bdaca7aeb94754445d713b6d4aa1d99907087175e438ad08",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinClientPacketListener.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "29a1e44548e568250dce899376d80dfbae2938225462b0c079d1bc526d813384",
+      "adapted_sha256": "29a1e44548e568250dce899376d80dfbae2938225462b0c079d1bc526d813384",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinDebugScreenEntryList.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "425428863bba31fcc52e93377c4d736ea84ceb0ec5ae3dde1f4754024ffc1887",
+      "adapted_sha256": "9d5517511ab25e4663272e9b3954ddd93d007ec9ba62804887a7625b1c30f753",
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinFogRenderer.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "d08feb00e0fc4dbee1338c66b561274831d121a596e8c2ef543ea66f54838c83",
+      "adapted_sha256": "b71a04050c26e37e3607ad514ab581fe65ac213d3b6627d4a5b5f8521b6eae0a",
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinGPUSelect.java",
+      "upstream_change": "renamed",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "29022f41ddb64630dbd9b1e3c8661aa879a728def6aff3a5e66f4ba2b673fb10",
+      "adapted_sha256": null,
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinGlDebug.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "571fd963e1aa297ef2f6a63074f5af3065e78def56a420c6ab742eb650d5b441",
+      "adapted_sha256": "a468d32880507f4ebe3ce8ed7d9fc348c67d3e0da54f43d77aacf13e32559c57",
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinLayerLightSectionStorage.java",
+      "upstream_change": "removed",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": "db1ac259c7cf4219691f359841abf9615ee96246ce15457018ea332395802817",
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinLevelRenderer.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "b9016ecf196f871c589e4a9a4683ec16de8da292cafd67b176003dbd3bb03a2e",
+      "adapted_sha256": "d11d3503589da0bd4d3cb6a9cd2e2ddb2ba2bafcae0bad2b5644f1908e2a5a0e",
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/minecraft/MixinMinecraft.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "ec4189fd78e84ff5ab4fd486c99c2e4bd99f824cbd4570fc513d9c9bdd7db6cb",
+      "adapted_sha256": "ec4189fd78e84ff5ab4fd486c99c2e4bd99f824cbd4570fc513d9c9bdd7db6cb",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/nvidium/MixinRenderPipeline.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "88587e7078aa9a76b6932ae395840b89bdcf04b0b75d1ba38d96ffe69ddfc0fa",
+      "adapted_sha256": "54a88eca730c646a2915d381c332b3b43ada95023d0c4d9526a08a7bdf1258da",
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/sodium/MixinDefaultChunkRenderer.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "2e5af624d948205cf6107dfc9860895e41103e182e9a038a0e25c170c0cecca2",
+      "adapted_sha256": "35a234f0d9edafd527eba5c07c88ed70628ba935dcf1914bc4abee10b3b8cd60",
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/sodium/MixinRenderRegionManager.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "8e24c87932497444613613ad519ba53bc51ff1ab651222b152dc073940c30e27",
+      "adapted_sha256": "885a8ca041cd8903c4ca4799f5f2ee1fc096829bce6d5ab27e622ac4223bde3d",
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/sodium/MixinRenderSectionManager.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "a879a79c49a71d876db1a3600a15bd55b11a6d6c4e208740120aac7bd6f539a5",
+      "adapted_sha256": "d35edaae8b05899ecd778e057971b9cab0a41a7646fda5f3bad50fdb9212db27",
+      "reason": "Adapt unload-readiness principle from 9d355aa1636e57d5743984774c0fe08069c47daa to Sodium 0.8.11: publish after real setInfo on completed uploads, filter disposed/non-terrain, reject stale manager generation. Keep verified upload order.",
+      "adapted_fix_commits": [
+        "9d355aa1636e57d5743984774c0fe08069c47daa"
+      ]
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/client/mixin/sodium/MixinVideoSettingsScreen.java",
+      "upstream_change": "removed",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": "495cbf253e08b08cca3307c8116681cc66d258a674907571cd1a588136a4df95",
+      "reason": "Coupled to deferred GL renderer/configuration/debug APIs; retain existing compatible client hooks. Compatible session/chunk/coverage changes imported separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/DebugUtils.java",
+      "upstream_change": "added",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "965be814f3d57ef6d87db129572246291020dd982abb12bebb725119e345d5ee",
+      "adapted_sha256": "965be814f3d57ef6d87db129572246291020dd982abb12bebb725119e345d5ee",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/Logger.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "86d42f8b699a847d4284ef4a570814ff995ceb176437eee72b21c29ea6b6b5c0",
+      "adapted_sha256": "86d42f8b699a847d4284ef4a570814ff995ceb176437eee72b21c29ea6b6b5c0",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/StorageConfigUtil.java",
+      "upstream_change": "added",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "e0a08e529ecdc35eda4d58aca5ea14be959a17df615790d1dc2826f208322d8b",
+      "adapted_sha256": "2195fe418012ffb9699567311e9e5f270e1979d492d897323b0c721692efe16f",
+      "reason": "Import configuration/default-serializer extraction, adapted to preserve unknown settings and refuse overwriting malformed existing configuration."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/WorldConfigStorage.java",
+      "upstream_change": "added",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "55222135ac333bb250830a4691a32d21231f70189df936438c4c3d336caadd3a",
+      "adapted_sha256": null,
+      "reason": "Deferred upstream configuration redesign; existing world identity/path semantics preserved."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/ConfigBuildCtx.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "fb62ad86e68fe6ba18ce70b53295a4c966d57aec2864dfd13a3ef1b69c0a3ff3",
+      "adapted_sha256": "fb62ad86e68fe6ba18ce70b53295a4c966d57aec2864dfd13a3ef1b69c0a3ff3",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/IMappingStorage.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "1f08f856718cc7ac1641790e954a412d9bbd0d90caca70823541850b8cee40c1",
+      "adapted_sha256": "1f08f856718cc7ac1641790e954a412d9bbd0d90caca70823541850b8cee40c1",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/IStoredSectionPositionIterator.java",
+      "upstream_change": "added",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "6dbfeebc774186692aef2ed0e63e6d1ebe16ee3c3348793e3f9d15839f3ded85",
+      "adapted_sha256": "6dbfeebc774186692aef2ed0e63e6d1ebe16ee3c3348793e3f9d15839f3ded85",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/Serialization.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "faedc6bd8416160ae178134bea68aa5f6381a4b58c66aa7d511969cc89a8b5ce",
+      "adapted_sha256": "faedc6bd8416160ae178134bea68aa5f6381a4b58c66aa7d511969cc89a8b5ce",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/compressors/LZ4Compressor.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "2a710e9890387fd6f3560dbe7382316643f20e14ac7f757e02ce5db63995f9c7",
+      "adapted_sha256": "68f22efb454133d43d5c0d69710f3df3c0d9210d6c695aeb8596cc6a14886a5b",
+      "reason": "Use reusable independently owned compression/decompression buffers, validate decoded length and preserve existing framing."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/compressors/ZSTDCompressor.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "22b1069c43c02d56ae6e9d322b17c13088d73558bdc6fa3ed91eaf82abfceed8",
+      "adapted_sha256": "04a2d14ac6a87cb42e477eb35ee687d817d11eef9b8591a2f6241030aee512b0",
+      "reason": "Use reusable separate buffers, validate native errors/decoded bounds; preserve Apple input snapshot and existing frame format."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/section/SectionSerializationStorage.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "1c5980d629c46b75af566cb70dc4d2c9b9ca78c2c6661c8757b65418cdc82291",
+      "adapted_sha256": "1c5980d629c46b75af566cb70dc4d2c9b9ca78c2c6661c8757b65418cdc82291",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/section/SectionStorage.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "8b24177ce5fbb9919a07e697ade551c4d31b84fdbe0281a1db408c65830fbfbc",
+      "adapted_sha256": "8b24177ce5fbb9919a07e697ade551c4d31b84fdbe0281a1db408c65830fbfbc",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/storage/StorageBackend.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "72d25fddf51af80768d10b90c273291e53103c82dff2111eb568a080cc64918a",
+      "adapted_sha256": "72d25fddf51af80768d10b90c273291e53103c82dff2111eb568a080cc64918a",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/storage/inmemory/MemoryStorageBackend.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "d8804c51a5fe8b96b95c6f60d22a97bc0e903d4499bd499ed67fefedda5d9686",
+      "adapted_sha256": "d8804c51a5fe8b96b95c6f60d22a97bc0e903d4499bd499ed67fefedda5d9686",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/storage/lmdb/LMDBStorageBackend.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "e38fd16679f91cfcbcc5676f19de73978faf35241e9d7c98d38a9b58695508a7",
+      "adapted_sha256": "ba87bd0879122ddfac3d4c685a3d0e50af16fa7f5e19b1624c45e752aa2e8fd7",
+      "reason": "Import iterator/interface ownership updates while retaining MDB_NOSUBDIR and existing database paths/format."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/storage/other/CompressionStorageAdaptor.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "70f466329788c7c39e8dea1e70a0d622b062bfa1ee7dfd5f2f746cb1e697ab58",
+      "adapted_sha256": "70f466329788c7c39e8dea1e70a0d622b062bfa1ee7dfd5f2f746cb1e697ab58",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/storage/other/DelegatingStorageAdaptor.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "8264e88b5103c2f4534c5f6ee74de79462b2d41fd3008f7b83e5ce4791839717",
+      "adapted_sha256": "8264e88b5103c2f4534c5f6ee74de79462b2d41fd3008f7b83e5ce4791839717",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/storage/other/FragmentedStorageBackendAdaptor.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "862d72612448628723e0be80711d8715cb941da670fff7b30853c15dea81cc28",
+      "adapted_sha256": "862d72612448628723e0be80711d8715cb941da670fff7b30853c15dea81cc28",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/storage/other/ReadonlyCachingLayer.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "2f34f11cadce9773516a851222290b23d14474a1ae5737b357f297b21741fac9",
+      "adapted_sha256": "2f34f11cadce9773516a851222290b23d14474a1ae5737b357f297b21741fac9",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/storage/redis/RedisStorageBackend.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "220a656833bcf02f62b4a9d5b1a00ea8f1d14318e988ed624a30ee29cec69066",
+      "adapted_sha256": "220a656833bcf02f62b4a9d5b1a00ea8f1d14318e988ed624a30ee29cec69066",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/config/storage/rocksdb/RocksDBStorageBackend.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "c5761e881c404fe1b65d4ba46fb5261e4b3f674c6b7b4eadf78876a745cac0c6",
+      "adapted_sha256": "43375feae7233a2eab680a08c49ace7b4bf39cd3b2b3fd0d74921f1a973c3cb0",
+      "reason": "Import owned iterators; add constructor-failure cleanup and reverse-order native destruction including cache/filter dependencies. 10.2.1-created database reopened under 10.9.1 on ARM64."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/util/MessageQueue.java",
+      "upstream_change": "removed",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": null,
+      "reason": "Pinned retirement imported; no remaining production callers."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/util/MultiGson.java",
+      "upstream_change": "removed",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": "535b767520413db2fc9f31dfdbc288a4e7ba702c5da5011865a606121e7df455",
+      "reason": "Still used by retained legacy world/configuration paths; upstream retirement depends on deferred configuration redesign."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/util/ResizingThreadLocalMemoryBuffer.java",
+      "upstream_change": "added",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "42142a2d799fbd840fa25423328aa991928a22835464516ea52c6adef307a996",
+      "adapted_sha256": "42142a2d799fbd840fa25423328aa991928a22835464516ea52c6adef307a996",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/util/ThreadUtils.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "275a9ee054ce6fd66f1407bef1add482c4fa853a33b7022ac47649d5bcb895cd",
+      "adapted_sha256": "275a9ee054ce6fd66f1407bef1add482c4fa853a33b7022ac47649d5bcb895cd",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/util/UnsafeUtil.java",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "a339651fa449d4d5dac97bfc9b01b7101641c8aea3272354273e360a96f1a8eb",
+      "adapted_sha256": "6221dfd4d93850ede6108ab8f205878dc0213289cb129d4747ab0380698b009b",
+      "reason": "Fork backend uses existing native-memory ownership; upstream cleanup is coupled to replaced renderer/resource code. Metal JOML direct-address calls removed separately."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/util/cpu/CpuLayout.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "becfc986de1f6e2e738449c5226e74422917b6a87c726ddd747bc9fe928bb064",
+      "adapted_sha256": "becfc986de1f6e2e738449c5226e74422917b6a87c726ddd747bc9fe928bb064",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/voxelization/WorldConversionFactory.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "0c3011e2939ef20a7304060fe06a689f836050889789e9cbf0d9a987ae8f6dcf",
+      "adapted_sha256": "b7c9028c80230db7d57a44407eb8d436ae738602ff987400a4537b93aff18950",
+      "reason": "Delegate shared mip work while retaining fork conversion/biome logic; incomplete upstream biome-zoom conversion deferred."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/voxelization/WorldVoxilizedSectionMipper.java",
+      "upstream_change": "added",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "b1575ac6cb9cd0322ce8735837aff71675f9b8046157fc9233249da9338af5ca",
+      "adapted_sha256": "b1575ac6cb9cd0322ce8735837aff71675f9b8046157fc9233249da9338af5ca",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/world/ActiveSectionTracker.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "8222f78061c4b14f943076d0db20c603e96b989fdbf56f006bd0bad5bae8e6e4",
+      "adapted_sha256": "e1283f68fda72778e855b1d7eb8da99ca82d4677c40a22c393c784a9abe592ec",
+      "reason": "Import save/unload synchronization; adapt refused-save retry to retain dirty cache ownership without recursive release/stack overflow."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/world/LoadedPositionTracker.java",
+      "upstream_change": "removed",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": null,
+      "reason": "Pinned retirement imported; no remaining production callers."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/world/SaveLoadSystem.java",
+      "upstream_change": "removed",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": null,
+      "reason": "Pinned retirement imported; no remaining production callers."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/world/SaveLoadSystem2.java",
+      "upstream_change": "removed",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": null,
+      "reason": "Pinned retirement imported; no remaining production callers."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/world/SaveLoadSystem3.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "ef1a5bb911b8ccd87100872cac6d068590e918b3f73d97f61bec2cb0d2c7ee6b",
+      "adapted_sha256": "ef1a5bb911b8ccd87100872cac6d068590e918b3f73d97f61bec2cb0d2c7ee6b",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/world/WorldEngine.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "fe848e78f7a6c3ecd773a2b4bd4da4cf6962deb8a82a56c88dbdb13aa3d75feb",
+      "adapted_sha256": "fe848e78f7a6c3ecd773a2b4bd4da4cf6962deb8a82a56c88dbdb13aa3d75feb",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/world/WorldSection.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "903dd27f6ac37c74591ff5441c8462f18aafa8c3f6b917b84a6e362b320f2107",
+      "adapted_sha256": "903dd27f6ac37c74591ff5441c8462f18aafa8c3f6b917b84a6e362b320f2107",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/world/WorldUpdater.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "bdc5ae677cb4ee39caae42ee532c3d2bdeb0119051c39e1d8f4a61251ff9c8c4",
+      "adapted_sha256": "bdc5ae677cb4ee39caae42ee532c3d2bdeb0119051c39e1d8f4a61251ff9c8c4",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/world/other/Mapper.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "287674e9eeeaa6ea6009db88f51a04776a2c54f3e70aaa1719d69741091bf8e6",
+      "adapted_sha256": "287674e9eeeaa6ea6009db88f51a04776a2c54f3e70aaa1719d69741091bf8e6",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/world/other/Mipper.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "f7e9bcfe37f9de056b3fcbf4c4c6a9e51e71f03be4cc53b48710e7e32b35875e",
+      "adapted_sha256": "cbc0bab3eda1a0e81e9ef8d9e243b50e891a84d402c00a4cd1461238e67be9fa",
+      "reason": "Correct block-light high-nibble packing, preserving sky-light nibble and section layout; applies to newly generated data only."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/world/service/SectionSavingService.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "80a80c7d5651f49d330b36d31354c4c17694a10cea5eeb67ce3f0b965c62e2c6",
+      "adapted_sha256": "80a80c7d5651f49d330b36d31354c4c17694a10cea5eeb67ce3f0b965c62e2c6",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/common/world/service/VoxelIngestService.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "a56ff88e0409259650abf2ebaf50a43fbe9ebc3e4d0b5086bd85c44be0230d47",
+      "adapted_sha256": "9bdec37cc470e720ab883442701f173d3bc999a2deb4a169ade894559bf1efcb",
+      "reason": "Use shared mip helper and reusable voxelized-section work; preserve diagnostics and ingestion coordinates/layout."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/commonImpl/VoxyCommon.java",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "e3083990329f36849c08038fd75bb89d1091609fe61c3684452937b174ef3ccb",
+      "adapted_sha256": "d4aa63c3b352440caf48d6f0e47404fdd0efe93a4ea39cf668b36212cb131077",
+      "reason": "Preserve common initialization and factory contracts; log unique label/source digest/origin/loaded-JAR checksum at startup."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/commonImpl/VoxyInstance.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "5d3d58dc5109f257c2cc003c91281fcb163e9694b2f5d3a44c7cd1bbbcea221c",
+      "adapted_sha256": "5d3d58dc5109f257c2cc003c91281fcb163e9694b2f5d3a44c7cd1bbbcea221c",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/commonImpl/WorldIdentifier.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "33dd11701a80befa3324d02a22b89bceb88fa2217d6c508420cfe3bbdfebcdb5",
+      "adapted_sha256": "33dd11701a80befa3324d02a22b89bceb88fa2217d6c508420cfe3bbdfebcdb5",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/commonImpl/configuration/VoxyConfigStore.java",
+      "upstream_change": "removed",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": "6e643bf483e00c859c85e0f81f2456be8d0298a3d507c03ffa7b857d8e575e5a",
+      "reason": "Retain existing world/config storage contracts; upstream configuration redesign is outside compatible renderer/data-format scope."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/commonImpl/importers/DHImporter.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "2fce69141367f14c90d76719acce52d4ff1cd82113efe9b397a6a7d05250c790",
+      "adapted_sha256": "2fce69141367f14c90d76719acce52d4ff1cd82113efe9b397a6a7d05250c790",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/java/me/cortex/voxy/commonImpl/importers/WorldImporter.java",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "2f5b5fd3249d64cbc0022a644cc1dd96651610f499f37ea377c70ae00169b978",
+      "adapted_sha256": "2f5b5fd3249d64cbc0022a644cc1dd96651610f499f37ea377c70ae00169b978",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/lang/en_us.json",
+      "upstream_change": "modified",
+      "status": "imported",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "a406111d0e6e8331210789e65e5a676c34ec74766d72f4fc0b23b8367cde7bc3",
+      "adapted_sha256": "a406111d0e6e8331210789e65e5a676c34ec74766d72f4fc0b23b8367cde7bc3",
+      "reason": "Pinned compatible implementation copied exactly."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/bakery/buffercopy.comp",
+      "upstream_change": "removed",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": "628e5916fbbc7ed80a093179c01daf5ae12fb2cd00e07582bdd5ca43d4d1357a",
+      "reason": "Coupled to upstream software bakery/model-atlas replacement; retain the working Metal bakery and atlas layout."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/bakery/bufferreorder.comp",
+      "upstream_change": "removed",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": "e9fdd6fdc36962005a6101d3753a7145566ffdb1821d7bb663d12bea88e04de1",
+      "reason": "Coupled to upstream software bakery/model-atlas replacement; retain the working Metal bakery and atlas layout."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/bakery/position_tex.fsh",
+      "upstream_change": "removed",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": "b73c2ddda3fce4563814a238cb4e42cb49151d9a889e5a9c626df4bc23fa9537",
+      "reason": "Coupled to upstream software bakery/model-atlas replacement; retain the working Metal bakery and atlas layout."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/bakery/position_tex.vsh",
+      "upstream_change": "removed",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": null,
+      "adapted_sha256": "9d1b0ea55533221c6b1f5fdd8b0f126ed9c35af1d001f132e4c87566cf0f33d1",
+      "reason": "Coupled to upstream software bakery/model-atlas replacement; retain the working Metal bakery and atlas layout."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/chunkoutline/outline.vsh",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "15190cf01d327115898c1c737a87945ef8ea9f6670fc8417f84daad1422b1d67",
+      "adapted_sha256": "762428cf8c73d135dee8c5f6065a1d117312b0bbc820ec63793048017815797b",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/hiz/blit.fsh",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "ed556a64f1c603c2de585570a9056ff0d1f4b73c43cb7603d4e56a6e43f7fe87",
+      "adapted_sha256": "12b4052536b7b8fcc801c256b9ffc6fb6abe3baa5099aec1cfb7a7b9176b8e0d",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/hiz/blit.vsh",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "54e4e2f6701a5e602acd64bae50869cfad3f78ea29263147e815c8cf353a852d",
+      "adapted_sha256": "28cbcc56ebcdb8e319ba7b592542b367c2b95ff4913a2758bf634d7c873046f4",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/lod/gl46/bindings.glsl",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "04727dcdf7a2fb6eab8a90109f4dd01eac17054bb4d65ab4902754d86abd6ae5",
+      "adapted_sha256": "354fdb4da4ce67989d45a534e9841b3629844833792427e07bae35ca8527888b",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/lod/gl46/cull/raster.vert",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "7a44844d049f07a5db19b97d2063145aa87be51ccdbe4fa548143b8354a4da07",
+      "adapted_sha256": "be86d8be41b14ef3a270af9c37ad280a127b5174c88edddc5addf81c9b3e159c",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/lod/gl46/quads.frag",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "b43223a6efedc8b301b10c3b489ab76e2ae0a851f6a6b183589ef9952e9761c5",
+      "adapted_sha256": "7354f24859e8255a86bfad9a229a10cfdaff434cc90d192a2af11bec43bc9cc3",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/lod/gl46/quads3.vert",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "544669db1d715bd048fdece7783d321a0b30939a72acaee04a4b2f2c10327272",
+      "adapted_sha256": "4e9ddfdfd481f20b378d797ce7ef34c0ab4d4a81f037f1f1c12d309d4dcda511",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/lod/hierarchical/node.glsl",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "464e3ec25280ad05cf19068eb378961ef2d9c95eb019046bb8c2f024a331e403",
+      "adapted_sha256": "a390f375ae1160d39562c8d04df10f115884371e357d780ee3bab855e5900472",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/lod/hierarchical/screenspace.glsl",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "371676aa891a5a4876f5db1a75905da041cfdd3b88a6caaa795f154d793c8a54",
+      "adapted_sha256": "adb42cbb19b1cabf134aeecb7dab534f313aa38cf70952a64bf1f7cea891aad4",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/lod/hierarchical/traversal_dev.comp",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "272fba6e1e623a395342be1f418200d0e896fdab78776205064c79cebdf3c67c",
+      "adapted_sha256": "65d7426475d6a525ba0c57022a2741cc192ab6d419c13248ac7db15d89750052",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/lod/lighting.glsl",
+      "upstream_change": "added",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "631879b3e340f173da9897ae9ff66fd8ad231471b85c84d4f6b2a9097b7439a3",
+      "adapted_sha256": null,
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/lod/pos_util.glsl",
+      "upstream_change": "added",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "a444b9cd0fee530f9c35657d20fe2ec8dbe3d58fec082f12977529c3c4ca53be",
+      "adapted_sha256": null,
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/lod/quad_format.glsl",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "26f4dc6e0bba703ae3424ff2ba3d0dee94199b0df0c24908e44e8c4d18b12a11",
+      "adapted_sha256": "417548dc1ef4ff0cee7e68f5c1b81016baf5d70d0c6842c592afae7282f2605a",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/lod/quad_util.glsl",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "0a02b19acea47ea9f66e52d7fc4b5f9f109796510a1ec8d0f15394a727c664f5",
+      "adapted_sha256": "e9cae6302276083bf4e50e84903305b3034143722c136878d8f0106cb6621b25",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/lod/section.glsl",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "3403c36c45b0929f9f9dc7293b3bdef688ff384985622e8994a5af8d1103d762",
+      "adapted_sha256": "9625849365986df13cf33091e26976081cdf69c202d6c106ff70f660af21b11c",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/post/blit_texture_depth_cutout.frag",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "2ce275e509a87fea46717bdcaff85305fce23394d212b4542eff38c89f49b1de",
+      "adapted_sha256": "5e9846641da19c4685d6c2427e0cbd7925a1fd95111a175ed74ca184da65fd3b",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/post/depth0.frag",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "c14ce471bdf6f31800985c30ca360a45d45f306120ee02593369802f4f1599ed",
+      "adapted_sha256": "8b1ef4af1cef05d88f2c4aa62bc6260eca9e681a240e6de8f02cd2a84aa34897",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/post/fullscreen.vert",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "660690b040a99b2a2c62a88a9bf151502cddcc52ec4af280d70ab23a5c41a46c",
+      "adapted_sha256": "e6a72a0744f78bb3e53fbc410c3462c7e418f1149174e4f98e482b057791462b",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/post/fullscreen2.vert",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "98e956ea7650d8fb894388e40fe7ef1fbff440ff230ca5562740e467b1540bec",
+      "adapted_sha256": "c6255761817e4435e7d210bc1bac1b707176021f77247341b61875e9cd099582",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/post/setup_stencil_depth.frag",
+      "upstream_change": "added",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "d46b4dc0ca1053777bbbe66566342f633b684604991caeaace361ba8c7cdd59c",
+      "adapted_sha256": null,
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/post/ssao.comp",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "32779f85964fcdc8b4b5bd040d19078b6df1be3b6dabc1088c9a42413db7eb45",
+      "adapted_sha256": "a04abc6b7ac60b3a672ce5c066c8acfa5b5d914e847cc4d3843095b631a1944d",
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/assets/voxy/shaders/util/depthutils.glsl",
+      "upstream_change": "added",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "446e13b7d978f339576bdc8e2dd68235024d17effea9ea36461494bd1a6c9f1d",
+      "adapted_sha256": null,
+      "reason": "Coupled to upstream reverse-depth, occupancy/SSAO or contracts 2/3; retain coherent current Metal Java/shader bindings and depth convention."
+    },
+    {
+      "file": "src/main/resources/client.voxy.mixins.json",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "2696df68fe07141af4690ae5aca0e78b806b888436b1e12dc941be2b82490b56",
+      "adapted_sha256": "9cc12b840fd962e0ac7e4cc850e40879687523143dbee1f9ea3a1c258d6f2974",
+      "reason": "Keep required fork Metal and Sodium 0.8.11 hooks/access; upstream manifest drops/replaces hooks for deferred renderer changes."
+    },
+    {
+      "file": "src/main/resources/common.voxy.mixins.json",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "f9b44be7c07d23e728df8bc8a4cceb95d4b2d6746f825c44a98eecdf64854037",
+      "adapted_sha256": "4e45a16659be95b3599f9f98241b5e1f552a0e02c571f8476d7b15bb6eac6d87",
+      "reason": "Keep required fork Metal and Sodium 0.8.11 hooks/access; upstream manifest drops/replaces hooks for deferred renderer changes."
+    },
+    {
+      "file": "src/main/resources/fabric.mod.json",
+      "upstream_change": "modified",
+      "status": "adapted",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "bdd3239f9c8e51be68079bf62755358485f31ffca003e50bbc566e4a59ef57d1",
+      "adapted_sha256": "b704d0e7b6cb08ccf294479a7e509c048944e21382349ed1fc6b57052bac503c",
+      "reason": "Keep Sodium 0.8.11 and existing Apple dependencies; package unique build identity. Full upstream dependency/API requirements are excluded."
+    },
+    {
+      "file": "src/main/resources/voxy.accesswidener",
+      "upstream_change": "modified",
+      "status": "deferred",
+      "source_commit": "59b62bee821518e06612e1d5c2c58c487bda761d",
+      "upstream_sha256": "68a34ebbec05f690b99526eb99f2a7136777a6a095575a942f9c59a2a5667a2d",
+      "adapted_sha256": "f812197cc098dc9d432acaac0bafdf42094c1c990481a9fff33dd3849b81e41d",
+      "reason": "Keep required fork Metal and Sodium 0.8.11 hooks/access; upstream manifest drops/replaces hooks for deferred renderer changes."
+    }
+  ],
+  "adapted_hash_scope": "Current publication snapshot; subsequent local rendering repairs are included in adapted hashes. Exact imports match the pinned upstream bytes."
+}

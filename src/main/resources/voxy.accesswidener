@@ -24,6 +24,12 @@ accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimatedTe
 accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimatedTexture frameRowSize I
 accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimatedTexture interpolateFrames Z
 
+accessible class net/minecraft/client/renderer/texture/SpriteContents$AnimationState
+accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimationState frame I
+accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimationState subFrame I
+accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimationState animationInfo Lnet/minecraft/client/renderer/texture/SpriteContents$AnimatedTexture;
+accessible field net/minecraft/client/renderer/texture/TextureAtlas animatedTexturesStates Ljava/util/List;
+
 accessible method net/minecraft/client/renderer/GameRenderer getFov (Lnet/minecraft/client/Camera;FZ)F
 
 accessible method net/minecraft/client/multiplayer/ClientChunkCache$Storage getChunk (I)Lnet/minecraft/world/level/chunk/LevelChunk;

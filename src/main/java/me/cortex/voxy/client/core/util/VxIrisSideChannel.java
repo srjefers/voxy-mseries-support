@@ -64,7 +64,7 @@ public final class VxIrisSideChannel {
     private int fboTrans;
     private int program;
     private int vao;
-    private int uColour, uDepth, uDepthIsWindow;
+    private int uColour, uDepth, uDepthIsWindow, uRequireColourCoverage;
     // Abyss-fill depth pass (0 = unbuilt, -1 = build failed once, stay off).
     private int abyssProgram;
     private int aUColour, aUDepth, aUTransDepth, aUDepthIsWindow;
@@ -172,24 +172,25 @@ public final class VxIrisSideChannel {
             this.broken = true;
             return false;
         }
-        return this.resolveInto(this.fboOpaque, colourRectTex, depthRectTex, fbw, fbh, depthIsWindow);
+        return this.resolveInto(this.fboOpaque, colourRectTex, depthRectTex, fbw, fbh, depthIsWindow, true);
     }
 
     /**
      * Phase D: decode the TRANSLUCENT depth bridge into vxDepthTexTrans.
-     * Same decode/gates; gating alpha comes from the translucent colour
-     * bridge (premultiplied accumulation — water alpha well above the
-     * threshold). Creates the translucent target lazily on first use.
+     * This bridge already contains the opaque depth wherever water did not
+     * replace it. Keep that depth even when the translucent colour is clear:
+     * packs use vxDepthTexTrans to shade all LOD terrain, not only water.
      */
     public boolean resolveTrans(int transColourRectTex, int transDepthRectTex, int fbw, int fbh, boolean depthIsWindow) {
         if (this.broken) return false;
         if (!this.ensureTransResources(fbw, fbh)) {
             return false;
         }
-        return this.resolveInto(this.fboTrans, transColourRectTex, transDepthRectTex, fbw, fbh, depthIsWindow);
+        return this.resolveInto(this.fboTrans, transColourRectTex, transDepthRectTex, fbw, fbh, depthIsWindow, false);
     }
 
-    private boolean resolveInto(int targetFbo, int colourRectTex, int depthRectTex, int fbw, int fbh, boolean depthIsWindow) {
+    private boolean resolveInto(int targetFbo, int colourRectTex, int depthRectTex, int fbw, int fbh,
+                                boolean depthIsWindow, boolean requireColourCoverage) {
 
         int prevDrawFb = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
         int prevReadFb = glGetInteger(GL_READ_FRAMEBUFFER_BINDING);
@@ -201,6 +202,7 @@ public final class VxIrisSideChannel {
         boolean prevDepthTest = glIsEnabled(GL_DEPTH_TEST);
         int prevDepthFunc = glGetInteger(GL_DEPTH_FUNC);
         boolean prevDepthMask = glGetBoolean(GL_DEPTH_WRITEMASK);
+        double prevClearDepth = glGetDouble(GL_DEPTH_CLEAR_VALUE);
         boolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
         glActiveTexture(GL_TEXTURE1);
         int prevTexRect1 = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
@@ -231,6 +233,7 @@ public final class VxIrisSideChannel {
             glUniform1i(this.uColour, 0);
             glUniform1i(this.uDepth, 1);
             glUniform1i(this.uDepthIsWindow, depthIsWindow ? 1 : 0);
+            glUniform1i(this.uRequireColourCoverage, requireColourCoverage ? 1 : 0);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             return true;
         } finally {
@@ -245,6 +248,7 @@ public final class VxIrisSideChannel {
             if (prevDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
             glDepthFunc(prevDepthFunc);
             glDepthMask(prevDepthMask);
+            glClearDepth(prevClearDepth);
             if (prevScissor) glEnable(GL_SCISSOR_TEST);
             glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFb);
@@ -576,6 +580,7 @@ public final class VxIrisSideChannel {
                 uniform sampler2DRect uColour;
                 uniform sampler2DRect uDepth;
                 uniform int uDepthIsWindow;
+                uniform int uRequireColourCoverage;
                 in vec2 vUV;
                 void main() {
                     // Bridge contents are Metal top-left origin; GL FBO output
@@ -587,7 +592,7 @@ public final class VxIrisSideChannel {
                     float a = texture(uColour, texel).a;
                     vec3 dEnc = texture(uDepth, texel).rgb;
                     float d = dot(dEnc, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
-                    if (a <= 0.001 || d <= 0.0 || d >= 0.9999999) discard;
+                    if ((uRequireColourCoverage == 1 && a <= 0.001) || d <= 0.0 || d >= 0.9999999) discard;
                     gl_FragDepth = (uDepthIsWindow == 1) ? d : d * 0.5 + 0.5;
                 }
                 """;
@@ -596,6 +601,7 @@ public final class VxIrisSideChannel {
         this.uColour = glGetUniformLocation(this.program, "uColour");
         this.uDepth = glGetUniformLocation(this.program, "uDepth");
         this.uDepthIsWindow = glGetUniformLocation(this.program, "uDepthIsWindow");
+        this.uRequireColourCoverage = glGetUniformLocation(this.program, "uRequireColourCoverage");
         this.vao = glGenVertexArrays();
         return this.vao != 0;
     }

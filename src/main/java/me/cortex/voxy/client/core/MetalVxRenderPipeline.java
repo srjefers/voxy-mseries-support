@@ -9,32 +9,47 @@ import net.irisshaders.iris.shaderpack.materialmap.WorldRenderingSettings;
 
 import java.util.function.BooleanSupplier;
 
-/**
- * Phase C (issue #11): Metal-side native vx contract pipeline. The Metal LOD
- * pass renders a 3-plane material g-buffer (enabled via {@link #vxMaterialMode()}
- * → MDICSectionRenderer's PATCHED_SHADER + {@code MetalVxGbufferEmitter}
- * pipelines) which a GL-side resolve ({@code MetalVxResolvePass}, increment 5)
- * shades with the pack's real {@code voxy_opaque}/{@code voxy_translucent}.
- *
- * Selected by {@link RenderPipelineFactory} when Metal + Iris + a voxy.json
- * pack are all active (default ON since 2026-07-03 — the flat passthrough left
- * LOD water vanilla-blue under packs); {@code VOXY_VX_MATERIAL=0} is the kill
- * switch that falls back to {@link NormalRenderPipeline} (flat Phase D-lite
- * water) unchanged.
- *
- * Extends NormalRenderPipeline so it inherits the Metal render path
- * ({@code runPipelineMetal}) and the pack-aware {@code useEnvFog()=false}; it only
- * flips on the material g-buffer mode and supplies the pack's block→customId
- * mapping + the contract data the GL resolve needs.
+/** Metal material owner: both contract layers resolve through the pack's actual programs.
+ * Policy and Iris generation are fixed until renderer replacement; incomplete frames are skipped.
  */
 public class MetalVxRenderPipeline extends NormalRenderPipeline {
     private final IrisVoxyRenderPipelineData pipelineData;
+    private final MetalMaterialUniforms uniforms;
+    private final MetalMaterialPolicy policy;
+    private final MaterialFrameState frames;
+    private boolean warnedIncomplete;
 
     public MetalVxRenderPipeline(IrisVoxyRenderPipelineData data,
                                  AsyncNodeManager nodeManager, NodeCleaner nodeCleaner,
                                  HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier) {
         super(nodeManager, nodeCleaner, traversal, frexSupplier);
+        this.policy=MetalMaterialPolicy.select(Boolean.getBoolean("voxy.bslCompatibility"),super.vxOpaqueMaterialMode());
+        this.frames=new MaterialFrameState(net.irisshaders.iris.Iris.getPipelineManager().getPipelineNullable());
         this.pipelineData = data;
+        this.uniforms = new MetalMaterialUniforms(data, me.cortex.voxy.client.core.gpu.RenderBackendFactory.get());
+    }
+
+    @Override public void preSetup(me.cortex.voxy.client.core.rendering.Viewport<?> viewport) {
+        this.uniforms.capture(WorldFrameCapture.frame());
+    }
+
+    @Override public void bindUniforms(me.cortex.voxy.client.core.gpu.RenderEncoder encoder) {
+        this.uniforms.bind(encoder);
+    }
+
+    @Override public String taaFunction(String name) {
+        return this.taaFunction(MetalMaterialUniforms.BINDING, name);
+    }
+
+    @Override public String taaFunction(int binding, String name) {
+        return MetalMaterialUniforms.taa(this.pipelineData, binding, name);
+    }
+
+    @Override protected void free0() {
+        try {
+            this.uniforms.close();
+            me.cortex.voxy.client.core.util.MetalVxResolvePass.reset();
+        } finally { super.free0(); }
     }
 
     @Override
@@ -42,17 +57,46 @@ public class MetalVxRenderPipeline extends NormalRenderPipeline {
         return true;
     }
 
+    @Override
+    public boolean vxOpaqueMaterialMode() {
+        // Contract 1 shades both layers. The legacy BSL split remains an explicit opt-in.
+        return this.policy.opaque();
+    }
+
+    @Override public MetalMaterialPolicy materialPolicy() { return this.policy; }
+
+    public boolean beginMaterialFrame() {
+        return this.frames.begin(net.irisshaders.iris.Iris.getPipelineManager().getPipelineNullable(),
+                net.irisshaders.iris.uniforms.SystemTimeUniforms.COUNTER.getAsInt(),
+                me.cortex.voxy.client.core.util.IrisUtil.shadowsBeingRendered());
+    }
+    public void publishMaterialFrame() {
+        this.frames.publish(net.irisshaders.iris.uniforms.SystemTimeUniforms.COUNTER.getAsInt());
+    }
+    public void resolveMaterialFrame(me.cortex.voxy.client.core.rendering.Viewport<?> viewport) {
+        var iris=net.irisshaders.iris.Iris.getPipelineManager().getPipelineNullable();
+        if (this.frames.consume(iris,net.irisshaders.iris.uniforms.SystemTimeUniforms.COUNTER.getAsInt())
+                && iris instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline pipeline) {
+            if (!MetalMaterialCompositor.resolve(this,pipeline,viewport) && !this.warnedIncomplete) {
+                this.warnedIncomplete=true;
+                me.cortex.voxy.common.Logger.warn("Material frame skipped: incomplete Metal bridge binding. The renderer will retry on the next frame.");
+            }
+        }
+    }
+
     /**
      * Mirror the GL Iris path (IrisVoxyRenderPipeline.setupExtraModelBakeryData):
      * feed the pack's block→customId mapping to the bakery so the material
-     * g-buffer's misc plane carries the pack's block ids (BSL water = 20000).
+     * g-buffer's misc plane carries the pack's block IDs.
      */
     @Override
     public void setupExtraModelBakeryData(ModelBakerySubsystem modelService) {
         modelService.factory.setCustomBlockStateMapping(WorldRenderingSettings.INSTANCE.getBlockStateIds());
     }
 
-    /** The pack contract data, consumed by the GL resolve pass (increment 5). */
+    public long materialUniformPointer() { return this.uniforms.pointer(); }
+
+    /** Pack programs, targets, uniforms and blend state for the GL material resolve. */
     public IrisVoxyRenderPipelineData getPipelineData() {
         return this.pipelineData;
     }

@@ -12,7 +12,6 @@ import org.rocksdb.*;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.function.LongConsumer;
 
@@ -23,113 +22,97 @@ public class RocksDBStorageBackend extends StorageBackend {
     private final ReadOptions sectionReadOps;
     private final WriteOptions sectionWriteOps;
 
-    //NOTE: closes in order
+    // Registered immediately; reverse allocation order releases dependants before owners.
     private final List<AbstractImmutableNativeReference> closeList = new ArrayList<>();
+    private boolean closed;
+
+    private <T extends AbstractImmutableNativeReference> T own(T resource) {
+        this.closeList.add(resource);
+        return resource;
+    }
 
     public RocksDBStorageBackend(String path) {
-        /*
-        var lockPath = new File(path).toPath().resolve("LOCK");
-        if (Files.exists(lockPath)) {
-            System.err.println("WARNING, deleting rocksdb LOCK file");
-            int attempts = 10;
-            while (attempts-- != 0) {
-                try {
-                    Files.delete(lockPath);
-                    break;
-                } catch (IOException e) {
-                    try {
-                        Thread.sleep(1000);
-                    } catch (InterruptedException ex) {
-                        throw new RuntimeException(ex);
-                    }
-                }
-            }
-            if (Files.exists(lockPath)) {
-                throw new RuntimeException("Unable to delete rocksdb lock file");
-            }
-        }
-         */
         RocksDB.loadLibrary();
-
-        //TODO: FIXME: DONT USE THE SAME options PER COLUMN FAMILY
-        final ColumnFamilyOptions cfOpts = new ColumnFamilyOptions()
-                .setCompressionType(CompressionType.ZSTD_COMPRESSION)
-                .optimizeForSmallDb();
-
-        final ColumnFamilyOptions cfWorldSecOpts = new ColumnFamilyOptions()
-                .setCompressionType(CompressionType.NO_COMPRESSION)
-                .setCompactionPriority(CompactionPriority.MinOverlappingRatio)
-                .setLevelCompactionDynamicLevelBytes(true)
-                .optimizeForPointLookup(128);
-
-        var bCache = new HyperClockCache(128*1024L*1024L,0, 4, false);
-        var filter = new BloomFilter(10);
-        cfWorldSecOpts.setTableFormatConfig(new BlockBasedTableConfig()
-                .setCacheIndexAndFilterBlocksWithHighPriority(true)
-                .setBlockCache(bCache)
-                .setDataBlockHashTableUtilRatio(0.75)
-                //.setIndexType(IndexType.kHashSearch)//Maybe?
-                .setDataBlockIndexType(DataBlockIndexType.kDataBlockBinaryAndHash)
-                .setFilterPolicy(filter)
-        );
-
-        final List<ColumnFamilyDescriptor> cfDescriptors = Arrays.asList(
-            new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, cfOpts),
-            new ColumnFamilyDescriptor("world_sections".getBytes(), cfWorldSecOpts),
-            new ColumnFamilyDescriptor("id_mappings".getBytes(), cfOpts)
-        );
-
-        final DBOptions options = new DBOptions()
-                //.setUnorderedWrite(true)
-                .setAvoidUnnecessaryBlockingIO(true)
-                .setIncreaseParallelism(2)
-                .setCreateIfMissing(true)
-                .setCreateMissingColumnFamilies(true)
-                .setMaxTotalWalSize(1024*1024*128);//128 mb max WAL size
-
         List<ColumnFamilyHandle> handles = new ArrayList<>();
-
         try {
-            this.db = RocksDB.open(options,
-                    path, cfDescriptors,
-                    handles);
-
-            this.sectionReadOps = new ReadOptions();
-            this.sectionWriteOps = new WriteOptions();
-
-            this.closeList.addAll(handles);
-            this.closeList.add(this.db);
-            this.closeList.add(options);
-            this.closeList.add(cfOpts);
-            this.closeList.add(cfWorldSecOpts);
-            this.closeList.add(this.sectionReadOps);
-            this.closeList.add(this.sectionWriteOps);
-            this.closeList.add(filter);
-            this.closeList.add(bCache);
-
+            var cache = own(new HyperClockCache(128*1024L*1024L, 0, 4, false));
+            var filter = own(new BloomFilter(10));
+            var cfOpts = own(new ColumnFamilyOptions())
+                    .setCompressionType(CompressionType.ZSTD_COMPRESSION).optimizeForSmallDb();
+            var cfWorldSecOpts = own(new ColumnFamilyOptions())
+                    .setCompressionType(CompressionType.NO_COMPRESSION)
+                    .setCompactionPriority(CompactionPriority.MinOverlappingRatio)
+                    .setLevelCompactionDynamicLevelBytes(true).optimizeForPointLookup(128);
+            cfWorldSecOpts.setTableFormatConfig(new BlockBasedTableConfig()
+                    .setCacheIndexAndFilterBlocksWithHighPriority(true).setBlockCache(cache)
+                    .setDataBlockHashTableUtilRatio(0.75)
+                    .setDataBlockIndexType(DataBlockIndexType.kDataBlockBinaryAndHash).setFilterPolicy(filter));
+            var descriptors = List.of(
+                    new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, cfOpts),
+                    new ColumnFamilyDescriptor("world_sections".getBytes(java.nio.charset.StandardCharsets.UTF_8), cfWorldSecOpts),
+                    new ColumnFamilyDescriptor("id_mappings".getBytes(java.nio.charset.StandardCharsets.UTF_8), cfOpts));
+            var options = own(new DBOptions()).setAvoidUnnecessaryBlockingIO(true)
+                    .setIncreaseParallelism(2).setCreateIfMissing(true).setCreateMissingColumnFamilies(true)
+                    .setMaxTotalWalSize(1024L*1024*128);
+            try {
+                this.db = own(RocksDB.open(options, path, descriptors, handles));
+            } finally {
+                // An unsuccessful native open may still have allocated column-family handles.
+                this.closeList.addAll(handles);
+            }
+            this.sectionReadOps = own(new ReadOptions());
+            this.sectionWriteOps = own(new WriteOptions());
             this.worldSections = handles.get(1);
             this.idMappings = handles.get(2);
-
             this.db.flushWal(true);
-        } catch (RocksDBException e) {
-            throw new RuntimeException(e);
+        } catch (Throwable failure) {
+            closeOwned(failure);
+            if (failure instanceof Error error) throw error;
+            throw new RuntimeException("Could not open Voxy RocksDB storage at " + path, failure);
         }
     }
 
-    @Override
-    public void iterateStoredSectionPositions(LongConsumer consumer) {
-        try (var stack = MemoryStack.stackPush()) {
-            ByteBuffer keyBuff = stack.calloc(8);
-            long keyBuffPtr = MemoryUtil.memAddress(keyBuff);
-            var iter = this.db.newIterator(this.worldSections, this.sectionReadOps);
-            iter.seekToFirst();
-            while (iter.isValid()) {
-                iter.key(keyBuff);
-                long key = Long.reverseBytes(MemoryUtil.memGetLong(keyBuffPtr));
-                consumer.accept(key);
-                iter.next();
+    private Throwable closeOwned(Throwable failure) {
+        for (int i = this.closeList.size()-1; i >= 0; i--) {
+            try {
+                var resource = this.closeList.get(i);
+                if (resource instanceof RocksDB database) database.closeE();
+                else resource.close();
+            } catch (Throwable closeFailure) {
+                if (failure == null) failure = closeFailure;
+                else if (failure != closeFailure) failure.addSuppressed(closeFailure);
             }
-            iter.close();
+        }
+        this.closeList.clear();
+        return failure;
+    }
+
+    @Override
+    public void iteratePositions(int level, LongConsumer consumer) {
+        try (var stack = MemoryStack.stackPush()) {
+            try (var iter = this.db.newIterator(this.worldSections, this.sectionReadOps)) {
+                ByteBuffer keyBuff = stack.calloc(8);
+                long keyBuffPtr = MemoryUtil.memAddress(keyBuff);
+                //TODO: this can be optimized if needed by useing a prefix-seek https://github.com/facebook/rocksdb/wiki/Prefix-Seek
+
+                if (level != -1) {//-1 means iterate all
+                    var seekBuff = stack.calloc(8);
+                    MemoryUtil.memPutLong(MemoryUtil.memAddress(seekBuff), Long.reverseBytes(Integer.toUnsignedLong(level) << 60));
+                    iter.seek(seekBuff);//we seak to the first level
+                } else {
+                    iter.seekToFirst();
+                }
+                while (iter.isValid()) {
+                    keyBuff.clear();
+                    iter.key(keyBuff);
+                    long key = Long.reverseBytes(MemoryUtil.memGetLong(keyBuffPtr));
+                    if (level != -1 && WorldEngine.getLevel(key) != level) {
+                        break;
+                    }
+                    consumer.accept(key);
+                    iter.next();
+                }
+            }
         }
     }
 
@@ -157,7 +140,6 @@ public class RocksDBStorageBackend extends StorageBackend {
         }
     }
 
-    //TODO: FIXME, use the ByteBuffer variant
     @Override
     public void setSectionData(long key, MemoryBuffer data) {
         try (var stack = MemoryStack.stackPush()) {
@@ -193,10 +175,11 @@ public class RocksDBStorageBackend extends StorageBackend {
 
     @Override
     public Int2ObjectOpenHashMap<byte[]> getIdMappingsData() {
-        var iterator = this.db.newIterator(this.idMappings);
         var out = new Int2ObjectOpenHashMap<byte[]>();
-        for (iterator.seekToFirst(); iterator.isValid(); iterator.next()) {
-            out.put(bytesToInt(iterator.key()), iterator.value());
+        try (var iterator = this.db.newIterator(this.idMappings)) {
+            for (iterator.seekToFirst(); iterator.isValid(); iterator.next()) {
+                out.put(bytesToInt(iterator.key()), iterator.value());
+            }
         }
         return out;
     }
@@ -212,8 +195,13 @@ public class RocksDBStorageBackend extends StorageBackend {
 
     @Override
     public void close() {
-        this.flush();
-        this.closeList.forEach(AbstractImmutableNativeReference::close);
+        if (this.closed) return;
+        this.closed = true;
+        Throwable failure = null;
+        try { this.flush(); } catch (Throwable error) { failure = error; }
+        failure = this.closeOwned(failure);
+        if (failure instanceof Error error) throw error;
+        if (failure != null) throw new RuntimeException("Could not close Voxy RocksDB storage", failure);
     }
 
     private static byte[] intToBytes(int i) {

@@ -487,17 +487,6 @@ needs a queue-separation rewrite.
 
 ## Git status
 
-- All 81 commits authored as `Jeferson Argueta
-  <ajefersonstiv@gmail.com>` (after the 2026-05-12 author-email
-  rewrite via `git filter-branch`; backup ref preserved at
-  `refs/original/refs/heads/claude/opengl-mac-migration-analysis-6319V`).
-- **Branch has not been pushed.** Auth on this machine resolves to
-  GitHub user `jeferson-argueta-kernel` which doesn't have write
-  access to `srjefers/voxy-mseries-support`. Resolution: `gh auth
-  login` with an account that owns / collaborates on the repo, or
-  add `jeferson-argueta-kernel` as a collaborator on the repo
-  settings. Once auth is fixed, push with `--force-with-lease`
-  (history was rewritten so the existing remote head differs).
 - **2026-05-13 work is uncommitted.** Files touched today:
   - Java: `AbstractRenderPipeline`, `NormalRenderPipeline`,
     `HiZBuffer`, `IGpuTexture`, `MetalTexture`, `MetalNative`,

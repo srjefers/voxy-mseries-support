@@ -98,6 +98,11 @@ bool useDiscard() {
 uint getFace() {
     return (interData.x>>4)&7u;
 }
+#ifdef VOXY_METAL_TINT
+#import <voxy:lod/tint_weights.glsl>
+float voxyTintLod = 0.0;
+#endif
+
 
 #ifdef PATCHED_SHADER
 vec2 getLightmap() {
@@ -114,6 +119,19 @@ vec2 getBaseUV() {
     uint modelId = interData.x>>16;
     vec2 modelUV = vec2(modelId&0xFFu, (modelId>>8)&0xFFu)*(1.0/(256.0));
     return modelUV + (vec2(face>>1, face&1u) * (1.0/(vec2(3.0, 2.0)*256.0)));
+}
+
+float fragmentTintWeight(vec2 position) {
+#ifdef VOXY_METAL_TINT
+    if (tintingState() == 0u) return 0.0;
+    if (tintingState() == 2u) return 1.0;
+    vec2 localUV = fract((position - getBaseUV()) * vec2(768.0, 512.0));
+    return sampleModelTint(getModelId(), getFace(), localUV, voxyTintLod);
+#else
+    if (tintingState() == 2u) return 1.0;
+    vec3 test = textureLod(blockModelAtlas, position, 0.0).rgb;
+    return tintingState() == 1u && abs(test.r-test.g)<0.02 && abs(test.g-test.b)<0.02 ? 1.0 : 0.0;
+#endif
 }
 
 
@@ -134,19 +152,8 @@ void voxy_emitFragment(VoxyFragmentParameters parameters);
 #else
 
 vec4 computeColour(vec2 texturePos, vec4 colour) {
-    //Conditional tinting, TODO: FIXME: this is better but still not great, try encode data into the top bit of alpha so its per pixel
-
-    uint tintingFunction = tintingState();
-    bool doTint = tintingFunction==2;//Always tint if function == 2
-    if (tintingFunction == 1) {//partial tint
-        vec4 tintTest = textureLod(blockModelAtlas, texturePos, 0);
-        if (abs(tintTest.r-tintTest.g) < 0.02f && abs(tintTest.g-tintTest.b) < 0.02f) {
-            doTint = true;
-        }
-    }
-    if (doTint) {
-        colour *= uint2vec4RGBA(interData.z).yzwx;
-    }
+    vec4 tint = uint2vec4RGBA(interData.z).yzwx;
+    colour *= mix(vec4(1.0), tint, fragmentTintWeight(texturePos));
     return (colour * uint2vec4RGBA(interData.y)) + vec4(0,0,0,float(interData.w&0xFFu)/255);
 }
 
@@ -401,6 +408,9 @@ void main() {
                                  0.0, VOXY_ATLAS_MAX_LOD);
         }
         #endif
+#ifdef VOXY_METAL_TINT
+        voxyTintLod = voxyAtlasLod;
+#endif
         colour = textureLod(blockModelAtlas, texPos, voxyAtlasLod);
 #elif defined(VOXY_LOD_FIXED_MIP)
         // DIAGNOSTIC (2026-05-25): sample the atlas at a fixed LOD 0 instead of
@@ -605,18 +615,7 @@ void main() {
     #else
     uint modelId = getModelId();
     BlockModel model = modelData[modelId];
-    uint tintingFunction = tintingState();
-    bool doTint = tintingFunction==2;//Always tint if function == 2
-    if (tintingFunction==1) {//Partial tint
-        vec4 tintTest = texture(blockModelAtlas, texPos, -2);
-        if (abs(tintTest.r-tintTest.g) < 0.02f && abs(tintTest.g-tintTest.b) < 0.02f) {
-            doTint = true;
-        }
-    }
-    vec4 tint = vec4(1);
-    if (doTint) {
-        tint = uint2vec4RGBA(interData.z).yzwx;
-    }
+    vec4 tint = mix(vec4(1.0), uint2vec4RGBA(interData.z).yzwx, fragmentTintWeight(texPos));
 
     #ifdef VOXY_DEBUG_WLOG_TINT
     // Adjudication aid (VOXY_DEBUG_WLOG_TINT=1): solid magenta on every quad

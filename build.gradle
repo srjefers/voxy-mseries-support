@@ -1,5 +1,5 @@
 plugins {
-    id 'fabric-loom' version "1.14-SNAPSHOT"
+    id 'fabric-loom' version "1.16.1"
     id 'maven-publish'
 }
 
@@ -81,15 +81,44 @@ def gitCommitHash = { ->
 }
 
 def buildtime = {System.currentTimeSeconds()}
+def buildLabel = providers.gradleProperty('buildLabel').getOrElse("local-${gitCommitHash()}-${System.currentTimeMillis()}")
+def identityDirectory = layout.buildDirectory.dir('generated/build-identity')
+def identitySources = files(fileTree('src/main'), fileTree('native/metal') {
+    exclude 'build/**'
+}, fileTree('tools') { exclude '__pycache__/**' }, 'build.gradle', 'gradle.properties',
+        'gradle/wrapper/gradle-wrapper.properties')
+tasks.register('generateBuildIdentity') {
+    dependsOn tasks.named('buildMetalNative')
+    inputs.files(identitySources)
+    inputs.property('label', buildLabel)
+    outputs.dir(identityDirectory)
+    doLast {
+        def digest = java.security.MessageDigest.getInstance('SHA-256')
+        identitySources.files.findAll { it.isFile() }.sort { a, b -> a.path <=> b.path }.each { source ->
+            digest.update(project.relativePath(source).getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            digest.update((byte) 0)
+            digest.update(source.bytes)
+            digest.update((byte) 0)
+        }
+        def output = identityDirectory.get().file('voxy-build.json').asFile
+        output.parentFile.mkdirs()
+        output.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson([
+                label: buildLabel, sourceDigest: digest.digest().encodeHex().toString(),
+                commit: gitCommitHash(), upstreamTarget: '59b62bee821518e06612e1d5c2c58c487bda761d'
+        ])) + '\n'
+    }
+}
 
 processResources {
     def time = buildtime()
     def hash = gitCommitHash()
     def version = project.version
 
-    inputs.properties("version": version, "commit": hash, "buildtime": time)
+    dependsOn tasks.named('generateBuildIdentity')
+    from(identityDirectory)
+    inputs.properties("version": version, "commit": hash, "buildtime": time, "buildLabel": buildLabel)
     filesMatching("fabric.mod.json") {
-        expand "version": version, "commit": hash, "buildtime": time
+        expand "version": version, "commit": hash, "buildtime": time, "buildLabel": buildLabel
     }
 }
 
@@ -107,6 +136,8 @@ loom {
     }
 }
 
+configurations { mockitoAgent }
+
 def modRuntimeOnlyMsk = {arg->}
 if (!isInGHA) {
     modRuntimeOnlyMsk = { arg ->
@@ -117,6 +148,8 @@ if (!isInGHA) {
 }
 
 dependencies {
+    testImplementation 'org.mockito:mockito-core:5.14.2'
+    mockitoAgent('org.mockito:mockito-core:5.14.2') { transitive = false }
     // To change the versions see the gradle.properties file
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     mappings loom.officialMojangMappings()
@@ -131,7 +164,7 @@ dependencies {
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
     if (true) {
-        modImplementation "maven.modrinth:sodium:mc1.21.11-0.8.1-fabric"
+        modImplementation "maven.modrinth:sodium:mc1.21.11-0.8.11-fabric"
     } else {
         modImplementation "net.caffeinemc:sodium-fabric:0.8.1-SNAPSHOT+mc1.21.11+"
     }
@@ -224,6 +257,7 @@ java {
 }
 
 jar {
+    exclude "me/cortex/voxy/tools/**"
     from("LICENSE") {
         rename { "${it}_${project.archives_base_name}"}
     }
@@ -248,7 +282,7 @@ tasks.register('makeExcludedRocksDB', Zip) {
     exclude {
         def file = it.name
         if (file.endsWith(".jnilib")) {
-            return true
+            return !file.endsWith("librocksdbjni-osx-arm64.jnilib")
         }
         if (!file.endsWith(".so")) {
             return false
@@ -308,8 +342,8 @@ dependencies {
     // Runtime shader translation (Metal/Vulkan backends only).
     // GL backend on Win/Linux uses the driver compiler and never touches these
     // — natives are shipped only for macos-arm64 to keep jar size minimal.
-    implementation "org.lwjgl:lwjgl-shaderc"
-    implementation "org.lwjgl:lwjgl-spvc"
+    include(implementation "org.lwjgl:lwjgl-shaderc")
+    include(implementation "org.lwjgl:lwjgl-spvc")
     include(runtimeOnly "org.lwjgl:lwjgl-shaderc:$lwjglVersion:natives-macos-arm64")
     include(runtimeOnly "org.lwjgl:lwjgl-spvc:$lwjglVersion:natives-macos-arm64")
 
@@ -326,8 +360,12 @@ dependencies {
     // them on the classpath. Not bundled into the mod jar.
     runtimeOnly "org.lwjgl:lwjgl:$lwjglVersion:natives-macos-arm64"
 
+    // Standalone interop regressions need a real GL context; never include these test dependencies.
+    testRuntimeOnly "org.lwjgl:lwjgl-glfw:$lwjglVersion:natives-macos-arm64"
+    testRuntimeOnly "org.lwjgl:lwjgl-opengl:$lwjglVersion:natives-macos-arm64"
+
     include(implementation 'redis.clients:jedis:5.1.0')
-    include(implementation('org.rocksdb:rocksdbjni:10.2.1'))
+    include(implementation('org.rocksdb:rocksdbjni:10.9.1'))
     include(implementation 'org.apache.commons:commons-pool2:2.12.0')
     include(implementation 'org.lz4:lz4-java:1.8.0')
     include(implementation('org.tukaani:xz:1.10'))
@@ -406,7 +444,11 @@ tasks.register('buildMetalNative', Exec) {
             return
         }
         if (result.exitValue != 0) {
-            logger.warn(">>> buildMetalNative: FAILED (exit=${result.exitValue}). Jar will ship without libvoxy_metal.dylib; Metal will fall back to OpenGL.")
+            if (output.exists()) {
+                logger.warn(">>> buildMetalNative: compiler unavailable (exit=${result.exitValue}); retaining existing ARM64 dylib at ${output}. Native source was not rebuilt.")
+            } else {
+                throw new GradleException("Metal native build failed and no ARM64 dylib exists at ${output}")
+            }
         } else if (!output.exists()) {
             logger.warn(">>> buildMetalNative: exit=0 but dylib NOT found at ${output}. Check native/metal/build.sh output.")
         } else {
@@ -433,6 +475,130 @@ tasks.register('testShaderCompiler', JavaExec) {
     workingDir = rootProject.projectDir
     standardOutput = System.out
     errorOutput = System.err
+}
+
+tasks.register('testGlInterop', JavaExec) {
+    group = 'verification'
+    description = 'On-device GL/Metal compositor and coverage-policy regressions.'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.interop.InteropRegressionTest'
+    jvmArgs '-XstartOnFirstThread'
+}
+
+tasks.register('testMetalTerrainPipelines', JavaExec) {
+    group = 'verification'
+    description = 'Compile and link shaders-off and material terrain pipelines on Metal.'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.interop.MetalTerrainPipelineTest'
+}
+
+tasks.register('testMetalTraversal', JavaExec) {
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.interop.MetalTraversalRegressionTest'
+}
+
+tasks.register('testMetalBake', JavaExec) {
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.model.BakeRegressionTest'
+    jvmArgs '-XstartOnFirstThread'
+}
+
+tasks.register('testSectionProbe', JavaExec) {
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.SectionProbeRegressionTest'
+}
+
+tasks.register('testBslSourcePatchScope', JavaExec) {
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.util.BslSourcePatchScopeRegressionTest'
+}
+
+tasks.register('testWaterFrames', JavaExec) {
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.WaterFrameRegressionTest'
+}
+
+tasks.register('testIrisUniforms', JavaExec) {
+    group = 'verification'
+    description = 'Real Iris uniform packing without JOML Unsafe, including padding guards.'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.iris.UniformRegressionTest'
+    jvmArgs '-Djoml.nounsafe=true'
+    if (project.hasProperty('prismJava')) executable = project.property('prismJava')
+}
+
+tasks.register('testUpstreamCpu', JavaExec) {
+    group = 'verification'
+    description = 'CPU regressions for upstream lighting, node packing and allocation.'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.common.world.UpstreamCpuRegressionTest'
+}
+
+tasks.register('testStorage', JavaExec) {
+    group = 'verification'
+    description = 'Save/unload races, stable serialization, and ARM64 RocksDB existing-data reopening.'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.common.world.StorageRegressionTest'
+}
+
+tasks.register('testProjection', JavaExec) {
+    group = 'verification'
+    description = 'Exercise production projection adaptation with controlled Minecraft camera inputs.'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.rendering.ProjectionRegressionTest'
+    doFirst { jvmArgs "-javaagent:${configurations.mockitoAgent.singleFile}" }
+}
+
+tasks.register('testCoverage', JavaExec) {
+    group = 'verification'
+    description = 'Sodium upload/reclassification/disposal and obsolete-manager coverage regressions.'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.rendering.CoverageRegressionTest'
+    doFirst { jvmArgs "-javaagent:${configurations.mockitoAgent.singleFile}" }
+}
+
+tasks.register('testMeshing', JavaExec) {
+    group = 'verification'
+    description = 'Production mesher regressions for planar bounds and directional face occlusion.'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.rendering.MeshingRegressionTest'
+    doFirst { jvmArgs "-javaagent:${configurations.mockitoAgent.singleFile}" }
+}
+
+tasks.register('testAllocation', JavaExec) {
+    group = 'verification'
+    description = 'Small geometry granules, reuse and bounded request allocation.'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.rendering.AllocationRegressionTest'
+}
+
+tasks.register('testMetalResolve', JavaExec) {
+    group = 'verification'
+    description = 'Real GL resolve pixels, uniform/image failures, and full interop state restoration.'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.interop.ResolveRegressionTest'
+    jvmArgs '-XstartOnFirstThread'
+    doFirst { jvmArgs "-javaagent:${configurations.mockitoAgent.singleFile}" }
 }
 
 // M3 verification: open a Metal render pass with clear-color load action and
@@ -580,4 +746,127 @@ tasks.register('testVulkanClear', JavaExec) {
     if (moltenVkIcd.exists()) {
         environment 'VK_ICD_FILENAMES', moltenVkIcd.absolutePath
     }
+}
+
+['testAsync': 'AsyncRegressionTest', 'testClientFeatures': 'ClientFeatureRegressionTest', 'testClientSession': 'ClientSessionRegressionTest'].each { taskName, testClass ->
+    tasks.register(taskName, JavaExec) {
+        group = 'verification'
+        dependsOn testClasses
+        classpath = sourceSets.test.runtimeClasspath
+        mainClass = taskName == 'testAsync' ? "me.cortex.voxy.client.core.rendering.hierachical.${testClass}" : "me.cortex.voxy.client.core.rendering.${testClass}"
+        doFirst { jvmArgs "-javaagent:${configurations.mockitoAgent.singleFile}" }
+    }
+}
+
+tasks.register('testIngestionLayout', JavaExec) {
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.common.world.IngestionLayoutRegressionTest'
+}
+
+tasks.register('testCompression', JavaExec) {
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.common.world.CompressionRegressionTest'
+}
+
+tasks.register('testMaterialContract', JavaExec) {
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.util.MaterialContractRegressionTest'
+    jvmArgs '-XstartOnFirstThread'
+    if (project.hasProperty('complementaryPack')) {
+        systemProperty 'voxy.complementaryPack', project.property('complementaryPack')
+    }
+    doFirst { jvmArgs "-javaagent:${configurations.mockitoAgent.singleFile}" }
+}
+
+tasks.register('testDiagnosticWindow', JavaExec) {
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.DiagnosticWindowRegressionTest'
+}
+
+tasks.register('testShaderLoading', JavaExec) {
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.ShaderLoadingRegressionTest'
+}
+
+tasks.register('testMaterialUniforms', JavaExec) {
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.MaterialUniformRegressionTest'
+    doFirst { jvmArgs "-javaagent:${configurations.mockitoAgent.singleFile}" }
+}
+
+tasks.register('testBslAssembly', JavaExec) {
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.util.BslAssemblyRegressionTest'
+}
+
+['testNativeOwnership': 'NativeOwnershipRegressionTest', 'testStorageConfig': 'StorageConfigRegressionTest'].each { taskName, testClass ->
+    tasks.register(taskName, JavaExec) {
+        group = 'verification'
+        dependsOn testClasses
+        classpath = sourceSets.test.runtimeClasspath
+        mainClass = "me.cortex.voxy.common.world.${testClass}"
+        doFirst { jvmArgs "-javaagent:${configurations.mockitoAgent.singleFile}" }
+    }
+}
+
+tasks.register('testFrameHistory', JavaExec) {
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.iris.FrameHistoryRegressionTest'
+    doFirst { jvmArgs "-javaagent:${configurations.mockitoAgent.singleFile}" }
+}
+
+tasks.register('testDrawCoverage', JavaExec) {
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.rendering.DrawCoverageRegressionTest'
+    doFirst { jvmArgs "-javaagent:${configurations.mockitoAgent.singleFile}" }
+}
+
+
+tasks.register('testWaterDepthBridge', JavaExec) {
+    group = 'verification'
+    description = 'Actual Metal water depth restore, ownership, export and moving-frame readback.'
+    dependsOn testClasses, buildMetalNative
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'me.cortex.voxy.client.core.interop.WaterDepthBridgeRegressionTest'
+    jvmArgs '-XstartOnFirstThread'
+}
+
+// Run CPU and driver regressions explicitly; GPU checks require an Apple-Silicon Mac.
+tasks.named('test', Test) {
+    // Standalone JavaExec regressions are run by verifyCpu/verifyMetal; no JUnit suite is declared.
+    failOnNoDiscoveredTests = false
+}
+tasks.register('verifyCpu') {
+    group = 'verification'
+    description = 'CPU regressions for storage, meshing, allocation, lifecycle, uniforms and frame ownership.'
+    dependsOn 'testUpstreamCpu', 'testStorage', 'testCompression', 'testNativeOwnership',
+            'testStorageConfig', 'testIngestionLayout', 'testMeshing', 'testAllocation',
+            'testAsync', 'testClientFeatures', 'testClientSession', 'testCoverage',
+            'testDrawCoverage', 'testFrameHistory', 'testProjection', 'testSectionProbe',
+            'testDiagnosticWindow', 'testShaderLoading', 'testMaterialUniforms',
+            'testIrisUniforms', 'testWaterFrames', 'testBslSourcePatchScope', 'testBslAssembly'
+}
+tasks.register('verifyMetal') {
+    group = 'verification'
+    description = 'On-device GL/Metal regressions, including actual Complementary programs; use -PcomplementaryPack.'
+    dependsOn 'testGlInterop', 'testMetalResolve', 'testMetalBake', 'testMetalTerrainPipelines',
+            'testMetalTraversal', 'testWaterDepthBridge', 'testMaterialContract'
 }

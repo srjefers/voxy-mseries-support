@@ -24,6 +24,24 @@ public abstract class MixinLevelRenderer implements IGetVoxyRenderSystem {
     @Shadow private @Nullable ClientLevel level;
     @Unique private VoxyRenderSystem renderer;
 
+    @Inject(method = "renderLevel", at = @At("HEAD"), order = 100)
+    private void voxy$captureMainFrame(com.mojang.blaze3d.resource.GraphicsResourceAllocator allocator,
+            net.minecraft.client.DeltaTracker delta, boolean outline, net.minecraft.client.Camera camera,
+            org.joml.Matrix4f modelView, org.joml.Matrix4f projection, org.joml.Matrix4f basicProjection,
+            com.mojang.blaze3d.buffers.GpuBufferSlice fogBuffer, org.joml.Vector4f fogColor,
+            boolean sky, CallbackInfo ci) {
+        if(this.renderer==null || IrisUtil.shadowsBeingRendered()) return;
+        var pos=camera.position();
+        var fog=((net.caffeinemc.mods.sodium.client.util.FogStorage) net.minecraft.client.Minecraft.getInstance().gameRenderer).sodium$getFogParameters();
+        me.cortex.voxy.client.core.WorldFrameCapture.capture(this.renderer,
+                new net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices(projection,modelView),fog,pos.x,pos.y,pos.z);
+    }
+
+    @Inject(method = "renderLevel", at = @At("RETURN"), order = 9000)
+    private void voxy$probeWorldOutput(CallbackInfo ci) {
+        me.cortex.voxy.client.core.MatchedFrameProbe.finalWorld();
+    }
+
     @Override
     public VoxyRenderSystem getVoxyRenderSystem() {
         return this.renderer;

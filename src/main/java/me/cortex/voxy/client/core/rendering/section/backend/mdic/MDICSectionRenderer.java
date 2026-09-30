@@ -18,6 +18,7 @@ import me.cortex.voxy.client.core.rendering.section.geometry.BasicSectionGeometr
 import me.cortex.voxy.client.core.rendering.util.DownloadStream;
 import me.cortex.voxy.client.core.rendering.util.LightMapHelper;
 import me.cortex.voxy.client.core.rendering.util.MetalMvpUtil;
+import me.cortex.voxy.client.core.rendering.util.NativeUniformWriter;
 import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
 import me.cortex.voxy.client.core.rendering.util.UploadStream;
 import me.cortex.voxy.common.Logger;
@@ -378,6 +379,8 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                 if (gbufferDebug) translucentDefines.put("VOXY_VX_GBUFFER_DEBUG", "");
             }
             if (this.backend.getType() != BackendType.OPENGL) {
+                opaqueDefines.put("VOXY_METAL_TINT", "");
+                translucentDefines.put("VOXY_METAL_TINT", "");
                 // M13 chunk 3: the chunk-bound depth mask now renders on Metal
                 // (ChunkBoundRenderer.renderMetal → viewport.depthBoundingBuffer,
                 // bound at texture slot 2 in renderTerrainMetal), so the
@@ -400,7 +403,15 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                     // inject writing real depth: LODs stomped pack terrain).
                     // ChunkBoundRenderer.exportBoundMaskMetal feeds it.
                     opaqueDefines.put("VOXY_METAL_BOUND_SSBO", "");
-                    translucentDefines.put("VOXY_METAL_BOUND_SSBO", "");
+                    if (this.pipeline.materialPolicy().translucentBoundMask()) {
+                        translucentDefines.put("VOXY_METAL_BOUND_SSBO", "");
+                    } else {
+                        // The mask is a projected section box, not a per-pixel water
+                        // depth. At the vanilla/LOD seam it can cover pixels Sodium
+                        // leaves open, making valid material water vanish as the
+                        // camera moves. Keep opaque terrain's bound test unchanged.
+                        translucentDefines.put("VOXY_NO_DEPTH_BOUND", "");
+                    }
                 }
                 if (boundDebug) {
                     opaqueDefines.put("VOXY_BOUND_DEBUG", "");
@@ -494,7 +505,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                 //   VOXY_WATER_FAR_ALPHA=0 kills it; =<f> sets the far target
                 //   (default 0.95). VOXY_WATER_FAR_ALPHA_START/_END override
                 //   the ramp distances in blocks.
-                if (WATER_FAR_ALPHA > 0.0f) {
+                if (WATER_FAR_ALPHA > 0.0f && (!vxMaterial || this.pipeline.materialPolicy().legacyWater())) {
                     translucentDefines.put("VOXY_WATER_FAR_ALPHA", "");
                     Logger.info("[Metal-LODTEST] far-water alpha ramp ON (target=" + WATER_FAR_ALPHA
                             + "); VOXY_WATER_FAR_ALPHA=0 disables");
@@ -526,7 +537,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                 //   VOXY_TRANS_NEAR_CULL=0 disables.
                 String nearCullEnv = System.getenv("VOXY_TRANS_NEAR_CULL");
                 boolean transNearCull = (nearCullEnv == null || !"0".equals(nearCullEnv.trim()))
-                        && me.cortex.voxy.client.core.util.IrisUtil.vxContractActive();
+                        && this.pipeline.materialPolicy().legacyWater();
                 if (transNearCull) {
                     translucentDefines.put("VOXY_TRANS_NEAR_CULL", "");
                     if (TRANS_NEAR_CULL_XZ) {
@@ -805,7 +816,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                 // opaque depth) and must WRITE depth — the water surface
                 // depth becomes vxDepthTexTrans, which the pack's deferred
                 // uses to composite LOD water as water.
-                var transDepthState = me.cortex.voxy.client.core.util.IrisUtil.vxContractActive()
+                var transDepthState = (this.pipeline.vxMaterialMode() || me.cortex.voxy.client.core.util.IrisUtil.vxContractActive())
                         ? me.cortex.voxy.client.core.gpu.PipelineState.DepthState.DEFAULT
                         : me.cortex.voxy.client.core.gpu.PipelineState.DepthState.TEST_NO_WRITE;
                 // Material mode: the 3 g-buffer planes carry DATA (straight-alpha
@@ -886,16 +897,16 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         if (MetalMvpUtil.METAL_NDC_REMAP && this.backend.getType() != BackendType.OPENGL) {
             MetalMvpUtil.applyNdcRemap(mat);
         }
-        mat.getToAddress(ptr); ptr += 4*4*4;
+        NativeUniformWriter.putMatrix4f(ptr, mat); ptr += 4*4*4;
 
-        viewport.section.getToAddress(ptr); ptr += 4*3;
+        NativeUniformWriter.putVector3i(ptr, viewport.section); ptr += 4*3;
 
         if (viewport.frameId<0) {
             Logger.error("Frame ID negative, this will cause things to break, wrapping around");
             viewport.frameId &= 0x7fffffff;
         }
         MemoryUtil.memPutInt(ptr, viewport.frameId&0x7fffffff); ptr += 4;
-        viewport.innerTranslation.getToAddress(ptr); ptr += 4*3;
+        NativeUniformWriter.putVector3f(ptr, viewport.innerTranslation); ptr += 4*3;
 
         // std140 padding: cameraSubPos (vec3 at offset 80) consumes 12B; the
         // next vec4 must be 16B-aligned, so skip the 4B trailing pad before
@@ -968,7 +979,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             // voxyLodParams2.x: translucent near-cull distance (vx contract —
             // see VOXY_TRANS_NEAR_CULL). GL and no-pack sessions read 0.
             float nearCull = 0.0f;
-            if (me.cortex.voxy.client.core.util.IrisUtil.vxContractActive()) {
+            if (this.pipeline.materialPolicy().legacyWater()) {
                 // FULLRING (masked mode): radius = the full vanilla border so the
                 // mask gate is reachable in the border overlap ring — see the
                 // TRANS_NEAR_CULL_FULLRING static. MetalVxResolvePass.ringCullNow()
@@ -1195,6 +1206,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         // cross-backend sampler at binding 0 (blockModelAtlas in quads.frag).
         this.modelStore.bindBuffers(encoder, 3, 4, 0);
         encoder.setBuffer(5, viewport.positionScratchBuffer, 0);
+        this.pipeline.bindUniforms(encoder);
         // Texture / sampler binding 1 — MC's 16×16 RGBA8 lightmap, mirrored
         // into a Shared-storage Metal texture each frame (M13 chunk 2).
         LightMapHelper.bindMetal(encoder, 1, viewport.frameId);
