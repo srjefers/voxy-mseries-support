@@ -174,6 +174,39 @@ Minecraft's Java heap:
 - **Frame rate drops in steps.** With vsync on the frame rate snaps to 60,
   40, 30 and so on. Turn vsync off to see the real cost.
 
+## Testing and validation
+
+The Metal port is checked against a test plan of 65 tests in nine phases:
+
+1. Automated build and shader checks.
+2. Starting without a shader pack.
+3. BSL visuals.
+4. Lifecycle and memory.
+5. Failure paths.
+6. Performance.
+7. Underwater and caves.
+8. World generation with Chunky.
+9. The release jar in a clean launcher profile.
+
+The plan runs on an Apple M4 Max, and each test's result is recorded. The
+notes below come from that testing and explain log messages that look
+alarming but are not errors.
+
+### Log messages checked during testing
+
+- **`[Metal-CULL] translucent-pass head: GL cull=OFF ... <- back faces of
+  water WILL rasterise this frame`.** Without a shader pack this line can
+  appear a few times per session, mostly while flying past mobs. It is a
+  diagnostic left over from an earlier bug hunt, not an error, and water
+  renders correctly. It was investigated on 2026-10-01 during test
+  P1-NOPACK-START. Minecraft draws mobs and the block outline with face
+  culling off just before the water pass. The probe reads that state a
+  moment before Sodium turns culling back on for the water. The bug the
+  probe was written for put Minecraft's own record of the culling state out
+  of sync. It caused pale panes over water with a shader pack and was fixed
+  in commit `cc18fabe`. That cannot happen without a pack, and with BSL the
+  line does not appear at all.
+
 ## What works (alpha)
 
 - LOD terrain to the horizon with **real baked block textures**, biome
