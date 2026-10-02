@@ -75,7 +75,13 @@ public final class MetalNative {
             Logger.info("Metal native library loaded from " + tmp);
             return true;
         } catch (Throwable t) {
-            Logger.warn("Metal native library not available: " + t.getMessage());
+            String msg = String.valueOf(t.getMessage());
+            if (msg.contains("newer than running OS") || msg.contains("minimum")) {
+                Logger.error("Voxy's Metal renderer needs macOS 13 (Ventura) or newer; this Mac runs macOS "
+                        + System.getProperty("os.version") + ". Voxy will stay disabled. (" + msg + ")");
+            } else {
+                Logger.warn("Metal native library not available: " + msg);
+            }
             available = false;
             return false;
         }
@@ -392,6 +398,23 @@ public final class MetalNative {
             long encoder, int primitiveType, int indexType,
             long indexBuffer, long indexBufferOffset,
             long indirectBuffer, long indirectOffset);
+
+    /**
+     * Batched form of {@link #mtlRenderEncoderDrawIndexedPrimitivesIndirect}:
+     * issues {@code commandCount} indirect indexed draws at
+     * {@code firstCommandOffset + i * stride} inside one native loop and one
+     * autoreleasepool, instead of two JNI crossings per draw. Before each draw,
+     * if {@code indirectContentsPtr} is non-zero, reads the command's
+     * baseInstance (uint32 at +16) from that CPU-visible pointer and pushes it
+     * as a 16-byte vertex uniform at {@code biBindingIndex} via setVertexBytes
+     * (the Metal [[base_instance]] workaround). Same per-draw calls, same order
+     * as the Java loop in MetalRenderEncoder.drawIndexedIndirect.
+     */
+    public static native void mtlRenderEncoderDrawIndexedIndirectBatch(
+            long encoder, int primitiveType, int indexType,
+            long indexBuffer, long indexBufferOffset,
+            long indirectBuffer, long indirectContentsPtr,
+            long firstCommandOffset, int commandCount, int stride, int biBindingIndex);
 
     // --- Pipeline static state: depth-stencil + blend + raster ---
 

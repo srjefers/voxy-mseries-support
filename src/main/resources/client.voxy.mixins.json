@@ -27,6 +27,7 @@
     "minecraft.MixinGlDebug",
     "minecraft.MixinLevelRenderer",
     "minecraft.MixinLevelRendererBridgeDemo",
+    "minecraft.MixinLightTexture",
     "minecraft.MixinMinecraft",
     "minecraft.MixinRenderSystem",
     "minecraft.MixinWindow",
@@ -40,10 +41,12 @@
     "sodium.MixinRenderRegionManager",
     "sodium.MixinRenderSectionManager",
     "sodium.MixinSodiumWorldRenderer",
-    "sodium.MixinVideoSettingsScreen",
-    "minecraft.MixinLayerLightSectionStorage"
+    "sodium.MixinVideoSettingsScreen"
   ],
   "injectors": {
     "defaultRequire": 1
+  },
+  "overwrites": {
+    "requireAnnotations": true
   }
 }

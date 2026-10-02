@@ -22,11 +22,16 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.LevelChunk;
 import org.jspecify.annotations.Nullable;
 
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.channels.FileLock;
+import java.nio.channels.NonWritableChannelException;
 import java.util.HashSet;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
 public class VoxyClient implements ClientModInitializer {
+    private static FileLock EXCLUSIVE_LOCK;//kept referenced so the JVM holds the lock for the process lifetime
     private static final HashSet<String> FREX = new HashSet<>();
 
     public static void initVoxyClient() {
@@ -47,6 +52,7 @@ public class VoxyClient implements ClientModInitializer {
                 + ", indirectParameters=" + backend.hasIndirectParameters() + ")");
 
         boolean systemSupported = backend.hasCompute() && backend.hasIndirectParameters() && !Capabilities.INSTANCE.hasBrokenDepthSampler;
+        final boolean capabilitiesSupported = systemSupported;//upstream 36964ee4 logs 'unsupported' only for this case
 
         // M9 transitional: even though MetalRenderBackend reports compute=true and
         // indirectParameters=true, Voxy's render path (MDICSectionRenderer,
@@ -80,6 +86,27 @@ public class VoxyClient implements ClientModInitializer {
             }
         }
 
+        if (systemSupported && System.getProperty("voxy.exclusiveLock", "false").equalsIgnoreCase("true")) {
+            //Upstream 36964ee4/2a979ac0/c6b30e51 (opt-in): hold an exclusive lock on .voxy/voxy.lock so a
+            // second game instance cannot open the same store; disabled unless -Dvoxy.exclusiveLock=true
+            var vf = Minecraft.getInstance().gameDirectory.toPath().resolve(".voxy");
+            if (!vf.toFile().isDirectory()) {
+                vf.toFile().mkdir();
+            }
+            try {
+                FileOutputStream fis = new FileOutputStream(vf.resolve("voxy.lock").toFile());
+                EXCLUSIVE_LOCK = fis.getChannel().tryLock(0, Long.MAX_VALUE, false);//fork: lock() blocked client init forever in a 2nd instance
+                if (EXCLUSIVE_LOCK == null) {
+                    fis.close();
+                    throw new IOException("voxy.lock is held by another game instance");
+                }
+            } catch (NonWritableChannelException | IOException e) {
+                //If some error write to log and unsupport
+                Logger.error("Failed to acquire exclusive voxy lock file, mod will be disabled");
+                systemSupported = false;
+            }
+        }
+
         if (systemSupported) {
 
             SharedIndexBuffer.INSTANCE.id();
@@ -91,7 +118,7 @@ public class VoxyClient implements ClientModInitializer {
                 Logger.warn("GPU does not support subgroup operations, expect some performance degradation");
             }
 
-        } else {
+        } else if (!capabilitiesSupported) {
             Logger.error("Voxy is unsupported on your system.");
         }
     }

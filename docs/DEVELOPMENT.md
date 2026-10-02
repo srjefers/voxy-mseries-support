@@ -45,6 +45,11 @@ The loop that produced every fix in this port:
 | `[Metal-WATERBAKE]` | Per-face alpha coverage of the fluid bake (one-shot) |
 | `[Metal-WATERANIM]` | Water animator registration (frames, frametime, faces) |
 | `[Metal-VIEWPORT]` | Warn-once: `GL_VIEWPORT` disagreed with MC's main RT (leaked pass viewport) |
+| `[Metal-TIMING]` | `VOXY_FRAME_TIMING=1`: per-frame avg of the three Metal-side CPU waits (hotWait / drawFlushWait / bridgeWait) + the per-draw JNI loop, every 600 frames |
+| `[Metal-VXTIMING]` | `VOXY_FRAME_TIMING=1` (close F3 while sampling — vanilla's GPU-utilization timer owns `GL_TIME_ELAPSED`; skipped frames print as `gpuSkippedForeign=`): same window, GL side — per-pass `gpuAvg/gpuMax\|cpuAvg/cpuMax` ms for the vx-contract passes (scOpaque/scTrans/scAbyss, inject*, resolve*, acquire, composite, lightmap; GPU via async `GL_TIME_ELAPSED`) + `lodCoverage=` (% of framebuffer pixels that are opaque LOD, from a `GL_SAMPLES_PASSED` query). One-shot `GL-side vx pass timing ON` line at first frame |
+| `[Metal] lightmap sync throttled to <mode>` | (`lightmapSync` ms on `[Metal-TIMING]` is CPU wall time *including* the GL drain the readback forces; under the throttle `ms each` rises while `ms/frame` falls — judge the win by `[Metal-LayerB] fps`, A vs B at the same spot.) One-shot: whether the MC-lightmap readback runs only on lightmap rewrites (`lightmap-version`, default) or every frame (`VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1`); `[Metal-LayerB]` carries `lightmapSync=<run>/<skipped>` per window, `[Metal-TIMING]` its ms |
+| `[Metal-RESYNC]` | One-shot: IOSurface GL re-specification mode (`ONCE` per bridge per Metal frame, or `EVERY` acquire under `VOXY_BRIDGE_RESYNC=every`); `[Metal-TIMING]` carries `resync=N/frame (skipped M/frame) resyncCost=` |
+| `[Voxy-SYNC]` | One-shot at class load: state of each upstream-sync kill switch (`mesher face-occlusion predicate`, `mip block-light packing`, `Iris shader define`) — see `docs/UPSTREAM-SYNC.md` |
 | `IOSurfaceBridgeCompositor` | Composite mode (blit vs shader) and target FBO |
 
 ## Key environment variables
@@ -62,7 +67,39 @@ development:
 | `VOXY_NO_DEPTH_BOUND=1` | Kill switch: disable the chunk-bound depth mask |
 | `VOXY_WATER_ANIMATE=0` | Kill switch: freeze LOD water animation |
 | `VOXY_HOT_SERIALIZE=1` | Submit+wait per traversal iteration (race diagnostic, slow) |
+| `VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1` | Kill switch: readback MC's lightmap every frame instead of only when MC rewrote it (client tick) |
+| `VOXY_BRIDGE_RESYNC=every` | Kill switch: re-specify IOSurfaces into GL on every acquire (pre-lever-C); default `once` per bridge per Metal frame |
 | `VOXY_FOG_SMOOTH_MS` | Fog colour smoothing constant (0 disables) |
+| `VOXY_METAL_DRAW_BATCH=0` | Kill switch: per-draw Java JNI indirect loop instead of the native batch (A/B on `[Metal-TIMING] jniDrawLoop`) |
+| `VOXY_MESH_XFACE_FIX=0` | Kill switch: pre-sync swapped -x/+x face-occlusion indices at section borders (upstream 1f985ce6). A no-op on Metal (the Metal bakery's occlusion bits are symmetric per axis); visible on GL only |
+| `VOXY_MESH_FACE_OCCLUDE=0` | Kill switch: pre-sync non-opaque face predicate (before upstream 6212d95c/514d0a0e/89b3dacc). On Metal the only visible difference is LOD-0 plant side faces next to an occluding neighbour: the Metal bakery marks fences, panes, walls, slabs and stairs fully opaque, so they never reach this predicate (a null A/B on them is expected). Metal test scene: a flower or crop in a 1-wide slot between two full blocks on the first LOD ring. On GL: fences, panes, walls, slabs, stairs at LOD 0-2; marker `[Voxy-SYNC] mesher face-occlusion predicate` |
+| `VOXY_MIP_BLOCKLIGHT_FIX=0` | Kill switch: pre-sync Mipper block-light packing (upstream 0eb618d1 fixed block light lost at every mip level ≥ 1). Stored mips only refresh on re-import; marker `[Voxy-SYNC] mip block-light packing` |
+| `VOXY_SHADER_DEFINE_VERSION=N` | Iris define emitted to packs: `#define VOXY N` (default 1, upstream 13230c27 contract v1); `0` restores the bare `#define VOXY`. Marker `[Voxy-SYNC] Iris shader define` |
+| `VOXY_SYNC_UNDEFINED_SKYLIGHT=0` | Kill switch: fill not-in-storage sections with sky light 0 again (pre upstream 47053483; dark patches next to unstored sections) |
+| `VOXY_SECTION_FREE_ASSERT=1` | Make the "Section freed while marked as dirty or in the save queue" check (upstream c7166d3f/c2dca44e) throw like upstream; fork default logs and keeps the section alive so its write is saved (the check runs inside the tracker stripe lock) |
+| `VOXY_SAVE_BACKPRESSURE=0` | Keep the unload path's save enqueue non-blocking (the B1 port as first applied): the save queue then has no bound and dirty sections stay resident under fast travel |
+| `VOXY_SHUTDOWN_WAIT_MS=N` | How long instance shutdown waits (after the save queue is drained) for a world whose sections are still referenced before leaving it open; default 30000, `0` = wait forever (upstream) |
+| `VOXY_SYNC_CHUNK_POS_CHECK=0` | Kill switch: skip the chunk-ring slot position check (upstream 6189ee38) in `voxy$cheekyGetChunk` |
+| `VOXY_NODE_UPLOAD_CAP_KB=N` | Geometry uploaded per async-node-manager run (default 1000 KB, upstream 36f85026 frame-spike smoothing); `0` = uncapped (pre-sync). Marker `[Voxy-SYNC] async node upload cap` |
+| `VOXY_GEOMETRY_ALLOC_ALIGN=1024` | Restore the 1024-element geometry allocation granule (upstream 72b3ade6 uses 128, ~20% less geometry memory). Marker `[Voxy-SYNC] geometry allocation granule` |
+| `VOXY_RD_PROCESS_RATE=20` | Restore the pre-sync render-distance tracker rate (upstream 27f82dda: 40 top-level node changes per rendered frame). Marker `[Voxy-SYNC] render-distance process rate` |
+| `VOXY_WORKER_RETHROW=0` | Pre-sync worker failure handling: the Async Node Manager / Model factory threads log and exit instead of rethrowing their exception on the render thread (upstream 36f85026/02e490e0) |
+| `VOXY_CTOR_FAILURE_CLEANUP=0` | Pre-fix behaviour when the Voxy renderer constructor throws: keep the partially built components alive (geometry arena, model atlas, worker threads) instead of releasing them |
+| `VOXY_METAL_ARENA_RAM_SCALE=0` | Restore the fixed 4 GB Metal geometry arena. Default sizes it at RAM/16 clamped to 1-4 GB, because the whole arena becomes resident and wired on first GPU use. Marker `[Metal-MEM] geometry arena`; `-Dvoxy.geometryBufferSizeOverrideMB=N` still overrides |
+| `VOXY_VX_SKY_FLOOR_UNDERWATER=1` / `=skip` | Opaque LOD pixels seen through LOD water. Default: the sky-light floor shrinks with the water column above them (`15 - column` levels, capped at the 12/15 floor), like vanilla water. `=skip` gives them no floor at all; `=1` floors them like dry land (pre-2026-09-26: far seafloors lit as if at the surface). Marker `[Metal-LODTEST] vx sky-light floor runtime` must show locations >= 0. `VOXY_VX_SAMPLER_FIX=0` also switches this off |
+| `VOXY_VX_SKY_FLOOR_WATER_ATTEN=<f>` | Sky levels lost per block of LOD water for the floor above (default 1.0 = vanilla water) |
+| `VOXY_GEOMETRY_FIT_GATE=0` | Metal: restore the `Geometry OOM` throw (worker death, crash) when the geometry arena has no contiguous block for a section. Default defers that section until the cleaner frees room. Marker `[Metal-MEM] geometry arena fragmented` |
+| `VOXY_METAL_MSL_PIN=0` | Compile runtime MSL with the newest language version the OS offers instead of pinning MSL 3.0 (the macOS 13 floor). The `Metal device:` log line shows the mode |
+| `VOXY_CTOR_FAIL_ONCE=1` | Diagnostic (remove once A11 is verified): the first renderer construction of the process throws after the worker threads start, to exercise the constructor-failure cleanup. Use with a shader pack active: the pack turns off for that session only and the renderer is rebuilt. Expect `releasing 8 partially built components` |
+| `VOXY_IRIS_DISABLE_PERSIST=1` | Restore upstream's handling of a renderer failure with a pack active: Iris saves enableShaders=false. Default on Metal: the disable is not saved (iris.properties restored); reloading shaders (R) tries the pack again |
+| `VOXY_BOUND_TRANS_SPLIT=all` / `=0` | Bound-mask coverage-epsilon split. Default: only under a vx-contract pack with the near-cull on (marker `bound-mask trans split ON`/`OFF`). `all` forces it without a pack (pre-2026-09-26), `0` disables it |
+| `VOXY_POOL_SHUTDOWN_FINALLY=0` / `VOXY_SHUTDOWN_PER_STEP=0` | Restore the old teardown: the service pool only released its workers if every service had shut down, and renderer teardown stopped at the first throwing step |
+| `VOXY_IRIS_PACK_PREDICATE=quick\|current` | Iris 'pack enabled' predicate: default `hybrid` on Metal (pack loaded AND pipeline null-or-Iris) and `current` (pure upstream) on GL, `quick` = pre-sync `isPackInUseQuick`, `current` = pure upstream 1952d3df. Marker `[Voxy-SYNC] Iris pack predicate` |
+| `-Dvoxy.verify.verifyNodeManager=true` | Run NodeManager.verifyIntegrity after every async result publish (upstream 8187d2fd; slow) |
+| `-Dvoxy.exclusiveLock=true` | Hold an exclusive lock on `.voxy/voxy.lock` so a second game instance cannot open the same store (upstream 36964ee4/c6b30e51; off by default) |
+| `VOXY_FRAME_TIMING=1` | Per-stage frame cost probe: `[Metal-TIMING]` (Metal-side waits) + `[Metal-VXTIMING]` (GL-side vx passes, async timer queries). Zero cost when unset |
+| `VOXY_VX_TIMING=0` | Kill switch: with `VOXY_FRAME_TIMING=1`, keep only `[Metal-TIMING]` (no GL queries, no VXTIMING line) — pre-probe behaviour |
+| `VOXY_VX_TIMING_GPU=0` | `[Metal-VXTIMING]` CPU brackets only, no `GL_TIME_ELAPSED`/`GL_SAMPLES_PASSED` queries |
 
 ## Hard-won constraints (do not regress these)
 

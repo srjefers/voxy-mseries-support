@@ -12,6 +12,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 //Represents a loaded world section at a specific detail level
 // holds a 32x32x32 region of detail
 public final class WorldSection {
+    //Upstream c7166d3f/c2dca44e assertion: a section must never be freed while dirty or queued
+    // (that is silent data loss). Upstream throws; the fork LOGS by default because trySetFreed
+    // runs inside ActiveSectionTracker's stripe write lock with no try/finally — a throw there
+    // leaks the StampedLock and stalls every later acquire on that stripe (~1/64 of all keys).
+    // VOXY_SECTION_FREE_ASSERT=1 restores the upstream throw for diagnosis.
+    static final boolean FREE_ASSERT = "1".equals(System.getenv("VOXY_SECTION_FREE_ASSERT"));
     public static final int SECTION_VOLUME = 32*32*32;
     public static final boolean VERIFY_WORLD_SECTION_EXECUTION = VoxyCommon.isVerificationFlagOn("verifyWorldSectionExecution");
 
@@ -164,6 +170,24 @@ public final class WorldSection {
         if ((witness & 1) == 0 && witness != 0) {
             throw new IllegalStateException("Section marked as free but has refs");
         }
+        if (witness == 1 && (this.isDirty || this.inSaveQueue)) {
+            boolean dirty = this.isDirty, queued = this.inSaveQueue;
+            if (FREE_ASSERT) {
+                throw new IllegalStateException("Section freed while marked as dirty or in the save queue: " + (dirty?"dirty, ":"") + (queued?"saveQueue":"") + " " + WorldEngine.pprintPos(this.key));
+            }
+            //default (log mode): refuse to free it. Freeing would lose the write, and the thread that dirtied it
+            // would then find a freed-but-dirty section on its own unload. Nobody can take a ref on a section at
+            // state 0, so restoring the live state right away is race-free; the dirtying thread's unload saves it.
+            boolean restored = ATOMIC_STATE_HANDLE.compareAndSet(this, 0, 1);
+            if (restored) {
+                me.cortex.voxy.common.Logger.error("Section freed while marked as dirty or in the save queue: " + (dirty?"dirty, ":"") + (queued?"saveQueue":"") + " " + WorldEngine.pprintPos(this.key) + " (kept alive, will be saved)");
+                return false;
+            }
+            //Only reachable through a refcount bug elsewhere (an unconditional acquire/release landed in the window):
+            // do not leave a non-live section in the cache, free it as before this fix and say so loudly.
+            me.cortex.voxy.common.Logger.error("Section keep-alive failed, state is " + (int) ATOMIC_STATE_HANDLE.get(this) + ", freeing it (refcount bug): " + WorldEngine.pprintPos(this.key));
+            return true;
+        }
         return witness == 1;
     }
 
@@ -278,16 +302,22 @@ public final class WorldSection {
         return new WorldSection(lvl, x, y, z, null);
     }
 
-    public boolean exchangeIsInSaveQueue(boolean state) {
-        return ((boolean) IN_SAVE_QUEUE_HANDLE.compareAndExchange(this, !state, state)) == !state;
-    }
-
     public void markDirty() {
         IS_DIRTY_HANDLE.getAndSet(this, true);
     }
 
+
+    public boolean exchangeIsInSaveQueue(boolean state) {
+        return ((boolean) IN_SAVE_QUEUE_HANDLE.compareAndExchange(this, !state, state)) == !state;
+    }
+
+    //Should only be called by the saving service
     public boolean setNotDirty() {
         return (boolean) IS_DIRTY_HANDLE.getAndSet(this, false);
+    }
+
+    public boolean shouldSave() {
+        return this.isDirty&&!this.inSaveQueue;
     }
 
     public boolean isFreed() {

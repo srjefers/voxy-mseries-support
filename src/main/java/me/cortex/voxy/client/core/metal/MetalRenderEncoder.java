@@ -6,6 +6,7 @@ import me.cortex.voxy.client.core.gpu.IGpuSampler;
 import me.cortex.voxy.client.core.gpu.IGpuTexture;
 import me.cortex.voxy.client.core.gpu.RenderEncoder;
 
+import me.cortex.voxy.common.Logger;
 import org.lwjgl.system.MemoryUtil;
 
 /**
@@ -187,20 +188,52 @@ public final class MetalRenderEncoder implements RenderEncoder {
         if (buffer instanceof MetalBuffer mb) {
             indirectContents = mb.getContentsPtr();
         }
-        long perDrawScratchAddr = MemoryUtil.memAddress(this.perDrawScratch);
         long tFT = me.cortex.voxy.client.core.util.FrameTiming.ENABLED ? System.nanoTime() : 0;
-        for (int i = 0; i < drawCount; i++) {
-            long cmdAddr = offset + (long) i * stride;
-            if (indirectContents != 0) {
-                int baseInstance = MemoryUtil.memGetInt(indirectContents + cmdAddr + 16);
-                MemoryUtil.memPutInt(perDrawScratchAddr, baseInstance);
-                MetalNative.mtlRenderEncoderSetVertexBytes(this.encoderHandle,
-                        perDrawScratchAddr, 16, VOXY_METAL_PER_DRAW_UBO_BINDING);
+        if (!drawBatchLogged) {
+            drawBatchLogged = true;
+            Logger.info(DRAW_BATCH
+                    ? "[Metal] indirect draw loop: native batch ON (one JNI call per slice; VOXY_METAL_DRAW_BATCH=0 restores the per-draw Java loop)"
+                    : "[Metal] indirect draw loop: native batch OFF (VOXY_METAL_DRAW_BATCH=0) — per-draw Java JNI loop");
+        }
+        if (drawBatchActive) {
+            // Lever D (2026-09-25): the per-draw Java loop below costs two JNI
+            // crossings per draw (~40k/frame at 20k draws, 0.9-1.8 ms/frame
+            // measured as jniDrawLoop). The native batch runs the identical
+            // per-draw sequence (read baseInstance from the Shared contents,
+            // setVertexBytes at binding 6, indirect draw) in one native loop
+            // under one autoreleasepool. Zero-pointer contents skips the
+            // baseInstance push exactly like the Java loop.
+            try {
+                MetalNative.mtlRenderEncoderDrawIndexedIndirectBatch(this.encoderHandle,
+                        metalPrimitive, this.boundIndexType,
+                        this.boundIndexBuffer, this.boundIndexBufferOffset,
+                        indirectBuf, indirectContents,
+                        offset, drawCount, stride, VOXY_METAL_PER_DRAW_UBO_BINDING);
+                return;
+            } catch (UnsatisfiedLinkError e) {
+                // The loaded libvoxy_metal.dylib predates the batch export (a
+                // stale copy on java.library.path wins over the bundled one):
+                // fall back to the per-draw loop for the rest of the process.
+                drawBatchActive = false;
+                Logger.warn("[Metal] indirect draw loop: native batch export missing in the loaded dylib ("
+                        + e.getMessage() + ") — falling back to the per-draw Java loop");
             }
-            MetalNative.mtlRenderEncoderDrawIndexedPrimitivesIndirect(this.encoderHandle,
-                    metalPrimitive, this.boundIndexType,
-                    this.boundIndexBuffer, this.boundIndexBufferOffset,
-                    indirectBuf, cmdAddr);
+        }
+        {
+            long perDrawScratchAddr = MemoryUtil.memAddress(this.perDrawScratch);
+            for (int i = 0; i < drawCount; i++) {
+                long cmdAddr = offset + (long) i * stride;
+                if (indirectContents != 0) {
+                    int baseInstance = MemoryUtil.memGetInt(indirectContents + cmdAddr + 16);
+                    MemoryUtil.memPutInt(perDrawScratchAddr, baseInstance);
+                    MetalNative.mtlRenderEncoderSetVertexBytes(this.encoderHandle,
+                            perDrawScratchAddr, 16, VOXY_METAL_PER_DRAW_UBO_BINDING);
+                }
+                MetalNative.mtlRenderEncoderDrawIndexedPrimitivesIndirect(this.encoderHandle,
+                        metalPrimitive, this.boundIndexType,
+                        this.boundIndexBuffer, this.boundIndexBufferOffset,
+                        indirectBuf, cmdAddr);
+            }
         }
         if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
             me.cortex.voxy.client.core.util.FrameTiming.jniDrawLoopNs += System.nanoTime() - tFT;
@@ -214,6 +247,16 @@ public final class MetalRenderEncoder implements RenderEncoder {
 
     /** Vertex-buffer binding slot used by the per-draw baseInstance workaround. */
     private static final int VOXY_METAL_PER_DRAW_UBO_BINDING = 6;
+
+    /**
+     * Lever D kill switch: VOXY_METAL_DRAW_BATCH=0 restores the per-draw Java
+     * JNI loop; default (unset / anything else) runs the native batched loop.
+     * Metal-only class, so the GL backend is untouched either way.
+     */
+    private static final boolean DRAW_BATCH = !"0".equals(System.getenv("VOXY_METAL_DRAW_BATCH"));
+    /** Flips off once if the loaded dylib lacks the batch export. */
+    private static boolean drawBatchActive = DRAW_BATCH;
+    private static boolean drawBatchLogged;
 
     @Override
     public void drawIndexedIndirectCount(int primitiveType,

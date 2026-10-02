@@ -8,5 +8,8 @@
   "mixins": [
     "chunky.MixinFabricWorld",
     "minecraft.MixinWorld"
-  ]
+  ],
+  "overwrites": {
+    "requireAnnotations": true
+  }
 }

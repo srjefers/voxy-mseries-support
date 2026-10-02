@@ -19,6 +19,13 @@ import java.util.stream.Collectors;
 
 //TODO: add thread access verification (I.E. only accessible on a single thread)
 public abstract class VoxyInstance {
+    //Fork: bound the shutdown wait for worlds still in use (0 = wait forever, the upstream behaviour)
+    private static final long SHUTDOWN_WAIT_MS = parseShutdownWait();
+    private static long parseShutdownWait() {
+        String v = System.getenv("VOXY_SHUTDOWN_WAIT_MS");
+        if (v != null && !v.isBlank()) { try { return Math.max(0, Long.parseLong(v.trim())); } catch (NumberFormatException ignored) {} }
+        return 30_000;
+    }
     private volatile boolean isRunning = true;
     private final Thread worldCleaner;
     public final BooleanSupplier savingServiceRateLimiter;//Can run if this returns true
@@ -136,18 +143,20 @@ public abstract class VoxyInstance {
             return world;
         }
         long stamp = this.activeWorldLock.writeLock();
+        try {//fork: every exit (upstream 7da77c7f's early return AND a createWorld/createStorage throw) releases the stamp
+            if (!this.isRunning) {
+                Logger.error("Tried getting world object on voxy instance but its not running");
+                return null;
+            }
 
-        if (!this.isRunning) {
-            Logger.error("Tried getting world object on voxy instance but its not running");
-            return null;
+            world = this.activeWorlds.get(identifier);
+            if (world == null) {
+                //Create world here
+                world = this.createWorld(identifier);
+            }
+        } finally {
+            this.activeWorldLock.unlockWrite(stamp);
         }
-
-        world = this.activeWorlds.get(identifier);
-        if (world == null) {
-            //Create world here
-            world = this.createWorld(identifier);
-        }
-        this.activeWorldLock.unlockWrite(stamp);
         identifier.cachedEngineObject = new WeakReference<>(world);
         return world;
     }
@@ -228,19 +237,35 @@ public abstract class VoxyInstance {
 
         if (!this.activeWorlds.isEmpty()) {
             boolean printedNotice = false;
-            for (var world : this.activeWorlds.values()) {
+            for (var world : new ArrayList<>(this.activeWorlds.values())) {
                 if (world.isWorldUsed()) {
                     if (!printedNotice) {
                         printedNotice = true;
                         Logger.error("Not all worlds shutdown, force closing worlds");
                     }
+                    //Dont lock in the loopy thing, this should basicly never happen if it does something horrific happened
+                    this.activeWorldLock.unlockWrite(stamp);
+                    long waitStart = System.currentTimeMillis();
+                    boolean gaveUp = false;
                     while (world.isWorldUsed()) {
+                        if (SHUTDOWN_WAIT_MS > 0 && System.currentTimeMillis() - waitStart > SHUTDOWN_WAIT_MS) {
+                            gaveUp = true;
+                            break;
+                        }
                         try {
                             //noinspection BusyWait
                             Thread.sleep(10);
                         } catch (InterruptedException e) {
                             throw new RuntimeException(e);
                         }
+                    }
+                    stamp = this.activeWorldLock.writeLock();
+                    if (gaveUp) {
+                        //Fork: a leaked section ref (e.g. a worker that died mid-job during a crash) used to spin here
+                        // forever: frozen window and no crash report. Leave this world open instead of freeing storage
+                        // that something may still touch; RocksDB/LMDB recover an unclean close on the next open.
+                        Logger.error("World still in use after " + SHUTDOWN_WAIT_MS + " ms at shutdown, leaving it open (VOXY_SHUTDOWN_WAIT_MS=0 waits forever)");
+                        continue;
                     }
                 }
                 //Free the world
