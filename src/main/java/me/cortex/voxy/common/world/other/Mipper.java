@@ -4,6 +4,12 @@ import static me.cortex.voxy.common.world.other.Mapper.withLight;
 
 //Mipper for data
 public class Mipper {
+    private static final boolean MIP_BLOCKLIGHT_FIX = !"0".equals(System.getenv("VOXY_MIP_BLOCKLIGHT_FIX"));
+    static {
+        me.cortex.voxy.common.Logger.info("[Voxy-SYNC] mip block-light packing: "
+                + (MIP_BLOCKLIGHT_FIX ? "upstream 0eb618d1 ON (VOXY_MIP_BLOCKLIGHT_FIX=0 reverts; unvisited stored areas refresh via /voxy import current)" : "PRE-SYNC (VOXY_MIP_BLOCKLIGHT_FIX=0)"));
+    }
+
     //TODO: compute the opacity of the block then mip w.r.t those blocks
     // as distant horizons done
 
@@ -73,6 +79,16 @@ public class Mipper {
             blockLight = blockLight / 8;
             skyLight = (int) Math.ceil((double) skyLight / 8);
 
+            if (MIP_BLOCKLIGHT_FIX) {
+                // Upstream 0eb618d1: blockLight is the average of the HIGH nibbles (0..240) and
+                // already sits in bits 4-7. Shifting it left again pushed it past bit 7, so
+                // withLight's &0xFF kept only (avg & 0x0F)<<4 — zero for a uniformly lit cell,
+                // noise otherwise. This branch is the all-air cell, i.e. exactly the voxels whose
+                // light byte lights the neighbouring LOD faces, so torches / lava / glowstone read
+                // dark or random at distance. Areas the client re-ingests heal on their own; stored
+                // areas never revisited need '/voxy import current'. VOXY_MIP_BLOCKLIGHT_FIX=0 reverts.
+                return withLight(I111, (blockLight & 0xF0) | skyLight);
+            }
             return withLight(I111, (blockLight << 4) | skyLight);
         }
     }

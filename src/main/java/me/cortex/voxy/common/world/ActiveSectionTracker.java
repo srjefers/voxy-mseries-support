@@ -3,6 +3,7 @@ package me.cortex.voxy.common.world;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import me.cortex.voxy.common.Logger;
+import me.cortex.voxy.common.world.other.Mapper;
 import org.jetbrains.annotations.Nullable;
 
 import java.lang.invoke.MethodHandles;
@@ -12,6 +13,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.StampedLock;
 
 public class ActiveSectionTracker {
+    //Fork review fix: the B1 port left every unload-path enqueue non-blocking, so the save queue had no
+    // bound and dirty sections (256 KB each) piled up under fast travel. Upstream/dev restored blocking
+    // enqueue on the lock-free path (a15d5e2b). VOXY_SAVE_BACKPRESSURE=0 keeps it non-blocking.
+    private static final boolean SAVE_BACKPRESSURE = !"0".equals(System.getenv("VOXY_SAVE_BACKPRESSURE"));
+    private static final boolean UNDEFINED_SKYLIGHT_15 = !"0".equals(System.getenv("VOXY_SYNC_UNDEFINED_SKYLIGHT"));
 
     //Deserialize into the supplied section, returns true on success, false on failure
     public interface SectionLoader {int load(WorldSection section);}
@@ -155,7 +161,12 @@ public class ActiveSectionTracker {
                 //TODO: REWRITE THE section tracker _again_ to not be so shit and jank, and so that Arrays.fill is not 10% of the execution time
                 if (status == 1) {
                     //We need to set the data to air as it is undefined state
-                    Arrays.fill(section.data, 0);
+                    //Upstream 47053483: an undefined (not-in-storage) section used to be filled
+                    // with sky light 0, so every LOD face next to one was lit as if in a cave.
+                    // VOXY_SYNC_UNDEFINED_SKYLIGHT=0 restores the dark fill for A/B.
+                    int sky = UNDEFINED_SKYLIGHT_15 ? 15 : 0;
+                    int block = 0;
+                    Arrays.fill(section.data, Mapper.composeMappingId((byte) (sky|(block<<4)),0,0));
                 }
                 section.acquire(1);
             }
@@ -203,13 +214,31 @@ public class ActiveSectionTracker {
 
     void tryUnload(WorldSection section) {
         if (this.engine != null) this.engine.lastActiveTime = System.currentTimeMillis();
-        if (section.isDirty&&this.engine!=null) {
+        if (section.shouldSave()&&this.engine!=null) {
+            //Upstream/dev a15d5e2b + 484f5c3b: this path holds no stripe lock, so the enqueue may block
+            // (SAVE_BACKPRESSURE: over the soft cap the caller steals save jobs, which bounds the queue and
+            // with it the resident dirty sections). Every outcome returns: either the save queue now owns
+            // our ref, or release(true) re-enters the unload pipeline.
             if (section.tryAcquire()) {
-                if (section.setNotDirty()) {//If the section is dirty we must enqueue for saving
-                    this.engine.saveSection(section);
+                VarHandle.loadLoadFence();
+                if (section.shouldSave()) {//If we should try enqueue
+                    if (!this.engine.saveSection(section, !SAVE_BACKPRESSURE, true)) {
+                        //we didnt enqueue: someone else queued it first, release and let the unload run again
+                        section.release(true);
+                    }
+                } else {
+                    section.release(true);//raced a save: release and let the unload run again
                 }
-                section.release(false);//Special
+                return;
+            } else if (WorldSection.FREE_ASSERT) {
+                if (section.shouldSave()) {
+                    Logger.error("failed to acquire section, but we need to save, this is really bad");
+                }
+                return;
             }
+            //Fork (log mode): tryAcquire only fails here while a concurrent unload holds the section
+            // transiently at state 0 before trySetFreed refuses to free it (it is dirty). Fall through:
+            // the locked path waits for that unload's stripe lock and then saves the section.
         }
 
         if (section.getRefCount() != 0) {
@@ -220,19 +249,50 @@ public class ActiveSectionTracker {
         WorldSection sec = null;
         final var lock = this.locks[index];
         long stamp = lock.writeLock();
+        if (section.getRefCount() != 0) {//upstream/dev a15d5e2b: re-check under the lock
+            lock.unlockWrite(stamp);
+            return;
+        }
+        boolean shouldRetryExit = false;
         {
             VarHandle.loadLoadFence();
-            if (section.isDirty) {
+            if (this.engine != null && section.shouldSave()) {//Last call for saving
                 if (section.tryAcquire()) {
-                    if (section.setNotDirty()) {//If the section is dirty we must enqueue for saving
-                        if (this.engine != null)
-                            this.engine.saveSection(section);
+                    if (!this.engine.saveSection(section, true, true)) {//not allowed to block as we are in a lock
+                        //We didnt enqueue the save here: always retry the unload outside the lock
+                        // (upstream/dev 484f5c3b; the ref/dirty re-checks it replaces could miss a race)
+                        shouldRetryExit = true;
+                        section.release(false);//Special, we cannot unload here else we deadlock
                     }
-                    section.release(false);//Special
+
+
+                    //NOTE: think have since fixed this issue
+                    //In theory there can be a race condition here, where if this thread is paused
+                    // the save queue fully finishes, the state is dirty == false inSaveQueue == false
+                    // but the acquire count is at least 1
+                    //if another thread marks this chunk as dirty (it would have acquired it after the inital `section.getRefCount() != 0`
+                    // return check) and releases it, since the acquire count is still 1 (acquired here)
+                    // then it doesnt trigger a save attempt but the dirty flag is set
+                    //then this code continues and it causes badness cause its now in an invalid state
                 } else {
-                    throw new IllegalStateException("Section was dirty but is also unloaded, this is very bad");
+                    if (WorldSection.FREE_ASSERT) {
+                        throw new IllegalStateException("Section was dirty but is also unloaded, this is very bad");
+                    }
+                    //Fork (log mode): never throw while holding the stripe write lock (it would never be released)
+                    Logger.error("Section was dirty but is also unloaded, this is very bad: " + WorldEngine.pprintPos(section.key));
+                    lock.unlockWrite(stamp);
+                    return;
                 }
             }
+
+            //This is a painful case, we need to abort here if there was a funky thing that happened
+            if (shouldRetryExit) {
+                lock.unlockWrite(stamp);
+                //retry
+                this.tryUnload(section);
+                return;
+            }
+
             if (section.getRefCount() == 0 && section.trySetFreed()) {
                 var cached = cache.remove(section.key);
                 var obj = cached.obj;

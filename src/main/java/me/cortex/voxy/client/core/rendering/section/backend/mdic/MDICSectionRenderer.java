@@ -482,6 +482,42 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                     translucentDefines.put("VOXY_LOD_DIST_MIP_BIAS", biasStr);
                     Logger.info("[Metal-LODTEST] distance-based atlas mip ON (maxLod=" + maxLod
                             + ", bias=" + biasStr + "); VOXY_LOD_DIST_MIP=0 reverts to fixed mip 0");
+                    // VOXY_LOD_MIP_DISCARD (2026-09-25, opaque cutout only): the
+                    //   alpha test also samples the distance mip, so undilated
+                    //   plant sprites thin out with distance like vanilla's
+                    //   mipmapped cutout instead of staying bold specks.
+                    //   =0 reverts; VOXY_LOD_MIP_DISCARD_ALPHA=<f> tunes (0.5).
+                    if (!"0".equals(System.getenv("VOXY_LOD_MIP_DISCARD"))) {
+                        float cutA = 0.5f;
+                        String ca = System.getenv("VOXY_LOD_MIP_DISCARD_ALPHA");
+                        if (ca != null && !ca.isBlank()) {
+                            try { cutA = Math.max(0.0f, Math.min(1.0f, Float.parseFloat(ca.trim()))); }
+                            catch (NumberFormatException e) { cutA = 0.5f; }
+                        }
+                        String cutStr = String.format(java.util.Locale.ROOT, "%.4f", cutA);
+                        opaqueDefines.put("VOXY_LOD_MIP_DISCARD", "");
+                        opaqueDefines.put("VOXY_LOD_MIP_DISCARD_ALPHA", cutStr);
+                        Logger.info("[Metal-LODTEST] mip-aware cutout discard ON (alpha <= " + cutStr
+                                + " at the distance mip; plant tufts thin with distance); VOXY_LOD_MIP_DISCARD=0 reverts");
+                    }
+                    // VOXY_LOD_PLANT_EDGEFADE (2026-09-25, opaque only): drop the
+                    //   near-edge-on plane of a plant '+' cross (UV footprint
+                    //   anisotropy > VOXY_LOD_PLANT_EDGE_ANISO, default 3.0) —
+                    //   the tall solid centre column next to vanilla's X.
+                    //   =0 reverts; _ANISO=<f> tunes (lower = more aggressive).
+                    if (!"0".equals(System.getenv("VOXY_LOD_PLANT_EDGEFADE"))) {
+                        float an = 3.0f;
+                        String av = System.getenv("VOXY_LOD_PLANT_EDGE_ANISO");
+                        if (av != null && !av.isBlank()) {
+                            try { an = Math.max(1.0f, Math.min(64.0f, Float.parseFloat(av.trim()))); }
+                            catch (NumberFormatException e) { an = 3.0f; }
+                        }
+                        String anStr = String.format(java.util.Locale.ROOT, "%.4f", an);
+                        opaqueDefines.put("VOXY_LOD_PLANT_EDGEFADE", "");
+                        opaqueDefines.put("VOXY_LOD_PLANT_EDGE_ANISO", anStr);
+                        Logger.info("[Metal-LODTEST] plant edge-on plane fade ON (UV anisotropy > " + anStr
+                                + " discards); VOXY_LOD_PLANT_EDGEFADE=0 reverts");
+                    }
                 }
                 // VOXY_WATER_FAR_ALPHA — far-water opacity ramp (2026-07-03),
                 //   DEFAULT ON, translucent only. Constant vanilla alpha 0.706

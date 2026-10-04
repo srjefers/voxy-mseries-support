@@ -41,6 +41,7 @@ import static org.lwjgl.opengl.GL43C.*;
 //An "async host" for a NodeManager, has specific synchonius entry and exit points
 // this is done off thread to reduce the amount of work done on the render thread, improving frame stability and reducing runtime overhead
 public class AsyncNodeManager {
+    private static final boolean VERIFY_NODE_MANAGER = me.cortex.voxy.commonImpl.VoxyCommon.isVerificationFlagOn("verifyNodeManager");
     private static final VarHandle RESULT_HANDLE;
     private static final VarHandle RESULT_CACHE_1_HANDLE;
     private static final VarHandle RESULT_CACHE_2_HANDLE;
@@ -58,6 +59,21 @@ public class AsyncNodeManager {
     public final int maxNodeCount;
     private final long geometryCapacity;
     private volatile boolean running = true;
+    private volatile Throwable uncaughtException;
+    //Upstream 36f85026/02e490e0: a dying worker thread rethrows its exception on the render thread
+    // (crash report with the real cause) instead of leaving LODs frozen behind 'Not running'.
+    // VOXY_WORKER_RETHROW=0 restores the pre-sync behaviour (log, thread exits, render thread continues).
+    public static final boolean WORKER_RETHROW = !"0".equals(System.getenv("VOXY_WORKER_RETHROW"));
+    //Upstream 36f85026: cap the geometry uploaded per async loop run (~1 MB) to smooth frame
+    // spikes; VOXY_NODE_UPLOAD_CAP_KB tunes it (0 = uncapped, the pre-sync behaviour).
+    private static final long UPLOAD_CAP_BYTES = parseUploadCap();
+    private static long parseUploadCap() {
+        String v = System.getenv("VOXY_NODE_UPLOAD_CAP_KB");
+        long kb = 1_000L;
+        if (v != null && !v.isBlank()) { try { kb = Long.parseLong(v.trim()); } catch (NumberFormatException ignored) {} }
+        Logger.info("[Voxy-SYNC] async node upload cap: " + (kb <= 0 ? "OFF (VOXY_NODE_UPLOAD_CAP_KB=0)" : kb + " KB/run (upstream 36f85026; VOXY_NODE_UPLOAD_CAP_KB tunes, 0 = off)"));
+        return kb <= 0 ? Long.MAX_VALUE : kb << 10;
+    }
 
     private final NodeManager manager;
     private final BasicAsyncGeometryManager geometryManager;
@@ -96,8 +112,19 @@ public class AsyncNodeManager {
                 }
             } catch (Exception e) {
                 Logger.error("Critical error occurred in async processor, things will be broken", e);
+                if (WORKER_RETHROW) throw e;
             }
         });
+        if (WORKER_RETHROW) {
+            this.thread.setUncaughtExceptionHandler((t,e)->{
+                if (e == null) {
+                    e = new RuntimeException("null throwable");
+                }
+                Logger.error("Async Node Manager thread died", e);//an Error bypasses the body's catch (Exception)
+                this.uncaughtException = e;
+                this.running = false;
+            });
+        }
         this.thread.setName("Async Node Manager");
         this.thread.setDaemon(true);// don't block JVM shutdown if this thread is stuck
 
@@ -167,6 +194,14 @@ public class AsyncNodeManager {
     private static final int SCATTER_PUSH_BINDING = 14;
 
     private final me.cortex.voxy.client.core.gpu.RenderBackend backend = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get();
+    //Fork (Metal): defer a geometry result that has no contiguous block in the arena instead of letting
+    // createMeta throw 'Geometry OOM' (worker death -> render-thread rethrow -> crash). The 50 MB gate
+    // counts holes as free, so a fragmented arena passes it; the smaller RAM-scaled arenas make that
+    // reachable. The deferred job goes back to the head of the queue and the cleaner makes room.
+    // GL keeps upstream behaviour byte-identical. VOXY_GEOMETRY_FIT_GATE=0 restores the throw.
+    private final boolean fitGate = this.backend.getType() != me.cortex.voxy.client.core.gpu.BackendType.OPENGL
+            && !"0".equals(System.getenv("VOXY_GEOMETRY_FIT_GATE"));
+    private long fitDeferrals;
 
     private final me.cortex.voxy.client.core.gpu.IGpuPipeline scatterWrite = this.backend.createComputePipeline(
             new me.cortex.voxy.client.core.gpu.ComputePipelineDesc(
@@ -253,19 +288,40 @@ public class AsyncNodeManager {
             if (job == null)
                 break;
             workDone++;
-            this.manager.processChildChange(job.key, job.getNonEmptyChildren());
-            job.release();
+            try {
+                this.manager.processChildChange(job.key, job.getNonEmptyChildren());
+            } finally {
+                job.release();//fork: a throw here (worker death) used to strand this section ref, keeping the world 'used'
+            }
         } while (true);
 
 
         //Limit uploading as well as by geometry capacity being available
         // must have 50 mb of free geometry space to upload
-        for (int limit = 0; limit < 300 && ((this.geometryCapacity-this.geometryManager.getGeometryUsedBytes())>50_000_000L); limit++) {
+        //Limit to X geometry for each loop run to try smooth things more (upstream 36f85026)
+        long estimatedGeometryUploadAmount = 0;
+        for (int limit = 0; limit < 300 && ((this.geometryCapacity-this.geometryManager.getGeometryUsedBytes())>50_000_000L) && estimatedGeometryUploadAmount<UPLOAD_CAP_BYTES; limit++) {
             var job = this.geometryUpdateQueue.poll();
             if (job == null)
                 break;
+            if (this.fitGate && !this.geometryManager.canFit(job)) {
+                this.geometryUpdateQueue.addFirst(job);
+                long n = ++this.fitDeferrals;
+                if ((n & (n - 1)) == 0) {//1st, 2nd, 4th, 8th... occurrence
+                    long[] shape = this.geometryManager.freeShape();
+                    Logger.warn("[Metal-MEM] geometry arena fragmented: deferred a " + (job.geometryBuffer.size >> 10)
+                            + " KB section (largest hole " + (shape[0] >> 10) + " KB, top room " + (shape[1] >> 10)
+                            + " KB, used " + (this.geometryManager.getGeometryUsedBytes() >> 20) + " of "
+                            + (this.geometryCapacity >> 20) + " MB); waiting for the cleaner. deferrals=" + n
+                            + " (VOXY_GEOMETRY_FIT_GATE=0 restores the OOM throw)");
+                }
+                break;
+            }
             workDone++;
             this.manager.processGeometryResult(job);
+            if (job.geometryBuffer!=null) {
+                estimatedGeometryUploadAmount += job.geometryBuffer.size;
+            }
         }
 
         while (true) {//Process all request batches
@@ -329,6 +385,11 @@ public class AsyncNodeManager {
 
         if (workDone == 0) {//Nothing happened, which is odd, but just return
             //Should probably log that nothing happened, at least once
+            if (this.fitGate && !this.geometryUpdateQueue.isEmpty()) {
+                //Fork (Metal): geometry is queued but gated (arena below 50 MB free or fragmented), so
+                // workCounter stays > 0 and run() never parks: back off instead of spinning a core.
+                LockSupport.parkNanos(2_000_000L);
+            }
             return;
         }
         //=====================
@@ -497,11 +558,18 @@ public class AsyncNodeManager {
         if (!RESULT_HANDLE.compareAndSet(this, null, results)) {
             throw new IllegalArgumentException("Should always have null");
         }
+
+        if (VERIFY_NODE_MANAGER) {
+            this.manager.verifyIntegrity();
+        }
     }
 
     private IntConsumer tlnAddCallback; private IntConsumer tlnRemoveCallback;
     //Render thread synchronization
     public void tick(IGpuBuffer nodeBuffer, NodeCleaner cleaner) {//TODO: dont pass nodeBuffer here??, do something else thats better
+        if (this.uncaughtException != null) {
+            throw new RuntimeException(this.uncaughtException);//Propagate internal exception
+        }
         var results = (SyncResults)RESULT_HANDLE.getAndSet(this, null);//Acquire the results
         if (results == null) {//There are no new results to process, return
             return;
@@ -653,7 +721,12 @@ public class AsyncNodeManager {
     private final LongOpenHashSet tlnRem = new LongOpenHashSet();
 
     private void addWork() {
-        if (!this.running) throw new IllegalStateException("Not running");
+        if (!this.running) {
+            if (this.uncaughtException != null) {
+                throw new RuntimeException(this.uncaughtException);//Propagate internal exception
+            }
+            throw new IllegalStateException("Not running");
+        }
         if (this.workCounter.getAndIncrement() == 0) {
             LockSupport.unpark(this.thread);
         }
@@ -701,7 +774,7 @@ public class AsyncNodeManager {
 
     public void addTopLevel(long section) {//Only called from render thread
         DIAG_TOP_LEVEL_ADD_COUNT.incrementAndGet();
-        if (!this.running) throw new IllegalStateException("Not running");
+        this.throwIfNotRunning();
         long stamp = this.tlnLock.writeLock();
         int state = 0;
         if (!this.tlnRem.remove(section)) {
@@ -718,7 +791,7 @@ public class AsyncNodeManager {
     }
 
     public void removeTopLevel(long section) {//Only called from render thread
-        if (!this.running) throw new IllegalStateException("Not running");
+        this.throwIfNotRunning();
         long stamp = this.tlnLock.writeLock();
         int state = 0;
         if (!this.tlnAdd.remove(section)) {
@@ -740,8 +813,19 @@ public class AsyncNodeManager {
         this.thread.start();
     }
 
-    public void stop() {
+    private void throwIfNotRunning() {
         if (!this.running) {
+            if (WORKER_RETHROW && this.uncaughtException != null) {
+                throw new RuntimeException(this.uncaughtException);//Propagate internal exception
+            }
+            throw new IllegalStateException("Not running");
+        }
+    }
+
+    public void stop() {
+        //A worker that died with a recorded exception is already stopped: still join it and drain/free the
+        // queues (they hold section refs; skipping this left world refs alive and hung VoxyInstance.shutdown)
+        if (!this.running && !(WORKER_RETHROW && this.uncaughtException != null)) {
             throw new IllegalStateException();
         }
         this.running = false;
@@ -803,7 +887,7 @@ public class AsyncNodeManager {
     }
 
     public void addDebug(List<String> debug) {
-        debug.add("UC/GC: " + (this.getUsedGeometryCapacity()/(1<<20))+"/"+(this.getGeometryCapacity()/(1<<20)));
+        debug.add("UC/GC,#N: " + (this.getUsedGeometryCapacity()/(1<<20))+"/"+(this.getGeometryCapacity()/(1<<20)) + "," + (this.geometryData.getSectionCount()));
         //debug.add("GUQ/NRC: " + this.geometryUpdateQueue.size()+"/"+this.removeBatchQueue.size());
     }
 

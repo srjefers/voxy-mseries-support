@@ -26,9 +26,17 @@ public class ModelBakerySubsystem {
 
     private final Thread processingThread;
     private volatile boolean isRunning = true;
+    private volatile Throwable processingThreadException;
     public ModelBakerySubsystem(Mapper mapper) {
         this.mapper = mapper;
-        this.factory = new ModelFactory(mapper, this.storage);
+        try {
+            this.factory = new ModelFactory(mapper, this.storage);
+        } catch (RuntimeException | Error e) {
+            //A11 (fork): the store's model atlas (~535 MB Shared on Metal) is built by the field initializer; a
+            // failed factory build leaked it because the renderer's cleanup stack never saw this subsystem.
+            try { this.storage.free(); } catch (Throwable t) { me.cortex.voxy.common.Logger.error("Error freeing model store after a failed bakery build", t); }
+            throw e;
+        }
         this.processingThread = new Thread(()->{//TODO replace this with something good/integrate it into the async processor so that we just have less threads overall
             while (this.isRunning) {
                 this.factory.processAllThings();
@@ -39,10 +47,23 @@ public class ModelBakerySubsystem {
                 }
             }
         }, "Model factory processor");
+        if (me.cortex.voxy.client.core.rendering.hierachical.AsyncNodeManager.WORKER_RETHROW) {//VOXY_WORKER_RETHROW=0: default handler (pre-sync)
+            this.processingThread.setUncaughtExceptionHandler((t,e)->{
+                this.isRunning = false;
+                if (e == null) {
+                    e = new RuntimeException("unhandled excpetion not added");
+                }
+                me.cortex.voxy.common.Logger.error("Model factory processor thread died", e);
+                this.processingThreadException = e;
+            });
+        }
         this.processingThread.start();
     }
 
     public void tick(long totalBudget) {
+        if (this.processingThreadException != null) {
+            throw new RuntimeException(this.processingThreadException);
+        }
         long start = System.nanoTime();
         this.factory.tickAndProcessUploads();
         //Always do 1 iteration minimum
@@ -84,7 +105,7 @@ public class ModelBakerySubsystem {
     private final ReentrantLock seenIdsLock = new ReentrantLock();
     private final IntOpenHashSet seenIds = new IntOpenHashSet(6000);//TODO: move to a lock free concurrent hashmap
     public void requestBlockBake(int blockId) {
-        if (this.mapper.getBlockStateCount() < blockId) {
+        if (this.mapper.getBlockStateCount() <= blockId) {
             Logger.error("Error, got bakeing request for out of range state id. StateId: " + blockId + " max id: " + this.mapper.getBlockStateCount(), new Exception());
             return;
         }

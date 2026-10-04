@@ -143,13 +143,16 @@ public class DownloadStream {
             //Release all the allocations from the frame
             var frame = this.frames.pop();
 
-            //Apply all the callbacks
-            for (var data : frame.data) {
-                data.resultConsumer.consume(this.downloadBuffer.addr() + data.downloadStreamOffset, data.size);
+            //Apply all the callbacks; the frame's allocations and fence are released even if a callback throws
+            // (fork: a dead node-manager worker makes addWork rethrow from a callback)
+            try {
+                for (var data : frame.data) {
+                    data.resultConsumer.consume(this.downloadBuffer.addr() + data.downloadStreamOffset, data.size);
+                }
+            } finally {
+                frame.allocations.forEach(this.allocationArena::free);
+                frame.fence.free();
             }
-
-            frame.allocations.forEach(this.allocationArena::free);
-            frame.fence.free();
         }
     }
 

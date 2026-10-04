@@ -39,6 +39,11 @@ bool modelIsTranslucent(BlockModel model) {
     return ((model.flagsA)&4u) != 0;
 }
 
+//Metal-only plant cross model (ModelFactory sets bit 16 only on non-GL backends)
+bool modelIsPlantCross(BlockModel model) {
+    return ((model.flagsA)&16u) != 0;
+}
+
 bool modelIsShaded(BlockModel model) {
     return ((model.flagsA)&8u) != 0;
 }

@@ -154,6 +154,10 @@ vec4 computeColour(vec2 texturePos, vec4 colour) {
 
 
 void main() {
+#ifdef VOXY_LOD_MIP_DISCARD
+    // Distance mip carried out of the colour block for the cutout test below.
+    float voxyCutoutLod = 0.0;
+#endif
 #if defined(VOXY_BOUND_DEBUG) && defined(PATCHED_SHADER)
     // See the bound-mask block below: PATCHED variants paint the debug red
     // at the emit site via this flag (no outColour exists to write here).
@@ -315,6 +319,12 @@ void main() {
     vec2 uv2 = modf(uv, tile)*(1.0/(vec2(3.0,2.0)*256.0));
     vec4 colour;
     vec2 texPos = uv2 + getBaseUV();
+#ifdef VOXY_LOD_PLANT_EDGEFADE
+    // Taken here, before the gl_HelperInvocation early return below, so the
+    // derivatives are defined (see the plant edge test in the cutout block).
+    vec2 voxyTexDx = dFdx(texPos);
+    vec2 voxyTexDy = dFdy(texPos);
+#endif
 
 #ifdef VOXY_NO_ATLAS
     // M12 Metal path: ModelTextureBakery is still GL-only, so the
@@ -401,6 +411,9 @@ void main() {
                                  0.0, VOXY_ATLAS_MAX_LOD);
         }
         #endif
+        #ifdef VOXY_LOD_MIP_DISCARD
+        voxyCutoutLod = voxyAtlasLod;
+        #endif
         colour = textureLod(blockModelAtlas, texPos, voxyAtlasLod);
 #elif defined(VOXY_LOD_FIXED_MIP)
         // DIAGNOSTIC (2026-05-25): sample the atlas at a fixed LOD 0 instead of
@@ -423,7 +436,16 @@ void main() {
     // cell visible instead of silently black/discarded.
     #ifdef VOXY_DEBUG_MAGENTA_MISSING
     if (colour.a == 0.0) {
+        #ifdef PATCHED_SHADER
+        // Material g-buffer path (shader pack): there is no outColour, so emit magenta through the pack
+        // emitter like the water debug arm above (lightMap 248/256 quantizes to nibble 15, bright).
+        // Without this the pack pipelines failed to compile with this debug knob on.
+        voxy_emitFragment(VoxyFragmentParameters(
+                vec4(1.0, 0.0, 1.0, 1.0), vec2(0.0), vec2(0.0), 0u, 0u,
+                vec2(248.0/256.0), vec4(1.0), 0u));
+        #else
         outColour = vec4(1.0, 0.0, 1.0, 1.0);
+        #endif
         return;
     }
     #endif
@@ -484,7 +506,44 @@ void main() {
 #ifndef VOXY_LOD_NO_DISCARD
     //Also, small quad is really fking over the mipping level somehow
     #ifndef TRANSLUCENT
+    #ifdef VOXY_LOD_PLANT_EDGEFADE
+    // Metal (2026-09-25): a plant is an axis-aligned '+' of two full-cell
+    // planes. Viewed near a block axis one plane is almost edge-on: its 16
+    // sprite columns (bottom rows fully opaque) collapse into a 3-4 px solid
+    // column that, at a steep pitch, smears over the plane's depth extent —
+    // the "tall dark cactus" next to vanilla's X, whose blades are never
+    // edge-on except along a diagonal. A near-edge-on plane has a strongly
+    // anisotropic UV footprint (many texels per pixel along one screen axis,
+    // ~1 along the other), so drop plant fragments whose footprint anisotropy
+    // exceeds VOXY_LOD_PLANT_EDGE_ANISO (default 3: gone past ~20 deg off an
+    // axis, kept at 30+). Face-on and 45-degree planes stay (aniso <= 1.5).
+    // Plant-cross flag = interData.x bit 7, set by quad_util's makeQuadFlags under the same define.
+    // (Reading modelData here compiled only in the PATCHED_SHADER path: without a shader pack the
+    // opaque pipeline failed to build and every world join crashed.)
+    if (((interData.x >> 7u) & 1u) != 0u) {
+        float voxyLx = length(voxyTexDx);
+        float voxyLy = length(voxyTexDy);
+        float voxyAniso = max(voxyLx, voxyLy) / max(min(voxyLx, voxyLy), 1e-7);
+        if (voxyAniso > VOXY_LOD_PLANT_EDGE_ANISO) {
+            discard;
+            return;
+        }
+    }
+    #endif
+    #ifdef VOXY_LOD_MIP_DISCARD
+    // Metal (2026-09-25): ALSO test the alpha at the distance mip. The mip-0
+    // test alone keeps every sparse blade of a plant sprite fully opaque at
+    // any distance (an undilated plant cell's mip alpha IS its coverage), so
+    // a 1-block tuft 600 blocks away rendered as a solid dark speck and the
+    // far plains read as a dense carpet while vanilla's mipmapped cutout lets
+    // the thin upper blades fade and keeps only the dense base. Dilated cells
+    // (cubes, leaves, fences) have mip alpha 1 everywhere: untouched.
+    // VOXY_LOD_MIP_DISCARD=0 reverts; VOXY_LOD_MIP_DISCARD_ALPHA tunes (0.5).
+    if (useDiscard() && (textureLod(blockModelAtlas, texPos, 0).a <= 0.1f
+            || textureLod(blockModelAtlas, texPos, voxyCutoutLod).a <= VOXY_LOD_MIP_DISCARD_ALPHA)) {
+    #else
     if (useDiscard() && (textureLod(blockModelAtlas, texPos, 0).a <= 0.1f)) {
+    #endif
     //if (useDiscard() && (colour.a <= 0.1f)) {
     #else
     if (textureLod(blockModelAtlas, texPos, 0).a == 0.0f) {

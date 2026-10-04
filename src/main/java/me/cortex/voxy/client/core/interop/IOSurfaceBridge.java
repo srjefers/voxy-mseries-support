@@ -58,6 +58,17 @@ public final class IOSurfaceBridge implements AutoCloseable {
     private final int width;
     private final int height;
     private final IOSurfaceFormat format;
+    /**
+     * Compositor-side stamp (lever C, 2026-09-25): the
+     * {@link IOSurfaceBridgeCompositor} bridge generation this surface was
+     * last re-specified into its GL rect texture for (CGLTexImageIOSurface2D).
+     * 0 = never. Package-private on purpose — only the compositor's resync
+     * gate reads/writes it; a fresh bridge object (realloc / recycled
+     * IOSurfaceRef address) starts at 0 and therefore always re-specifies.
+     */
+    int glResyncGen;
+    /** GL rect texture name the stamp above applies to (a bridge may be bound under several names). */
+    int glResyncTex;
     private long ioSurfaceHandle;
     private long metalTextureHandle;
 
@@ -222,6 +233,10 @@ public final class IOSurfaceBridge implements AutoCloseable {
             this.metalTextureHandle = 0;
         }
         if (this.ioSurfaceHandle != 0) {
+            // Drop the GL side FIRST (the CGL-bound rect texture holds its own
+            // retain on the surface); the compositor owns the GL names so this
+            // class stays LWJGL-free. See IOSurfaceBridgeCompositor.releaseForBridge.
+            IOSurfaceBridgeCompositor.releaseForBridge(this.ioSurfaceHandle);
             MetalNative.iosurfaceRelease(this.ioSurfaceHandle);
             this.ioSurfaceHandle = 0;
         }

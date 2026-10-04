@@ -220,13 +220,22 @@ public final class AtlasMirror {
             this.lastSyncedGlId = -1;
         }
         if (this.sampler == null) {
-            // Match MC's block-atlas sampler conventions: NEAREST mip filter
-            // (Voxy's terrain shader uses textureGrad which needs derivatives
-            // but the bakery shaders typically use textureLod). MAX/MIN are
-            // LINEAR so the bake doesn't look pixelated when projected
-            // through the 6-face cube transforms.
+            // MC's block atlas is sampled NEAREST (mag) / NEAREST_MIPMAP (min)
+            // by the terrain renderer, and the GL bakery inherits exactly that.
+            // This mirror used LINEAR/LINEAR "so the bake doesn't look
+            // pixelated", which is wrong for cutout sprites: bilinear sampling
+            // smears a 1-texel grass blade into 2-3 texels of fractional alpha,
+            // position_tex.fsh keeps everything above alpha 0.001 and the
+            // capture marks any alpha > 0 as written, so every plant blade
+            // baked 2-3x too thick — the dense "hedge" tufts seen through the
+            // spyglass on the first LOD ring (2026-09-25). The bake cell is
+            // 1:1 with the 16x16 sprite, so NEAREST costs nothing on cubes.
+            // VOXY_BAKE_SAMPLER_LINEAR=1 restores the blur for A/B.
+            boolean linear = "1".equals(System.getenv("VOXY_BAKE_SAMPLER_LINEAR"));
+            SamplerDesc.Filter f = linear ? SamplerDesc.Filter.LINEAR : SamplerDesc.Filter.NEAREST;
+            me.cortex.voxy.common.Logger.info("[Metal-BAKE] block-atlas bake sampler " + (linear ? "LINEAR (VOXY_BAKE_SAMPLER_LINEAR=1)" : "NEAREST"));
             this.sampler = this.backend.createSampler(SamplerDesc.builder()
-                    .filter(SamplerDesc.Filter.LINEAR, SamplerDesc.Filter.LINEAR)
+                    .filter(f, f)
                     .mipFilter(SamplerDesc.MipFilter.NEAREST)
                     .wrap(SamplerDesc.Wrap.CLAMP_TO_EDGE, SamplerDesc.Wrap.CLAMP_TO_EDGE)
                     .label("Voxy.MCBlockAtlasSampler")

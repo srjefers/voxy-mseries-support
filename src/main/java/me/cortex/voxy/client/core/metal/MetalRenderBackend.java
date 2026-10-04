@@ -67,7 +67,9 @@ public class MetalRenderBackend implements RenderBackend {
         }
 
         String deviceName = MetalNative.mtlDeviceGetName(this.device);
-        Logger.info("Metal device: " + deviceName);
+        Logger.info("Metal device: " + deviceName + " | macOS " + System.getProperty("os.version")
+                + " | MSL " + ("0".equals(System.getenv("VOXY_METAL_MSL_PIN"))
+                        ? "newest the OS offers (VOXY_METAL_MSL_PIN=0)" : "3.0 pinned (the macOS 13 floor)"));
 
         this.commandQueue = MetalNative.mtlDeviceNewCommandQueue(this.device);
         if (this.commandQueue == 0) {

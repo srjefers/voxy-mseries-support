@@ -63,11 +63,33 @@ public class UnifiedServiceThreadPool {
         }
     }
 
+    //Fork: release the workers even when the service manager refuses to shut down (a service left
+    // running), otherwise every 'Dedicated Voxy Worker' stays parked in Block.acquire for the rest of the
+    // process, once per affected world leave. The exception still propagates (VoxyInstance logs it).
+    // VOXY_POOL_SHUTDOWN_FINALLY=0 restores the old order.
+    private static final boolean SHUTDOWN_FINALLY = !"0".equals(System.getenv("VOXY_POOL_SHUTDOWN_FINALLY"));
+
     public void shutdown() {
-        this.serviceManager.shutdown();
+        if (!SHUTDOWN_FINALLY) {
+            this.serviceManager.shutdown();
+            this.releaseWorkers(false);
+            return;
+        }
+        try {
+            this.serviceManager.shutdown();
+        } finally {
+            this.releaseWorkers(true);
+        }
+    }
+
+    private void releaseWorkers(boolean pruneDead) {
         this.selfBlock.release(10000);
         while (true) {
             synchronized (this.threads) {
+                //A worker killed by an Error (or the runJob/shutdown race) never removes itself, so waiting for
+                // it would hang the disconnect forever. A dead thread cannot be parked in acquire, so dropping it
+                // keeps selfBlock.free() safe.
+                if (pruneDead) this.threads.removeIf(t -> !t.isAlive());
                 if (this.threads.isEmpty()) {
                     break;
                 }

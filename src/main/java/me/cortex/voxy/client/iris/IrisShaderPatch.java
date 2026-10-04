@@ -11,8 +11,11 @@ import net.irisshaders.iris.shaderpack.ShaderPack;
 import net.irisshaders.iris.shaderpack.include.AbsolutePackPath;
 import org.lwjgl.opengl.ARBDrawBuffersBlend;
 
+import java.io.IOException;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Type;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.function.Function;
 import java.util.function.IntSupplier;
@@ -22,6 +25,24 @@ import static org.lwjgl.opengl.GL33.*;
 
 public class IrisShaderPatch {
     public static final int VERSION = ((IntSupplier)()->1).getAsInt();
+    // Upstream 13230c27: packs written for Voxy >= 0.2.11 feature-gate with `#if VOXY >= N`;
+    // against the fork's previous bare `#define VOXY` jcpp reports "Bad token in expression",
+    // evaluates the #if as FALSE and continues (Iris never checks the error count), so every
+    // version-gated pack block silently disappears. 1 is the contract level — no depth-hack v2 (eda60134)
+    // or dynamic far plane v3 (534d58ec) yet, see docs/UPSTREAM-SYNC.md B5/B8.
+    // VOXY_SHADER_DEFINE_VERSION=N overrides; 0 restores the bare define (kill switch).
+    public static final int SHADER_DEFINE_VERSION = parseShaderDefineVersion();
+
+    private static int parseShaderDefineVersion() {
+        int v = 1;
+        String env = System.getenv("VOXY_SHADER_DEFINE_VERSION");
+        if (env != null && !env.isBlank()) {
+            try { v = Integer.parseInt(env.trim()); } catch (NumberFormatException ignored) {}
+        }
+        Logger.info("[Voxy-SYNC] Iris shader define: " + (v > 0 ? "#define VOXY " + v : "bare #define VOXY (VOXY_SHADER_DEFINE_VERSION=0)")
+                + (env != null ? " (env override)" : " (upstream 13230c27 contract v1; VOXY_SHADER_DEFINE_VERSION=0 reverts)"));
+        return v;
+    }
 
     public static final boolean IMPERSONATE_DISTANT_HORIZONS = System.getProperty("voxy.impersonateDHShader", "false").equalsIgnoreCase("true");
 
@@ -339,6 +360,10 @@ public class IrisShaderPatch {
                 }
                 voxyPatchData = builder.toString();
             }
+
+            //Stupid chunk fade in patch (should probably just breaks
+            voxyPatchData = voxyPatchData.replaceAll("void _cfi_ignoreMarker\\(\\) \\{\\}", "");
+
             patchData = GSON.fromJson(voxyPatchData, PatchGson.class);
             if (patchData == null) {
                 throw new IllegalStateException("Voxy patch json returned null, this is most likely due to malformed json file");
@@ -369,8 +394,15 @@ public class IrisShaderPatch {
             }
         } catch (Exception e) {
             patchData = null;
-            Logger.error("Failed to parse patch data gson",e);
-            throw new ShaderLoadError("Failed to parse patch data gson",e);
+            Logger.error("Failed to parse patch data gson, dumping json",e);
+            try {
+                Files.writeString(Path.of("JSON_DUMP.txt"), voxyPatchData);//relative: lands in the game directory (JVM working dir)
+            } catch (IOException j) {
+                //fork: upstream threw RuntimeException(j) here, which dropped the parse error and escaped
+                // MixinIris's ShaderLoadError handler (read-only instance dirs are common on macOS launchers)
+                Logger.error("Could not write JSON_DUMP.txt", j);
+            }
+            throw new ShaderLoadError("Failed to parse patch data gson, dumping json",e);
         }
         if (patchData == null) {
             return null;

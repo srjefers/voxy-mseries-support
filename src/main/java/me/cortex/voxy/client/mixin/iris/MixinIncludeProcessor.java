@@ -46,5 +46,15 @@ public class MixinIncludeProcessor {
                 cir.setReturnValue(fixed);
             }
         }
+        // 2026-09-25 far-LOD tufts: LOD SSAO tuning parity with vanilla terrain
+        // (deferred.glsl vx branch radius 1.5 / pow 2 -> 0.25 / 1). Own line
+        // targets; stacks after the two patches above.
+        if (me.cortex.voxy.client.iris.VxLodAoParity.enabled()) {
+            ImmutableList<String> ao = me.cortex.voxy.client.iris.VxLodAoParity.patch(
+                    cir.getReturnValue(), String.valueOf(path));
+            if (ao != null) {
+                cir.setReturnValue(ao);
+            }
+        }
     }
 }

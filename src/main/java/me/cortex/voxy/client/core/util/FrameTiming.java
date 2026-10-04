@@ -29,6 +29,16 @@ public final class FrameTiming {
     public static long jniDrawLoopNs;
     /** Draws issued through that loop (2 JNI crossings each). */
     public static long jniDrawCount;
+    /** The MC-lightmap glGetTexImage readback + mirror upload (LightMapHelper.syncFromMc). */
+    public static long lightmapSyncNs;
+    /** Frames on which that readback actually ran (the rest were throttled as unchanged). */
+    public static long lightmapSyncCount;
+    /** IOSurface GL re-specifications actually issued (CGLTexImageIOSurface2D, IOSurfaceBridgeCompositor.resync). */
+    public static long resyncCount;
+    /** Re-specifications skipped by the once-per-bridge-per-frame gate (VOXY_BRIDGE_RESYNC). */
+    public static long resyncSkipped;
+    /** Wall time inside the issued re-specifications (incl. the 2 glGetInteger + rebinds around each). */
+    public static long resyncNs;
 
     private FrameTiming() {}
 
@@ -38,5 +48,10 @@ public final class FrameTiming {
         bridgeFlushNs = 0;
         jniDrawLoopNs = 0;
         jniDrawCount = 0;
+        lightmapSyncNs = 0;
+        lightmapSyncCount = 0;
+        resyncCount = 0;
+        resyncSkipped = 0;
+        resyncNs = 0;
     }
 }

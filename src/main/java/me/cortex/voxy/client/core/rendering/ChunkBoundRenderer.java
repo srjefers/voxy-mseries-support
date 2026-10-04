@@ -92,10 +92,25 @@ public class ChunkBoundRenderer {
     private static final boolean TRANS_SPLIT =
             !"0".equals(System.getenv("VOXY_BOUND_TRANS_SPLIT"));
 
-    /** The split only exists off-GL: the GL backend keeps the single-set path byte-identical. */
+    /** VOXY_BOUND_TRANS_SPLIT=all: split even without the vx contract (the pre-2026-09-26 default, for A/B). */
+    private static final boolean SPLIT_ALL = "all".equalsIgnoreCase(
+            String.valueOf(System.getenv("VOXY_BOUND_TRANS_SPLIT")).trim());
+
+    /**
+     * The split only exists off-GL: the GL backend keeps the single-set path byte-identical.
+     * 2026-09-26: and only where the translucent near-cull that relies on it is compiled, i.e. under the
+     * vx contract with VOXY_TRANS_NEAR_CULL on (the same condition as MDICSectionRenderer). Without a
+     * shader pack the epsilon made the depth-bound test discard nothing over trans-only and cutout-only
+     * sections, so LOD water double-blended under MC water and far LOD plants showed through MC's cutout
+     * gaps inside the vanilla ring. Read once per renderer; a pack change rebuilds the renderer.
+     */
     private static boolean splitActive() {
-        return TRANS_SPLIT && RenderBackendFactory.get().getType()
-                != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+        if (!TRANS_SPLIT || RenderBackendFactory.get().getType()
+                == me.cortex.voxy.client.core.gpu.BackendType.OPENGL) return false;
+        if (SPLIT_ALL) return true;
+        String nc = System.getenv("VOXY_TRANS_NEAR_CULL");
+        return (nc == null || !"0".equals(nc.trim()))
+                && me.cortex.voxy.client.core.util.IrisUtil.vxContractActive();
     }
 
     /**
@@ -312,6 +327,12 @@ public class ChunkBoundRenderer {
     public ChunkBoundRenderer(AbstractRenderPipeline pipeline) {
         this.pipeline = pipeline;
         this.epsSet = splitActive() ? new InstanceSet() : null;
+        if (this.epsSet == null && TRANS_SPLIT && RenderBackendFactory.get().getType()
+                != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+            Logger.info("[Metal-LODTEST] bound-mask trans split OFF: no vx-contract shader pack (or"
+                    + " VOXY_TRANS_NEAR_CULL=0), so the translucent near-cull it relies on is not compiled;"
+                    + " every built section writes real depth. VOXY_BOUND_TRANS_SPLIT=all forces it on");
+        }
         this.seedFromMirror();
 
         String vert = ShaderLoader.parse("voxy:chunkoutline/outline.vsh");

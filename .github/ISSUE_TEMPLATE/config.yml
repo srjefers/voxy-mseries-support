@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Testing guide
+    url: https://github.com/srjefers/voxy-mseries-support/blob/dev/docs/testing/README.md
+    about: Read this before you test. It lists the tests, the helper scripts and how to report results.

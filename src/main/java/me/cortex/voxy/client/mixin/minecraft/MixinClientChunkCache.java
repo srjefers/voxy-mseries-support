@@ -7,6 +7,7 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.multiplayer.ClientChunkCache;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.LevelChunk;
+import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
@@ -16,15 +17,28 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ClientChunkCache.class)
 public class MixinClientChunkCache implements ICheekyClientChunkCache {
+    @Unique private static final boolean CHUNK_POS_CHECK = !"0".equals(System.getenv("VOXY_SYNC_CHUNK_POS_CHECK"));
     @Unique
     private static final boolean BOBBY_INSTALLED = FabricLoader.getInstance().isModLoaded("bobby");
 
     @Shadow volatile ClientChunkCache.Storage storage;
 
     @Override
-    public LevelChunk voxy$cheekyGetChunk(int x, int z) {
+    public @Nullable LevelChunk voxy$cheekyGetChunk(int x, int z) {
         //This doesnt do the in range check stuff, it just gets the chunk at all costs
-        return this.storage.getChunk(this.storage.getIndex(x, z));
+        var chunk = this.storage.getChunk(this.storage.getIndex(x, z));
+        if (chunk == null) {
+            return null;
+        }
+        //Verify that the position of the chunk is the same as the requested position
+        //Upstream 6189ee38: after death/teleport the ring slot can hold a chunk from the OLD
+        // position; ingesting it under the requested coords corrupted stored LOD data.
+        // VOXY_SYNC_CHUNK_POS_CHECK=0 restores the unchecked slot read for A/B.
+        if (!CHUNK_POS_CHECK || (chunk.getPos().x == x && chunk.getPos().z == z)) {
+            return chunk;//The chunk is at the requested position
+        }
+        //Otherwise return null
+        return null;
     }
 
     @Inject(method = "drop", at = @At("HEAD"))

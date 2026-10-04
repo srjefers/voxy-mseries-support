@@ -128,13 +128,17 @@ public class CpuLayout {
 
     public static final Core[] CORES;
     static {
-        if (Platform.get() == Platform.WINDOWS) {
-            CORES = generateCoreLayoutWindows();
-        } else if (Platform.get() == Platform.LINUX) {
-            CORES = generateCoreLayoutLinux();
-        } else {
-            CORES = null;
+        Core[] cores = null;
+        try {
+            if (Platform.get() == Platform.WINDOWS) {
+                cores = generateCoreLayoutWindows();
+            } else if (Platform.get() == Platform.LINUX) {
+                cores = generateCoreLayoutLinux();
+            }
+        } catch (Exception e) {
+            Logger.error("Failed to generate cpu core layout, falling back to null: ", e);
         }
+        CORES = cores;
     }
 
     public static void main(String[] args) throws InterruptedException {
