@@ -153,6 +153,7 @@ public class RenderGenerationService {
         }
 
         if (section == null) {
+            me.cortex.voxy.client.core.SectionProbe.record(this.world,task.position,"build","no stored section");
             if (this.resultConsumer != null) {
                 this.resultConsumer.accept(BuiltSection.empty(task.position));
             }
@@ -272,6 +273,7 @@ public class RenderGenerationService {
         }
 
         if (mesh != null) {//If the mesh is null it means it didnt finish, so dont submit
+            if (me.cortex.voxy.client.core.SectionProbe.enabled(this.world)) me.cortex.voxy.client.core.SectionProbe.record(this.world,mesh.position,"build", "quads="+(mesh.isEmpty()?0:mesh.geometryBuffer.size/8)+",aabb="+mesh.aabb+",children="+mesh.childExistence);
             if (this.resultConsumer != null) {
                 this.resultConsumer.accept(mesh);
             } else {
@@ -281,7 +283,10 @@ public class RenderGenerationService {
     }
 
 
+    public WorldEngine getWorld() { return this.world; }
+
     public void enqueueTask(long pos) {
+        me.cortex.voxy.client.core.SectionProbe.record(this.world,pos,"queued","requested");
         if (!this.service.isLive()) {
             return;
         }
@@ -308,30 +313,16 @@ public class RenderGenerationService {
     }
     */
 
-    public void shutdown() {
-        //Steal and free as much work as possible
-        while (this.service.numJobs() != 0) {
-            int i = this.service.drain();
-            if (i == 0) break;
-            {
-                long stamp = this.taskMapLock.writeLock();
-                for (int j = 0; j < i; j++) {
-                    var task = this.taskQueue.remove();
-                    if (task.section != null) {
-                        task.section.release();
-                        this.holdingSectionCount.decrementAndGet();
-                    }
-                    if (this.taskMap.remove(task.position) != task) {
-                        throw new IllegalStateException();
-                    }
-                }
-                this.taskMapLock.unlockWrite(stamp);
-                this.taskQueueCount.addAndGet(-i);
-            }
+    private boolean quiesced;
+    public void quiesce() {
+        if (!this.quiesced) {
+            this.service.shutdown();
+            this.quiesced = true;
         }
+    }
 
-        //Shutdown the threads
-        this.service.shutdown();
+    public void shutdown() {
+        this.quiesce();
 
         //Cleanup any remaining data
         while (!this.taskQueue.isEmpty()) {

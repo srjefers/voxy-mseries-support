@@ -28,7 +28,12 @@ public class ModelBakerySubsystem {
     private volatile boolean isRunning = true;
     public ModelBakerySubsystem(Mapper mapper) {
         this.mapper = mapper;
-        this.factory = new ModelFactory(mapper, this.storage);
+        try {
+            this.factory = new ModelFactory(mapper, this.storage);
+        } catch (RuntimeException | Error failure) {
+            try { this.storage.free(); } catch (Throwable cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+            throw failure;
+        }
         this.processingThread = new Thread(()->{//TODO replace this with something good/integrate it into the async processor so that we just have less threads overall
             while (this.isRunning) {
                 this.factory.processAllThings();
@@ -39,7 +44,15 @@ public class ModelBakerySubsystem {
                 }
             }
         }, "Model factory processor");
-        this.processingThread.start();
+        try {
+            this.processingThread.start();
+        } catch (RuntimeException | Error failure) {
+            this.isRunning = false;
+            me.cortex.voxy.common.util.ResourceCleanup.join(this.processingThread);
+            try { me.cortex.voxy.common.util.ResourceCleanup.run(this.factory::free, this.storage::free); }
+            catch (Throwable cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+            throw failure;
+        }
     }
 
     public void tick(long totalBudget) {
@@ -68,16 +81,14 @@ public class ModelBakerySubsystem {
         //TimingStatistics.modelProcess.stop();
     }
 
-    public void shutdown() {
+    public void quiesce() {
         this.isRunning = false;
-        try {
-            this.processingThread.join();
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
+        me.cortex.voxy.common.util.ResourceCleanup.join(this.processingThread);
+    }
 
-        this.factory.free();
-        this.storage.free();
+    public void shutdown() {
+        this.quiesce();
+        me.cortex.voxy.common.util.ResourceCleanup.run(this.factory::free, this.storage::free);
     }
 
     //This is on this side only and done like this as only worker threads call this code

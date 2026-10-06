@@ -10,7 +10,6 @@
     "iris.MixinIris",
     "iris.MixinIrisRenderingPipeline",
     "iris.MixinIrisSamplers",
-    "iris.MixinLevelRenderer",
     "iris.MixinMatrixUniforms",
     "iris.MixinPackRenderTargetDirectives",
     "iris.MixinIncludeProcessor",

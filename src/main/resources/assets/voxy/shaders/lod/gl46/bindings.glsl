@@ -138,7 +138,12 @@ layout(binding = LIGHTING_SAMPLER_BINDING) uniform sampler2D lightSampler;
 
 vec4 getLighting(uint index) {
     int i2 = int(index);
+#ifdef VOXY_METAL_TINT
+    // Sodium encodes integer light levels at the centers of Minecraft's 16x16 lightmap.
+    return texture(lightSampler, (vec2((i2>>4)&0xF, i2&0xF) * 16.0 + 8.0) / 256.0);
+#else
     return texture(lightSampler, clamp((vec2((i2>>4)&0xF, i2&0xF))/15, vec2(8.0f/256), vec2(248.0f/256)));
+#endif
 }
 #endif
 

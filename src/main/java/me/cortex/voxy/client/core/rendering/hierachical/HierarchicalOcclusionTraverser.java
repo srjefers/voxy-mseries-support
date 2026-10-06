@@ -15,6 +15,7 @@ import me.cortex.voxy.client.core.gpu.SamplerDesc;
 import me.cortex.voxy.client.core.rendering.Viewport;
 import me.cortex.voxy.client.core.rendering.building.RenderGenerationService;
 import me.cortex.voxy.client.core.rendering.util.DownloadStream;
+import me.cortex.voxy.client.core.rendering.util.NativeUniformWriter;
 import me.cortex.voxy.client.core.rendering.util.PrintfDebugUtil;
 import me.cortex.voxy.client.core.rendering.util.UploadStream;
 import me.cortex.voxy.common.Logger;
@@ -337,10 +338,10 @@ public class HierarchicalOcclusionTraverser {
     private void uploadUniform(Viewport<?> viewport) {
         long ptr = UploadStream.INSTANCE.upload(this.uniformBuffer, 0, 1024);
 
-        viewport.MVP.getToAddress(ptr); ptr += 4 * 4 * 4;
-        viewport.section.getToAddress(ptr); ptr += 4 * 3;
+        NativeUniformWriter.putMatrix4f(ptr, viewport.MVP); ptr += 4 * 4 * 4;
+        NativeUniformWriter.putVector3i(ptr, viewport.section); ptr += 4 * 3;
         MemoryUtil.memPutInt(ptr, viewport.hiZBuffer.getPackedLevels()); ptr += 4;
-        viewport.innerTranslation.getToAddress(ptr); ptr += 4 * 3;
+        NativeUniformWriter.putVector3f(ptr, viewport.innerTranslation); ptr += 4 * 3;
 
         float screenspaceAreaDecreasingSize = VoxyConfig.CONFIG.subDivisionSize * VoxyConfig.CONFIG.subDivisionSize;
         if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()

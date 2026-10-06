@@ -86,6 +86,10 @@ public class Mapper {
         return (id&(~(0xFFL<<56)))|(Integer.toUnsignedLong(light&0xFF)<<56);
     }
 
+    public static long withBlockBiome(long id, int block, int biome) {
+        return (id&(0xFFL<<56))|(Integer.toUnsignedLong(block)<<27)|(Integer.toUnsignedLong(biome)<<47);
+    }
+
     public static long airWithLight(int light) {
         return Integer.toUnsignedLong(light&0xFF)<<56;
     }
@@ -195,6 +199,7 @@ public class Mapper {
         buffer.rewind();
         this.storage.putIdMapping(entry.id | (BLOCK_STATE_TYPE<<30), buffer);
         MemoryUtil.memFree(buffer);
+        //this.storage.flush();
 
         if (this.newStateCallback!=null)this.newStateCallback.accept(entry);
         return entry;
@@ -218,6 +223,7 @@ public class Mapper {
         buffer.rewind();
         this.storage.putIdMapping(entry.id | (BIOME_TYPE<<30), buffer);
         MemoryUtil.memFree(buffer);
+        //this.storage.flush();
 
         if (this.newBiomeCallback!=null)this.newBiomeCallback.accept(entry);
         return entry;

@@ -156,6 +156,8 @@ uvec3 makeRemainingAttributes(const in BlockModel model, const in Quad quad, uin
     attributes.z |= (lodLevel&7u)<<16;
     #endif
 
+    // Bit 19 is outside legacy face/light/LOD fields and identifies actual fluid models.
+    attributes.z |= ((model.flagsA>>4)&1u)<<19;
     return attributes;
 }
 

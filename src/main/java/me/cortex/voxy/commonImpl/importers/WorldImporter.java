@@ -9,6 +9,7 @@ import me.cortex.voxy.common.util.Pair;
 import me.cortex.voxy.common.util.UnsafeUtil;
 import me.cortex.voxy.common.voxelization.VoxelizedSection;
 import me.cortex.voxy.common.voxelization.WorldConversionFactory;
+import me.cortex.voxy.common.voxelization.WorldVoxilizedSectionMipper;
 import me.cortex.voxy.common.world.WorldEngine;
 import me.cortex.voxy.common.world.WorldUpdater;
 import net.minecraft.core.Holder;
@@ -524,7 +525,7 @@ public class WorldImporter implements IDataImporter {
                 }
         );
 
-        WorldConversionFactory.mipSection(csec, this.world.getMapper());
+        WorldVoxilizedSectionMipper.mipSection(csec, this.world.getMapper());
         WorldUpdater.insertUpdate(this.world, csec);
     }
 }

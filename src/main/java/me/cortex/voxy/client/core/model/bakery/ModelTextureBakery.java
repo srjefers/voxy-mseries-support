@@ -541,8 +541,8 @@ public class ModelTextureBakery {
                     // at z = 1+ε clips ENTIRELY. Blocks masked this (the near
                     // face of the cube mesh still covered the cell); the fluid
                     // path draws ONE quad per cell and lost 5 of 6 faces to it.
-                    // Depth is unused: DepthState.DISABLED and emitToStream
-                    // hard-codes the depth metadata, so z placement is free.
+                    // The bakery decodes this compressed Z into legacy face depth
+                    // and selects the nearest painted surface with GREATER_EQUAL.
                     mat.set(2, 0, 0, 0,
                             0, -2, 0, 0,
                             0, 0, 0.5f, 0,

@@ -5,8 +5,8 @@ import org.joml.Matrix4f;
 
 /**
  * Shared GL→Metal clip-space depth remap for raster passes that consume a
- * GL-convention MVP (built from {@code setPerspective} without
- * {@code zZeroToOne} in VoxyRenderSystem.makeProjectionMatrix).
+ * GL-convention MVP derived from Minecraft in
+ * {@code VoxyRenderSystem.computeProjectionMat}.
  *
  * Extracted from MDICSectionRenderer's 2026-05-26 experiment
  * ({@code VOXY_LOD_METAL_NDC=1}) so every Metal pass shares ONE depth

@@ -23,6 +23,7 @@ public class ModelStore {
     final IGpuBuffer modelBuffer;
     final IGpuBuffer modelColourBuffer;
     final IGpuTexture textures;
+    final ModelTintBuffer tintWeights;
     public final int blockSampler = glGenSamplers();
     /**
      * Cross-backend sampler for {@link #textures}. Used by Metal's render
@@ -34,53 +35,68 @@ public class ModelStore {
     public final me.cortex.voxy.client.core.gpu.IGpuSampler atlasSampler;
 
     public ModelStore() {
-        this.modelBuffer = RenderBackendFactory.get().createBuffer(MODEL_SIZE * (1<<16));
-        this.modelColourBuffer = RenderBackendFactory.get().createBuffer(4 * (1<<16));
-        // M13 chunk 1: allocate the model atlas as CPU-uploadable. On Metal
-        // this is Shared storage so `uploadSubImage2D` can push the bakery
-        // results into it; on GL the call is identical to `store`. Default
-        // sampler/sampling state stays GL-side.
-        this.textures = RenderBackendFactory.get().createTexture()
-                .storeUploadable(GL_RGBA8,
-                        Integer.numberOfTrailingZeros(ModelFactory.MODEL_TEXTURE_SIZE),
-                        ModelFactory.MODEL_TEXTURE_SIZE*3*256,
-                        ModelFactory.MODEL_TEXTURE_SIZE*2*256)
-                .name("ModelTextures");
-        // Rejoin-gray forensics: the native handle identity is the whole
-        // question (which MTLTexture does each session write/sample, and do
-        // pointer values get recycled across teardowns). One line per store.
-        if (this.textures instanceof me.cortex.voxy.client.core.metal.MetalTexture mt) {
-            me.cortex.voxy.common.Logger.info(String.format(java.util.Locale.ROOT,
-                    "[Metal-ATLASLIFE] model atlas CREATED handle=0x%x id=%d", mt.getHandle(), mt.id()));
+        ModelTintBuffer tint = null;
+        IGpuBuffer models = null, colors = null;
+        IGpuTexture texture = null;
+        me.cortex.voxy.client.core.gpu.IGpuSampler sampler = null;
+        try {
+            this.tintWeights = tint = RenderBackendFactory.get().getType() == me.cortex.voxy.client.core.gpu.BackendType.METAL
+                    ? new ModelTintBuffer(RenderBackendFactory.get()) : null;
+            this.modelBuffer = models = RenderBackendFactory.get().createBuffer(MODEL_SIZE * (1<<16));
+            this.modelColourBuffer = colors = RenderBackendFactory.get().createBuffer(4 * (1<<16));
+            // M13 chunk 1: allocate the model atlas as CPU-uploadable. On Metal
+            // this is Shared storage so `uploadSubImage2D` can push the bakery
+            // results into it; on GL the call is identical to `store`. Default
+            // sampler/sampling state stays GL-side.
+            this.textures = texture = RenderBackendFactory.get().createTexture();
+            this.textures.storeUploadable(GL_RGBA8,
+                            Integer.numberOfTrailingZeros(ModelFactory.MODEL_TEXTURE_SIZE),
+                            ModelFactory.MODEL_TEXTURE_SIZE*3*256,
+                            ModelFactory.MODEL_TEXTURE_SIZE*2*256)
+                    .name("ModelTextures");
+            // Rejoin-gray forensics: the native handle identity is the whole
+            // question (which MTLTexture does each session write/sample, and do
+            // pointer values get recycled across teardowns). One line per store.
+            if (this.textures instanceof me.cortex.voxy.client.core.metal.MetalTexture mt) {
+                me.cortex.voxy.common.Logger.info(String.format(java.util.Locale.ROOT,
+                        "[Metal-ATLASLIFE] model atlas CREATED handle=0x%x id=%d", mt.getHandle(), mt.id()));
+            }
+            zeroInitAtlas();
+
+
+            //Limit the mips of the texture to match that of the terrain atlas
+            int mipLvl = ((TextureAtlas) Minecraft.getInstance().getTextureManager()
+                    .getTexture(Identifier.fromNamespaceAndPath("minecraft", "textures/atlas/blocks.png")))
+                    .maxMipLevel;
+
+            glSamplerParameteri(this.blockSampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+            glSamplerParameteri(this.blockSampler, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glSamplerParameteri(this.blockSampler, GL_TEXTURE_MIN_LOD, 0);
+            glSamplerParameteri(this.blockSampler, GL_TEXTURE_MAX_LOD, mipLvl);//Integer.numberOfTrailingZeros(ModelFactory.MODEL_TEXTURE_SIZE)
+
+            // Cross-backend mirror of blockSampler — same filter/wrap state.
+            // Used by Metal's RenderEncoder.setSampler path; GL still uses
+            // glBindSampler(unit, this.blockSampler) for its raw-GL draws.
+            this.atlasSampler = sampler = RenderBackendFactory.get().createSampler(
+                    me.cortex.voxy.client.core.gpu.SamplerDesc.builder()
+                            .filter(me.cortex.voxy.client.core.gpu.SamplerDesc.Filter.NEAREST,
+                                    me.cortex.voxy.client.core.gpu.SamplerDesc.Filter.NEAREST)
+                            .mipFilter(me.cortex.voxy.client.core.gpu.SamplerDesc.MipFilter.LINEAR)
+                            .wrap(me.cortex.voxy.client.core.gpu.SamplerDesc.Wrap.CLAMP_TO_EDGE,
+                                    me.cortex.voxy.client.core.gpu.SamplerDesc.Wrap.CLAMP_TO_EDGE)
+                            .lod(0, mipLvl)
+                            .label("ModelAtlasSampler")
+                            .build());
+        } catch (Throwable error) {
+            if (sampler != null) sampler.close();
+            if (texture != null) texture.free();
+            if (colors != null) colors.free();
+            if (models != null) models.free();
+            if (tint != null) tint.close();
+            glDeleteSamplers(this.blockSampler);
+            throw error;
         }
-        zeroInitAtlas();
-
-
-        //Limit the mips of the texture to match that of the terrain atlas
-        int mipLvl = ((TextureAtlas) Minecraft.getInstance().getTextureManager()
-                .getTexture(Identifier.fromNamespaceAndPath("minecraft", "textures/atlas/blocks.png")))
-                .maxMipLevel;
-
-        glSamplerParameteri(this.blockSampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
-        glSamplerParameteri(this.blockSampler, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glSamplerParameteri(this.blockSampler, GL_TEXTURE_MIN_LOD, 0);
-        glSamplerParameteri(this.blockSampler, GL_TEXTURE_MAX_LOD, mipLvl);//Integer.numberOfTrailingZeros(ModelFactory.MODEL_TEXTURE_SIZE)
-
-        // Cross-backend mirror of blockSampler — same filter/wrap state.
-        // Used by Metal's RenderEncoder.setSampler path; GL still uses
-        // glBindSampler(unit, this.blockSampler) for its raw-GL draws.
-        this.atlasSampler = RenderBackendFactory.get().createSampler(
-                me.cortex.voxy.client.core.gpu.SamplerDesc.builder()
-                        .filter(me.cortex.voxy.client.core.gpu.SamplerDesc.Filter.NEAREST,
-                                me.cortex.voxy.client.core.gpu.SamplerDesc.Filter.NEAREST)
-                        .mipFilter(me.cortex.voxy.client.core.gpu.SamplerDesc.MipFilter.LINEAR)
-                        .wrap(me.cortex.voxy.client.core.gpu.SamplerDesc.Wrap.CLAMP_TO_EDGE,
-                                me.cortex.voxy.client.core.gpu.SamplerDesc.Wrap.CLAMP_TO_EDGE)
-                        .lod(0, mipLvl)
-                        .label("ModelAtlasSampler")
-                        .build());
     }
-
 
     /**
      * World-rejoin fix: a fresh Shared MTLTexture has UNDEFINED contents.
@@ -132,6 +148,7 @@ public class ModelStore {
             me.cortex.voxy.common.Logger.info(String.format(java.util.Locale.ROOT,
                     "[Metal-ATLASLIFE] model atlas FREED handle=0x%x id=%d", mt.getHandle(), mt.id()));
         }
+        if (this.tintWeights != null) this.tintWeights.close();
         this.modelBuffer.free();
         this.modelColourBuffer.free();
         this.textures.free();
@@ -155,6 +172,7 @@ public class ModelStore {
     public void bindBuffers(me.cortex.voxy.client.core.gpu.RenderEncoder encoder,
                             int modelBindingIndex, int colourBindingIndex,
                             int atlasBindingIndex) {
+        if (this.tintWeights != null) encoder.setBuffer(ModelTintBuffer.BINDING, this.tintWeights.buffer(), 0);
         encoder.setBuffer(modelBindingIndex, this.modelBuffer, 0);
         encoder.setBuffer(colourBindingIndex, this.modelColourBuffer, 0);
         encoder.setTexture(atlasBindingIndex, this.textures);

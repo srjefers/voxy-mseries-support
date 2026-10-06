@@ -182,6 +182,12 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
 
     @Override
     public void free() {
+        this.assertNotFreed();
+        this.free0();
+    }
+
+    @Override
+    protected void free0() {
         this.finalBlit.delete();
         this.ssaoCompute.free();
         this.fbSSAO.free();

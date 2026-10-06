@@ -7,6 +7,7 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectFunction;
 import kroppeb.stareval.function.FunctionReturn;
 import kroppeb.stareval.function.Type;
 import me.cortex.voxy.client.core.IrisVoxyRenderPipeline;
+import me.cortex.voxy.client.core.rendering.util.NativeUniformWriter;
 import me.cortex.voxy.client.mixin.iris.CustomUniformsAccessor;
 import me.cortex.voxy.client.mixin.iris.IrisRenderingPipelineAccessor;
 import me.cortex.voxy.common.Logger;
@@ -249,7 +250,8 @@ public class IrisVoxyRenderPipelineData {
                 }
             };//Writes all the uniforms to the locations
         }
-        return new StructLayout(pos*4, structLayout, updater);//*4 since each slot is 4 bytes
+        // A std140 block ends on a 16-byte boundary, even when its final member is smaller.
+        return new StructLayout((pos*4 + 15) & ~15, structLayout, updater);
     }
 
     private static LongConsumer createWriter(long offset, FunctionReturn ret, CachedUniform uniform) {
@@ -271,32 +273,32 @@ public class IrisVoxyRenderPipelineData {
         } else if (uniform instanceof Float2VectorCachedUniform v2fcu) {
             return ptr->{ptr += offset;
                 v2fcu.writeTo(ret);
-                ((Vector2f)ret.objectReturn).getToAddress(ptr);
+                NativeUniformWriter.putVector2f(ptr, (Vector2fc) ret.objectReturn);
             };
         } else if (uniform instanceof Float3VectorCachedUniform v3fcu) {
             return ptr->{ptr += offset;
                 v3fcu.writeTo(ret);
-                ((Vector3f)ret.objectReturn).getToAddress(ptr);
+                NativeUniformWriter.putVector3f(ptr, (Vector3fc) ret.objectReturn);
             };
         } else if (uniform instanceof Float4VectorCachedUniform v4fcu) {
             return ptr->{ptr += offset;
                 v4fcu.writeTo(ret);
-                ((Vector4f)ret.objectReturn).getToAddress(ptr);
+                NativeUniformWriter.putVector4f(ptr, (Vector4fc) ret.objectReturn);
             };
         } else if (uniform instanceof Int2VectorCachedUniform v2icu) {
             return ptr->{ptr += offset;
                 v2icu.writeTo(ret);
-                ((Vector2i)ret.objectReturn).getToAddress(ptr);
+                NativeUniformWriter.putVector2i(ptr, (Vector2ic) ret.objectReturn);
             };
         } else if (uniform instanceof Int3VectorCachedUniform v3icu) {
             return ptr->{ptr += offset;
                 v3icu.writeTo(ret);
-                ((Vector3i)ret.objectReturn).getToAddress(ptr);
+                NativeUniformWriter.putVector3i(ptr, (Vector3ic) ret.objectReturn);
             };
         } else if (uniform instanceof Float4MatrixCachedUniform f4mcu) {
             return ptr->{ptr += offset;
                 f4mcu.writeTo(ret);
-                ((Matrix4f)ret.objectReturn).getToAddress(ptr);
+                NativeUniformWriter.putMatrix4f(ptr, (Matrix4fc) ret.objectReturn);
             };
         } else {
             throw new IllegalStateException("Unknown uniform type " + uniform.getClass().getName());
@@ -376,7 +378,7 @@ public class IrisVoxyRenderPipelineData {
             public DynamicLocationalUniformHolder uniform3f(String name, Supplier<Vector3f> value, ValueUpdateNotifier notifier) {
                 this.injectDynamicUniformType(name, UniformType.VEC3, offset->{
                     return ptr->{
-                      value.get().getToAddress(ptr+offset);
+                      NativeUniformWriter.putVector3f(ptr + offset, value.get());
                     };
                 });
                 return this;
@@ -544,9 +546,8 @@ public class IrisVoxyRenderPipelineData {
                 var ts = samplers[j];
                 bindTextureUnit(unit, ts.texture.getAsInt());
                 int sampler = ts.sampler.getAsInt();
-                if (sampler != -1) {
-                    glBindSampler(unit, sampler);
-                }//TODO: might need to bind sampler 0
+                // No Iris sampler means the texture's own parameters, never a previous pass's sampler.
+                glBindSampler(unit, sampler == -1 ? 0 : sampler);
             }
         };
         // Ordered sampler names in bindingFunction order (samplers[j] -> unit base+j).

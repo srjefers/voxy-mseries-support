@@ -141,7 +141,6 @@ The end-state Mac user experience:
 ## Where to look for details
 
 - **Full technical state**: `docs/M-SERIES-PORT-STATE.md` (this folder)
-- **Live planning doc**: `~/.claude-personal/plans/context-en-el-prancy-sunrise.md` (outside the repo)
 - **Smoke tests**: `src/main/java/me/cortex/voxy/tools/*SmokeTest.java`
 - **Encoder API**: `src/main/java/me/cortex/voxy/client/core/gpu/`
 - **Metal backend**: `src/main/java/me/cortex/voxy/client/core/metal/`

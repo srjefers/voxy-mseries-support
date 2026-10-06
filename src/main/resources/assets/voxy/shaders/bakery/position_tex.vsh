@@ -16,10 +16,17 @@ layout(binding = PUSH_BINDING, std140) uniform Push {
 
 out vec2 texCoord;
 out flat uint metadata;
+#ifdef BAKERY_METAL_METADATA
+out float bakeDepth;
+#endif
 
 void main() {
     metadata = floatBitsToUint(pos.w);//Fuck you intel
 
     gl_Position = transform * vec4(pos.xyz, 1.0);
+#ifdef BAKERY_METAL_METADATA
+    // Metal projection Z = .25 + .5 * viewZ. Legacy GL depth = .5 * (1 - viewZ).
+    bakeDepth = .75 - gl_Position.z / gl_Position.w;
+#endif
     texCoord = uv;
 }

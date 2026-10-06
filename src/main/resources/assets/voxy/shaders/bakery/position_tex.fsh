@@ -8,14 +8,10 @@ layout(binding=0) uniform sampler2D tex;
 in vec2 texCoord;
 in flat uint metadata;
 layout(location=0) out vec4 colour;
-// M13 chunk 1 (2026-05-13): the Metal-native bakery uses a single colour
-// attachment for the MVP (multi-colour `RenderPassDesc` support is a
-// separate piece). Gate the metadata output on a define so the Metal
-// pipeline compiles cleanly without a second attachment; the GL path
-// still emits both. Trade-off: tint bits aren't preserved on Metal LOD —
-// biome-tinted blocks (grass, leaves) render with the base atlas colour
-// instead of the per-biome shade. Acceptable for the chunk-1 MVP.
-#ifndef BAKERY_SINGLE_ATTACHMENT
+#ifdef BAKERY_METAL_METADATA
+layout(location=1) out vec4 metaOut;
+in float bakeDepth;
+#elif !defined(BAKERY_SINGLE_ATTACHMENT)
 layout(location=1) out uvec4 metaOut;
 #endif
 
@@ -24,7 +20,12 @@ void main() {
     if (colour.a < 0.001f && ((metadata&1u)!=0)) {
         discard;
     }
-#ifndef BAKERY_SINGLE_ATTACHMENT
+#ifdef BAKERY_METAL_METADATA
+    uint depthBits = uint(round(clamp(bakeDepth, 0.0, 0.5) * 16777215.0));
+    uint coverage = 1u | (((metadata>>2)&1u)<<7);
+    metaOut = vec4(float(depthBits&255u), float((depthBits>>8)&255u),
+                   float((depthBits>>16)&255u), float(coverage)) / 255.0;
+#elif !defined(BAKERY_SINGLE_ATTACHMENT)
     metaOut = uvec4((metadata>>2)&1u);//Write if it is or isnt tinted
 #endif
 }

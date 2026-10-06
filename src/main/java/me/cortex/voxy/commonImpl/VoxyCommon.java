@@ -44,7 +44,9 @@ public class VoxyCommon implements ModInitializer {
 
     @Override
     public void onInitialize() {
-
+        if (IS_IN_MINECRAFT) {
+            BuildIdentity.log(FabricLoader.getInstance().getModContainer("voxy").orElseThrow());
+        }
     }
 
     public interface IInstanceFactory {VoxyInstance create();}

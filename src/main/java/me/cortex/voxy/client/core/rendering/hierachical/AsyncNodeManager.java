@@ -46,9 +46,9 @@ public class AsyncNodeManager {
     private static final VarHandle RESULT_CACHE_2_HANDLE;
     static {
         try {
-            RESULT_HANDLE = MethodHandles.lookup().findVarHandle(AsyncNodeManager.class, "results", SyncResults.class);
-            RESULT_CACHE_1_HANDLE = MethodHandles.lookup().findVarHandle(AsyncNodeManager.class, "resultCache1", SyncResults.class);
-            RESULT_CACHE_2_HANDLE = MethodHandles.lookup().findVarHandle(AsyncNodeManager.class, "resultCache2", SyncResults.class);
+            RESULT_HANDLE = MethodHandles.lookup().findVarHandle(AsyncNodeManager.class, "results", GeometryPublication.class);
+            RESULT_CACHE_1_HANDLE = MethodHandles.lookup().findVarHandle(AsyncNodeManager.class, "resultCache1", GeometryPublication.class);
+            RESULT_CACHE_2_HANDLE = MethodHandles.lookup().findVarHandle(AsyncNodeManager.class, "resultCache2", GeometryPublication.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new RuntimeException(e);
         }
@@ -58,8 +58,11 @@ public class AsyncNodeManager {
     public final int maxNodeCount;
     private final long geometryCapacity;
     private volatile boolean running = true;
+    private volatile Throwable uncaughtException;
+    private boolean stopped;
 
     private final NodeManager manager;
+    private final WorldEngine probeWorld;
     private final BasicAsyncGeometryManager geometryManager;
     private final IGeometryData geometryData;
     private final SectionUpdateRouter router;
@@ -69,8 +72,11 @@ public class AsyncNodeManager {
     private final AtomicInteger workCounter = new AtomicInteger();
 
     @SuppressWarnings("FieldMayBeFinal")
-    private volatile SyncResults results = null, resultCache1 = new SyncResults(), resultCache2 = new SyncResults();
+    private volatile GeometryPublication results = null, resultCache1 = new GeometryPublication(), resultCache2 = new GeometryPublication();
 
+
+    // Worker-local until handed to RESULT_HANDLE; stop reads it only after joining.
+    private GeometryPublication assembling;
 
     //locals for during iteration
     private final IntOpenHashSet tlnIdChange = new IntOpenHashSet();//"Encoded" add/remove id, first bit indicates if its add or remove, 1 is add
@@ -84,6 +90,7 @@ public class AsyncNodeManager {
         //Note: geometry data is the data store/source, not the management, it is just a raw store of data
         // it MUST ONLY be accessed on the render thread
         // AsyncNodeManager will use an AsyncGeometryManager as the manager for the data store, and sync the results on the render thread
+        this.probeWorld = renderService.getWorld();
         this.geometryData = geometryData;
         this.geometryCapacity = ((BasicSectionGeometryData)geometryData).getGeometryCapacityBytes();
 
@@ -95,8 +102,12 @@ public class AsyncNodeManager {
                     this.run();
                 }
             } catch (Exception e) {
-                Logger.error("Critical error occurred in async processor, things will be broken", e);
+                Logger.error("Critical error occurred in async processor", e);
+                throw e;
             }
+        });
+        this.thread.setUncaughtExceptionHandler((thread, failure) -> {
+            this.recordFailure(failure);
         });
         this.thread.setName("Async Node Manager");
         this.thread.setDaemon(true);// don't block JVM shutdown if this thread is stuck
@@ -150,21 +161,22 @@ public class AsyncNodeManager {
         });
     }
 
-    private SyncResults getMakeResultObject() {
-        SyncResults resultSet = (SyncResults)RESULT_CACHE_1_HANDLE.getAndSet(this, null);
+    private GeometryPublication getMakeResultObject() {
+        GeometryPublication resultSet = (GeometryPublication)RESULT_CACHE_1_HANDLE.getAndSet(this, null);
         if (resultSet == null) {//Not in the first object
-            resultSet = (SyncResults)RESULT_CACHE_2_HANDLE.getAndSet(this, null);
+            resultSet = (GeometryPublication)RESULT_CACHE_2_HANDLE.getAndSet(this, null);
         }
         if (resultSet == null) {
             throw new IllegalStateException("There should always be an object in the result set cache pair");
         }
         //Reset everything to default
+        this.assembling = resultSet;
         resultSet.reset();
         return resultSet;
     }
 
     /** UBO binding for scatter.comp's `Push { uint count; }` block. */
-    private static final int SCATTER_PUSH_BINDING = 14;
+    private static final int SCATTER_PUSH_BINDING = GeometryPublication.SCATTER_PUSH_BINDING;
 
     private final me.cortex.voxy.client.core.gpu.RenderBackend backend = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get();
 
@@ -260,12 +272,16 @@ public class AsyncNodeManager {
 
         //Limit uploading as well as by geometry capacity being available
         // must have 50 mb of free geometry space to upload
-        for (int limit = 0; limit < 300 && ((this.geometryCapacity-this.geometryManager.getGeometryUsedBytes())>50_000_000L); limit++) {
+        long estimatedUploadBytes = 0;
+        for (int limit = 0; limit < 300 && estimatedUploadBytes < (1_000L << 10)
+                && this.geometryCapacity - this.geometryManager.getGeometryUsedBytes() > 50_000_000L; limit++) {
             var job = this.geometryUpdateQueue.poll();
             if (job == null)
                 break;
             workDone++;
+            long uploadBytes = job.geometryBuffer == null ? 0 : job.geometryBuffer.size;
             this.manager.processGeometryResult(job);
+            estimatedUploadBytes += uploadBytes;
         }
 
         while (true) {//Process all request batches
@@ -384,8 +400,9 @@ public class AsyncNodeManager {
         }
 
 
-        var prev = (SyncResults) RESULT_HANDLE.getAndSet(this, null);
-        SyncResults results = null;
+        var prev = (GeometryPublication) RESULT_HANDLE.getAndSet(this, null);
+        this.assembling = prev;
+        GeometryPublication results = null;
         if (prev == null) {
             this.needsWaitForSync = false;
             results = this.getMakeResultObject();
@@ -466,6 +483,10 @@ public class AsyncNodeManager {
 
                     //Write update data
                     this.geometryManager.writeMetadataSplit(val, ptrA, ptrB);
+                    if (me.cortex.voxy.client.core.SectionProbe.enabled(this.probeWorld)) {
+                        long position=((long)MemoryUtil.memGetInt(ptrA)<<32)|Integer.toUnsignedLong(MemoryUtil.memGetInt(ptrA+4));
+                        me.cortex.voxy.client.core.SectionProbe.record(this.probeWorld,position,"metadata",Integer.toString(val));
+                    }
                 }
                 ids.clear();
             }
@@ -497,126 +518,39 @@ public class AsyncNodeManager {
         if (!RESULT_HANDLE.compareAndSet(this, null, results)) {
             throw new IllegalArgumentException("Should always have null");
         }
+        this.assembling = null;
     }
 
     private IntConsumer tlnAddCallback; private IntConsumer tlnRemoveCallback;
     //Render thread synchronization
     public void tick(IGpuBuffer nodeBuffer, NodeCleaner cleaner) {//TODO: dont pass nodeBuffer here??, do something else thats better
-        var results = (SyncResults)RESULT_HANDLE.getAndSet(this, null);//Acquire the results
+        this.checkWorkerFailure();
+        var results = (GeometryPublication)RESULT_HANDLE.getAndSet(this, null);//Acquire the results
         if (results == null) {//There are no new results to process, return
             return;
         }
         DIAG_TICK_WITH_RESULTS_COUNT.incrementAndGet();
         DIAG_LAST_TICK_SECTION_COUNT.set(results.geometrySectionCount);
-        if (results.geometryUpload != null && !results.geometryUpload.dataUploadPoints.isEmpty()) {
+        if (!results.geometryUpload.dataUploadPoints.isEmpty()) {
             DIAG_TICK_WITH_UPLOADS_COUNT.incrementAndGet();
         }
 
-        //top level node add/remove
-        if (!results.tlnDelta.isEmpty()) {
-            var iter = results.tlnDelta.intIterator();
-            while (iter.hasNext()) {
-                int val = iter.nextInt();
-                if ((val&(1<<31))!=0) {//Add node
-                    this.tlnAddCallback.accept(val&(-1>>>1));
-                } else {
-                    this.tlnRemoveCallback.accept(val);
-                }
-            }
-            //Dont need to clear as is not used again
-        }
-
-        {//Update basic geometry data
-            var store = (BasicSectionGeometryData)this.geometryData;
-
-            store.setSectionCount(results.geometrySectionCount);
-
-            var upload = results.geometryUpload;
-            if (!upload.dataUploadPoints.isEmpty()) {
-                ((BasicSectionGeometryData)this.geometryData).ensureAccessable(upload.maxElementAccess);
-                TimingStatistics.A.start();
-
-                int copies = upload.dataUploadPoints.size();
-                int scratchSize = (int) upload.arena.getSize() * 8;
-                long ptr = UploadStream.INSTANCE.rawUploadAddress(scratchSize + copies * 16);
-                UnsafeUtil.memcpy(upload.scratchHeaderBuffer.address, UploadStream.INSTANCE.getBaseAddress() + ptr, copies * 16L);
-                UnsafeUtil.memcpy(upload.scratchDataBuffer.address, UploadStream.INSTANCE.getBaseAddress() + ptr + copies * 16L, scratchSize);
-                UploadStream.INSTANCE.commit();//Commit the buffer
-
-                if (copies > 500) {
-                    Logger.warn("Large amount of copies, lag will probably happen: " + copies);
-                }
-
-                try (var encoder = this.backend.beginComputePass()) {
-                    encoder.setPipeline(this.multiMemcpy);
-                    // M12: UploadStream's persistent buffer flows through the
-                    // encoder's IGpuPersistentBuffer overload now (was a raw
-                    // glBindBufferRange against UploadStream.getRawBufferId()
-                    // that broke on Metal because the buffer id isn't a GL name).
-                    encoder.setBuffer(0, UploadStream.INSTANCE.getUploadBuffer(), ptr, copies * 16L);
-                    encoder.setBuffer(1, UploadStream.INSTANCE.getUploadBuffer(), ptr + copies * 16L, scratchSize);
-                    encoder.setBuffer(2, ((BasicSectionGeometryData) this.geometryData).getGeometryBuffer(), 0);
-
-                    encoder.barrier(me.cortex.voxy.client.core.gpu.ComputeEncoder.BARRIER_SHADER, me.cortex.voxy.client.core.gpu.ComputeEncoder.BARRIER_SHADER);
-                    encoder.dispatch(copies, 1, 1);
-                    encoder.barrier(me.cortex.voxy.client.core.gpu.ComputeEncoder.BARRIER_SHADER, me.cortex.voxy.client.core.gpu.ComputeEncoder.BARRIER_SHADER);
-                }
-
-                TimingStatistics.A.stop();
-            }
-        }
-
-        TimingStatistics.B.start();
-        if (!results.scatterWriteLocationMap.isEmpty()) {//Scatter write
-            int count = results.scatterWriteLocationMap.size();//Number of writes, not chunks or uvec4 count
-            int chunks = (count+3)/4;
-            int streamSize = chunks*80;//80 bytes per chunk, it is guaranteed the buffer is big enough
-            long ptr = UploadStream.INSTANCE.rawUploadAddress(streamSize + 16);//Ensure it is 16 byte aligned
-            ptr = (ptr+15L)&~0xFL;//Align up to 16 bytes
-            MemoryUtil.memCopy(results.scatterWriteBuffer.address, UploadStream.INSTANCE.getBaseAddress() + ptr, streamSize);
-            UploadStream.INSTANCE.commit();//Commit the buffer
-
-            try (var encoder = this.backend.beginComputePass();
-                 var stack = org.lwjgl.system.MemoryStack.stackPush()) {
-                encoder.setPipeline(this.scatterWrite);
-                // M12: cross-backend persistent-buffer bind — see multiMemcpy above.
-                encoder.setBuffer(0, UploadStream.INSTANCE.getUploadBuffer(), ptr, streamSize);
-                encoder.setBuffer(1, nodeBuffer, 0);
-                encoder.setBuffer(2, ((BasicSectionGeometryData) this.geometryData).getMetadataBuffer(), 0);
-
-                long pushAddr = stack.nmalloc(4);
-                MemoryUtil.memPutInt(pushAddr, count);
-                encoder.setBytes(SCATTER_PUSH_BINDING, pushAddr, 4);
-
-                encoder.barrier(
-                        me.cortex.voxy.client.core.gpu.ComputeEncoder.BARRIER_SHADER,
-                        me.cortex.voxy.client.core.gpu.ComputeEncoder.BARRIER_SHADER);
-                encoder.dispatch((count + 127) / 128, 1, 1);
-                encoder.barrier(
-                        me.cortex.voxy.client.core.gpu.ComputeEncoder.BARRIER_SHADER,
-                        me.cortex.voxy.client.core.gpu.ComputeEncoder.BARRIER_SHADER);
-            }
-        }
-        TimingStatistics.B.stop();
-
-        TimingStatistics.C.start();
-        if (!results.cleanerOperations.isEmpty()) {
-            cleaner.updateIds(results.cleanerOperations);
-        }
-        TimingStatistics.C.stop();
-
-        this.currentMaxNodeId = results.currentMaxNodeId;
-        this.usedGeometryAmount = results.usedGeometry;
-
-        //Insert the result set into the cache
-        if (!RESULT_CACHE_1_HANDLE.compareAndSet(this, null, results)) {
-            //Failed to insert into result set 1, insert it into result set 2
-            if (!RESULT_CACHE_2_HANDLE.compareAndSet(this, null, results)) {
+        try {
+            results.publish(this.backend, this.multiMemcpy, this.scatterWrite,
+                    (BasicSectionGeometryData)this.geometryData, nodeBuffer, cleaner,
+                    this.tlnAddCallback, this.tlnRemoveCallback);
+            this.currentMaxNodeId = results.currentMaxNodeId;
+            this.usedGeometryAmount = results.usedGeometry;
+            if (!RESULT_CACHE_1_HANDLE.compareAndSet(this, null, results)
+                    && !RESULT_CACHE_2_HANDLE.compareAndSet(this, null, results)) {
                 throw new IllegalStateException("Could not insert result into cache");
             }
+        } catch (RuntimeException | Error failure) {
+            this.recordFailure(failure);
+            try { results.close(); } catch (Throwable cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+            throw failure;
         }
     }
-
 
     public void setTLNAddRemoveCallbacks(IntConsumer add, IntConsumer remove) {
         this.tlnAddCallback = add;
@@ -652,7 +586,18 @@ public class AsyncNodeManager {
     private final LongOpenHashSet tlnAdd = new LongOpenHashSet();
     private final LongOpenHashSet tlnRem = new LongOpenHashSet();
 
+    private synchronized void recordFailure(Throwable failure) {
+        if (this.uncaughtException == null) this.uncaughtException = failure;
+        this.running = false;
+        LockSupport.unpark(this.thread);
+    }
+
+    private void checkWorkerFailure() {
+        if (this.uncaughtException != null) throw new RuntimeException("Async node processing or publication failed", this.uncaughtException);
+    }
+
     private void addWork() {
+        this.checkWorkerFailure();
         if (!this.running) throw new IllegalStateException("Not running");
         if (this.workCounter.getAndIncrement() == 0) {
             LockSupport.unpark(this.thread);
@@ -677,7 +622,7 @@ public class AsyncNodeManager {
     public static final java.util.concurrent.atomic.AtomicLong DIAG_WORLD_EVENT_COUNT = new java.util.concurrent.atomic.AtomicLong();
     public static final java.util.concurrent.atomic.AtomicLong DIAG_GEOMETRY_RESULT_COUNT = new java.util.concurrent.atomic.AtomicLong();
     public static final java.util.concurrent.atomic.AtomicLong DIAG_TOP_LEVEL_ADD_COUNT = new java.util.concurrent.atomic.AtomicLong();
-    /** Times AsyncNodeManager.tick() ran and consumed a non-null SyncResults. */
+    /** Times AsyncNodeManager.tick() ran and consumed a non-null GeometryPublication. */
     public static final java.util.concurrent.atomic.AtomicLong DIAG_TICK_WITH_RESULTS_COUNT = new java.util.concurrent.atomic.AtomicLong();
     /** Highest geometrySectionCount observed by AsyncNodeManager.tick(). */
     public static final java.util.concurrent.atomic.AtomicLong DIAG_LAST_TICK_SECTION_COUNT = new java.util.concurrent.atomic.AtomicLong();
@@ -740,66 +685,36 @@ public class AsyncNodeManager {
         this.thread.start();
     }
 
-    public void stop() {
-        if (!this.running) {
-            throw new IllegalStateException();
-        }
+    public void quiesce() {
         this.running = false;
         LockSupport.unpark(this.thread);
-        try {
-            while (this.thread.isAlive()) {
-                LockSupport.unpark(this.thread);
-                this.thread.join(1000);
-            }
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
+        me.cortex.voxy.common.util.ResourceCleanup.join(this.thread);
+    }
 
-        while (true) {
-            var buffer = this.requestBatchQueue.poll();
-            if (buffer == null) break;
-            buffer.free();
+    public void stop() {
+        if (this.stopped) {
+            throw new IllegalStateException();
         }
+        this.stopped = true;
+        this.quiesce();
 
-        while (true) {
-            var buffer = this.removeBatchQueue.poll();
-            if (buffer == null) break;
-            buffer.free();
+        var releases = new java.util.ArrayList<Runnable>();
+        MemoryBuffer buffer;
+        while ((buffer = this.requestBatchQueue.poll()) != null) releases.add(buffer::free);
+        while ((buffer = this.removeBatchQueue.poll()) != null) releases.add(buffer::free);
+        BuiltSection mesh;
+        while ((mesh = this.geometryUpdateQueue.poll()) != null) releases.add(mesh::free);
+        WorldSection section;
+        while ((section = this.childUpdateQueue.poll()) != null) releases.add(section::release);
+        for (var slot : new VarHandle[]{RESULT_HANDLE, RESULT_CACHE_1_HANDLE, RESULT_CACHE_2_HANDLE}) {
+            var result = (GeometryPublication)slot.getAndSet(this, null);
+            if (result != null) releases.add(result::close);
         }
-
-        while (true) {
-            var buffer = this.geometryUpdateQueue.poll();
-            if (buffer == null) break;
-            buffer.free();
-        }
-
-        while (true) {
-            var section = this.childUpdateQueue.poll();
-            if (section == null) break;
-            section.release();
-        }
-
-        if (RESULT_HANDLE.get(this) != null) {
-            var result = (SyncResults)RESULT_HANDLE.getAndSet(this, null);
-            result.geometryUpload.free();
-            result.scatterWriteBuffer.free();
-        }
-
-        if (RESULT_CACHE_1_HANDLE.get(this) != null) {//Clear cache 1
-            var result = (SyncResults)RESULT_CACHE_1_HANDLE.getAndSet(this, null);
-            result.geometryUpload.free();
-            result.scatterWriteBuffer.free();
-        }
-
-        if (RESULT_CACHE_2_HANDLE.get(this) != null) {//Clear cache 2
-            var result = (SyncResults)RESULT_CACHE_2_HANDLE.getAndSet(this, null);
-            result.geometryUpload.free();
-            result.scatterWriteBuffer.free();
-        }
-
-        this.scatterWrite.close();
-        this.multiMemcpy.close();
-        this.geometryCache.free();
+        if (this.assembling != null) { releases.add(this.assembling::close); this.assembling = null; }
+        releases.add(this.scatterWrite::close);
+        releases.add(this.multiMemcpy::close);
+        releases.add(this.geometryCache::free);
+        me.cortex.voxy.common.util.ResourceCleanup.run(releases.toArray(Runnable[]::new));
     }
 
     public void addDebug(List<String> debug) {
@@ -811,7 +726,11 @@ public class AsyncNodeManager {
         return this.workCounter.get()!=0 || RESULT_HANDLE.get(this) != null;
     }
 
+    public WorldEngine getWorld() { return this.probeWorld; }
+
     public void worldEvent(WorldSection section, int flags, int neighborMask) {
+        if (me.cortex.voxy.client.core.SectionProbe.enabled(this.probeWorld))
+            me.cortex.voxy.client.core.SectionProbe.record(this.probeWorld,section.key,"ingest","changes="+flags+",children="+section.getNonEmptyChildren());
         DIAG_WORLD_EVENT_COUNT.incrementAndGet();
         //If there is any change, we need to clear the geometry cache before emitting update
         this.geometryCache.clear(section.key);
@@ -828,224 +747,4 @@ public class AsyncNodeManager {
         }
     }
 
-    //Results object, which is to be synced between the render thread and worker thread
-    private static final class SyncResults {
-        //Contains
-        // geometry uploads and id invalidations and the data
-        // node ids to invalidate/update and its data
-        // top level node ids to add/remove
-        // cleaner move and set operations
-
-        //Node id updates + size
-        private int currentMaxNodeId;// the id of the ending of the node ids
-
-        //TLN add/rem
-        private final IntOpenHashSet tlnDelta = new IntOpenHashSet();
-
-        //Deltas for geometry store
-        private int geometrySectionCount;
-        private long usedGeometry;
-        private final ComputeMemoryCopy geometryUpload = new ComputeMemoryCopy();
-
-        //Gpu geometry downloads
-
-
-
-        //Scatter writes for both geometry and node metadata
-        private MemoryBuffer scatterWriteBuffer = new MemoryBuffer(8192*2);
-        private final Int2IntOpenHashMap scatterWriteLocationMap = new Int2IntOpenHashMap(1024);
-        {this.scatterWriteLocationMap.defaultReturnValue(-1);}
-
-        //Cleaner operations
-        private final IntOpenHashSet cleanerOperations = new IntOpenHashSet();
-
-        public void reset() {
-            this.cleanerOperations.clear();
-            this.scatterWriteLocationMap.clear();
-            this.currentMaxNodeId = 0;
-            this.tlnDelta.clear();
-            this.geometrySectionCount = 0;
-            this.usedGeometry = 0;
-            this.geometryUpload.reset();
-        }
-
-        //Get or create a scatter write address for the given location
-        public long getScatterWritePtr(int location) {
-            return this.getScatterWritePtr(location, 0);
-        }
-
-        //ensureExtra is used to ensure that allocations are "effectivly" in the same memory block (kinda?)
-        public long getScatterWritePtr(int location, int ensureExtra) {
-            int loc = this.scatterWriteLocationMap.get(location);
-            if (loc == -1) {//Location doesnt exist, create it
-                this.ensureScatterBufferCapacity(1+ensureExtra);//Ensure can contain capacity for this + extra
-                int baseId = this.scatterWriteLocationMap.size();
-                int chunkBase = (baseId/4)*5;//Base uvec4 index
-                int innerId   = baseId&3;
-                MemoryUtil.memPutInt(this.scatterWriteBuffer.address + (chunkBase*16L) + (innerId*4L), location);//Set the write location
-                int writeLocation = (chunkBase+1+innerId);//Write location in uvec4
-                this.scatterWriteLocationMap.put(location, writeLocation);
-                return this.scatterWriteBuffer.address + (writeLocation*16L);
-            } else {
-                return this.scatterWriteBuffer.address + (16L*loc);
-            }
-        }
-
-        private void ensureScatterBufferCapacity(int extra) {
-            int requiredChunks = ((this.scatterWriteLocationMap.size()+extra)+3)/4;//4 entries in a chunk
-            long requiredSize = requiredChunks*5L*16L;//5 uvec4 per chunk, 16 bytes per uvec4
-            if (this.scatterWriteBuffer.size <= requiredSize) {//Needs resize
-                long newSize = (long) ((this.scatterWriteBuffer.size*1.5) + extra*80L);
-                newSize = ((newSize+79)/80)*80;//Ceil to chunk size
-
-                Logger.info("Expanding scatter update buffer to " + newSize);
-
-                var newBuffer = new MemoryBuffer(newSize);
-                this.scatterWriteBuffer.cpyTo(newBuffer.address);
-                this.scatterWriteBuffer.free();
-                this.scatterWriteBuffer = newBuffer;
-            }
-        }
-    }
-
-    private static class ComputeMemoryCopy {
-        public int currentElemCopyAmount;
-        public int maxElementAccess;
-        private MemoryBuffer scratchHeaderBuffer = new MemoryBuffer(1<<16);
-        private MemoryBuffer scratchDataBuffer = new MemoryBuffer(1<<20);
-
-        private final AllocationArena arena = new AllocationArena();
-        private final Int2IntOpenHashMap dataUploadPoints = new Int2IntOpenHashMap();//Points to the header index
-        {this.dataUploadPoints.defaultReturnValue(-1);}
-
-
-        public void remove(int point) {
-            int header = this.dataUploadPoints.remove(point);
-            if (header == -1) {//No upload for point
-                return;
-            }
-            int size = MemoryUtil.memGetInt(this.scratchHeaderBuffer.address + header*16L + 8L);
-            this.currentElemCopyAmount -= size;
-            //Free the old memory addr from arena
-            if (this.arena.free(MemoryUtil.memGetInt(this.scratchHeaderBuffer.address + header*16L)) != size) {
-                throw new IllegalStateException("Freed memory not same size as expected");
-            }
-            if (MemoryUtil.memGetInt(this.scratchHeaderBuffer.address + header*16L + 4L) != point) {
-                throw new IllegalStateException("Destination not the same as point");
-            }
-
-            //If we were the end upload header, return as we dont need to shuffle
-            if (header == this.dataUploadPoints.size()) {
-                long A = this.scratchHeaderBuffer.address + header*16L;
-                //Zero the memory, for consistancy
-                MemoryUtil.memPutLong(A, 0);
-                MemoryUtil.memPutLong(A+8, 0);
-                return;
-            }
-
-            //Else: we need to move the ending upload header from the end to where the freed point was
-            int endingPoint = MemoryUtil.memGetInt(this.scratchHeaderBuffer.address + this.dataUploadPoints.size()*16L + 4);
-            if (this.dataUploadPoints.get(endingPoint) != this.dataUploadPoints.size()) {
-                throw new IllegalStateException("ending header not pointing at end point");
-            }
-
-            //Move the end header to the old header location
-            long A = this.scratchHeaderBuffer.address + this.dataUploadPoints.size()*16L;
-            long B = this.scratchHeaderBuffer.address + header*16L;
-            MemoryUtil.memPutLong(B, MemoryUtil.memGetLong(A)); MemoryUtil.memPutLong(A, 0);
-            MemoryUtil.memPutLong(B+8, MemoryUtil.memGetLong(A+8)); MemoryUtil.memPutLong(A+8, 0);
-
-            //Update the map
-            this.dataUploadPoints.put(endingPoint, header);
-        }
-
-        public void upload(int point, MemoryBuffer data) {
-            if ((data.size%8)!=0) throw new IllegalStateException("Data must be of size multiple 8");
-            int elemSize = (int) (data.size / 8);
-            this.maxElementAccess = Math.max(this.maxElementAccess, point + elemSize);
-            int header = this.dataUploadPoints.get(point);
-            if (header != -1) {
-                //If we already have a header location, we just need to reallocate the data
-                long headerPtr = this.scratchHeaderBuffer.address + header*16L;
-                if (MemoryUtil.memGetInt(headerPtr+4L) != point) {
-                    throw new IllegalStateException("Existing destination not the point");
-                }
-                int pSize = MemoryUtil.memGetInt(headerPtr+8L);//Previous size
-                if (pSize == elemSize) {
-                    //The data we are replacing is the same size, so just overwrite it, this is the easiest
-                    data.cpyTo(this.scratchDataBuffer.address+MemoryUtil.memGetInt(headerPtr)*8L);
-                } else {
-                    //Dealloc
-                    if (this.arena.free(MemoryUtil.memGetInt(headerPtr)) != pSize) {
-                        throw new IllegalStateException("Freed allocation not size as expected");
-                    }
-
-                    this.currentElemCopyAmount -= pSize;
-                    this.currentElemCopyAmount += elemSize;
-
-                    int alloc = this.allocScratchDataPos(elemSize);//New allocation position
-                    //Copy data into position
-                    data.cpyTo(this.scratchDataBuffer.address+alloc*8L);
-
-                    //Update the header
-                    MemoryUtil.memPutInt(headerPtr, alloc);
-                    MemoryUtil.memPutInt(headerPtr+8, elemSize);
-                }
-            } else {
-                //We need to create and allocate a new header for the upload
-                header = this.dataUploadPoints.size();
-                this.dataUploadPoints.put(point, header);
-
-                if (this.scratchHeaderBuffer.size<=header*16L) {
-                    //We must resize the header buffer
-                    long newSize = Math.max(this.scratchHeaderBuffer.size*2, header*16L);
-                    Logger.info("Resizing scratch header buffer to: " + newSize);
-                    var newScratch = new MemoryBuffer(newSize);
-                    this.scratchHeaderBuffer.cpyTo(newScratch.address);
-                    this.scratchHeaderBuffer.free();
-                    this.scratchHeaderBuffer = newScratch;
-                }
-
-                long headerPtr = this.scratchHeaderBuffer.address + header*16L;//Header resize has happened so this is a stable address
-
-                this.currentElemCopyAmount += elemSize;
-
-                int alloc = this.allocScratchDataPos(elemSize);//New allocation position
-                //Copy data into position
-                data.cpyTo(this.scratchDataBuffer.address+alloc*8L);
-
-                //Set header data
-                MemoryUtil.memPutInt(headerPtr, alloc);
-                MemoryUtil.memPutInt(headerPtr+4, point);
-                MemoryUtil.memPutInt(headerPtr+8, elemSize);
-            }
-        }
-
-        //This is done here as it enables easily doing scratch data resizing
-        private int allocScratchDataPos(int size) {
-            int pos = (int) this.arena.alloc(size);
-            if (this.scratchDataBuffer.size <= (pos+size)*8L) {
-                //We must resize :cri:
-                long newSize = Math.max(this.scratchDataBuffer.size*2, (pos+size)*8L);
-                Logger.info("Resizing scratch data buffer to: " + newSize);
-                var newScratch = new MemoryBuffer(newSize);
-                this.scratchDataBuffer.cpyTo(newScratch.address);
-                this.scratchDataBuffer.free();
-                this.scratchDataBuffer = newScratch;
-            }
-            return pos;
-        }
-
-        public void reset() {
-            this.maxElementAccess = 0;
-            this.currentElemCopyAmount = 0;
-            this.dataUploadPoints.clear();
-            this.arena.reset();
-        }
-
-        public void free() {
-            this.scratchHeaderBuffer.free(); this.scratchHeaderBuffer = null;
-            this.scratchDataBuffer.free(); this.scratchDataBuffer = null;
-        }
-    }
 }

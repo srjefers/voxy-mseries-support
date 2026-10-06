@@ -1,0 +1,2 @@
+# Golden assembly fixtures retain the exact generated trailing newline.
+src/test/resources/fixtures/bsl-assembly/*.glsl whitespace=-blank-at-eof

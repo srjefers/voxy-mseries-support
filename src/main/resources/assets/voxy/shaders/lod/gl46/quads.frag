@@ -40,6 +40,9 @@ layout(binding = 9, std430) readonly restrict buffer BoundDepthBuffer {
 //TODO: need to fix when merged quads have discardAlpha set to false but they span multiple tiles
 // however they are not a full block
 
+#ifdef VOXY_PRELIT_LAYER
+layout(location = 1) out float prelitSurfaceDepth;
+#endif
 layout(location = 0) in flat uvec4 interData;
 #ifndef USE_NV_BARRY
 layout(location = 1) in vec2 uv;
@@ -98,6 +101,11 @@ bool useDiscard() {
 uint getFace() {
     return (interData.x>>4)&7u;
 }
+#ifdef VOXY_METAL_TINT
+#import <voxy:lod/tint_weights.glsl>
+float voxyTintLod = 0.0;
+#endif
+
 
 #ifdef PATCHED_SHADER
 vec2 getLightmap() {
@@ -114,6 +122,19 @@ vec2 getBaseUV() {
     uint modelId = interData.x>>16;
     vec2 modelUV = vec2(modelId&0xFFu, (modelId>>8)&0xFFu)*(1.0/(256.0));
     return modelUV + (vec2(face>>1, face&1u) * (1.0/(vec2(3.0, 2.0)*256.0)));
+}
+
+float fragmentTintWeight(vec2 position) {
+#ifdef VOXY_METAL_TINT
+    if (tintingState() == 0u) return 0.0;
+    if (tintingState() == 2u) return 1.0;
+    vec2 localUV = fract((position - getBaseUV()) * vec2(768.0, 512.0));
+    return sampleModelTint(getModelId(), getFace(), localUV, voxyTintLod);
+#else
+    if (tintingState() == 2u) return 1.0;
+    vec3 test = textureLod(blockModelAtlas, position, 0.0).rgb;
+    return tintingState() == 1u && abs(test.r-test.g)<0.02 && abs(test.g-test.b)<0.02 ? 1.0 : 0.0;
+#endif
 }
 
 
@@ -134,19 +155,8 @@ void voxy_emitFragment(VoxyFragmentParameters parameters);
 #else
 
 vec4 computeColour(vec2 texturePos, vec4 colour) {
-    //Conditional tinting, TODO: FIXME: this is better but still not great, try encode data into the top bit of alpha so its per pixel
-
-    uint tintingFunction = tintingState();
-    bool doTint = tintingFunction==2;//Always tint if function == 2
-    if (tintingFunction == 1) {//partial tint
-        vec4 tintTest = textureLod(blockModelAtlas, texturePos, 0);
-        if (abs(tintTest.r-tintTest.g) < 0.02f && abs(tintTest.g-tintTest.b) < 0.02f) {
-            doTint = true;
-        }
-    }
-    if (doTint) {
-        colour *= uint2vec4RGBA(interData.z).yzwx;
-    }
+    vec4 tint = uint2vec4RGBA(interData.z).yzwx;
+    colour *= mix(vec4(1.0), tint, fragmentTintWeight(texturePos));
     return (colour * uint2vec4RGBA(interData.y)) + vec4(0,0,0,float(interData.w&0xFFu)/255);
 }
 
@@ -154,6 +164,12 @@ vec4 computeColour(vec2 texturePos, vec4 colour) {
 
 
 void main() {
+#ifdef VOXY_PRELIT_LAYER
+    bool isFluid = (interData.w & (1u << 19)) != 0u;
+    if (isFluid != (VOXY_PRELIT_LAYER != 0)) discard;
+    prelitSurfaceDepth = gl_FragCoord.z;
+#endif
+
 #if defined(VOXY_BOUND_DEBUG) && defined(PATCHED_SHADER)
     // See the bound-mask block below: PATCHED variants paint the debug red
     // at the emit site via this flag (no outColour exists to write here).
@@ -401,6 +417,9 @@ void main() {
                                  0.0, VOXY_ATLAS_MAX_LOD);
         }
         #endif
+#ifdef VOXY_METAL_TINT
+        voxyTintLod = voxyAtlasLod;
+#endif
         colour = textureLod(blockModelAtlas, texPos, voxyAtlasLod);
 #elif defined(VOXY_LOD_FIXED_MIP)
         // DIAGNOSTIC (2026-05-25): sample the atlas at a fixed LOD 0 instead of
@@ -537,20 +556,8 @@ void main() {
     }
 #endif
 
-    // M13 chunk 5: environmental fog on the Metal terrain path. Mirrors the
-    // GL post-pass formula from blit_texture_depth_cutout.frag (lines 71–74)
-    // so distant LOD chunks fade into the sky/biome fog colour the same way
-    // Sodium's near terrain does. Injected only on the Metal pipeline (see
-    // MDICSectionRenderer constructor) — the GL pipeline still applies fog
-    // in the depth-cutout post-pass and would double-apply if this branch
-    // also ran. fogColour.a == 0 short-circuits so a feature-flagged-off
-    // upload (zero alpha) is cheap.
-    // Seam-ring brightness parity (Metal): GL runs ssao.comp between opaque
-    // and translucent, approximating the vertex AO Sodium bakes into its near
-    // terrain; that pass is parked on Metal, leaving LOD ~10% brighter than
-    // the AO-darkened Sodium terrain at the render-distance boundary. Applied
-    // BEFORE fog so the compensation darkens terrain, not the fog colour.
-    // Injected Metal-only with the tunable value (VOXY_LOD_BRIGHTNESS env).
+    // Explicit diagnostic override only. Normal rendering preserves the lightmap
+    // and directional shade; uniform darkening cannot approximate local ambient occlusion.
     #ifdef VOXY_LOD_BRIGHTNESS
     outColour.rgb *= VOXY_LOD_BRIGHTNESS;
     #endif
@@ -561,10 +568,10 @@ void main() {
     // bridge clear. Darken it and floor its opacity so the boundary reads as
     // continuous deep water. VOXY_WATER_SHADE / VOXY_WATER_MIN_ALPHA envs.
     #ifdef VOXY_WATER_SHADE
-    outColour.rgb *= VOXY_WATER_SHADE;
+    if ((interData.w & (1u<<19)) != 0u) outColour.rgb *= VOXY_WATER_SHADE;
     #endif
     #ifdef VOXY_WATER_MIN_ALPHA
-    outColour.a = max(outColour.a, VOXY_WATER_MIN_ALPHA);
+    if ((interData.w & (1u<<19)) != 0u) outColour.a = max(outColour.a, VOXY_WATER_MIN_ALPHA);
     #endif
 
     // Far-water opacity ramp (Metal, translucent only, 2026-07-03). MC water
@@ -578,7 +585,7 @@ void main() {
     // end. w == 0 disables (VOXY_WATER_FAR_ALPHA=0 kill switch, params from
     // MDICSectionRenderer.uploadUniform).
     #if defined(TRANSLUCENT) && defined(VOXY_WATER_FAR_ALPHA)
-    if (voxyLodParams.w > 0.0) {
+    if (voxyLodParams.w > 0.0 && (interData.w & (1u<<19)) != 0u) {
         float farLerp = clamp((voxyFogDist - voxyLodParams.y) * voxyLodParams.z, 0.0, 1.0);
         farLerp = farLerp * farLerp * (3.0 - 2.0 * farLerp);
         outColour.a = mix(outColour.a, max(outColour.a, voxyLodParams.w), farLerp);
@@ -605,18 +612,7 @@ void main() {
     #else
     uint modelId = getModelId();
     BlockModel model = modelData[modelId];
-    uint tintingFunction = tintingState();
-    bool doTint = tintingFunction==2;//Always tint if function == 2
-    if (tintingFunction==1) {//Partial tint
-        vec4 tintTest = texture(blockModelAtlas, texPos, -2);
-        if (abs(tintTest.r-tintTest.g) < 0.02f && abs(tintTest.g-tintTest.b) < 0.02f) {
-            doTint = true;
-        }
-    }
-    vec4 tint = vec4(1);
-    if (doTint) {
-        tint = uint2vec4RGBA(interData.z).yzwx;
-    }
+    vec4 tint = mix(vec4(1.0), uint2vec4RGBA(interData.z).yzwx, fragmentTintWeight(texPos));
 
     #ifdef VOXY_DEBUG_WLOG_TINT
     // Adjudication aid (VOXY_DEBUG_WLOG_TINT=1): solid magenta on every quad

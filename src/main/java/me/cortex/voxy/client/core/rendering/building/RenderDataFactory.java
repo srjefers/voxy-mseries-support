@@ -178,6 +178,10 @@ public class RenderDataFactory {
             encodedPosition |= auxPos << (shiftAmount);
 
             long quad = data | Integer.toUnsignedLong(encodedPosition);
+            // Apply the upstream emission clamp once per emitted quad; preserve sky light and fluid typing.
+            long emission = ModelQueries.lightEmission(RenderDataFactory.this.modelMan
+                    .getModelMetadataFromClientId((int)(data >>> 26) & 0xffff)) << 59;
+            quad = (quad & ~(15L << 59)) | Math.max(quad & (15L << 59), emission);
 
 
             int bufferIdx = type+(type==2?face:0);//Translucent, double side, directional
@@ -413,7 +417,7 @@ public class RenderDataFactory {
     private static final long LM = (0xFFL<<55);
 
     private static boolean shouldMeshNonOpaqueBlockFace(int face, long quad, long meta, long neighborQuad, long neighborMeta) {
-        if (((quad^neighborQuad)&(0xFFFFL<<26))==0 && (DISABLE_CULL_SAME_OCCLUDES || (ModelQueries.cullsSame(meta)||ModelQueries.faceOccludes(meta, face)))) return false;//This is a hack, if the neigbor and this are the same, dont mesh the face// TODO: FIXME
+        if (((quad^neighborQuad)&(0xFFFFL<<26))==0 && (DISABLE_CULL_SAME_OCCLUDES || ModelQueries.cullsSame(meta))) return false;
         if (!ModelQueries.faceExists(meta, face)) return false;//Dont mesh if no face
         //if (ModelQueries.faceCanBeOccluded(meta, face)) //TODO: maybe enable this
             if (ModelQueries.faceOccludes(neighborMeta, face^1)) return false;
@@ -1084,7 +1088,7 @@ public class RenderDataFactory {
                         long meta = this.modelMan.getModelMetadataFromClientId(this.modelMan.getModelId(Mapper.getBlockId(neighborId)));
                         if (ModelQueries.isFullyOpaque(meta)) {
                             oki = false;
-                        } else if (CHECK_NEIGHBOR_FACE_OCCLUSION && ModelQueries.faceOccludes(meta, (2 << 1) | (1 - 1))) {
+                        } else if (CHECK_NEIGHBOR_FACE_OCCLUSION && ModelQueries.faceOccludes(meta, (2 << 1) | (1 - 0))) {
                             //TODO check self occlsion
                             oki = false;
                         }
@@ -1106,7 +1110,7 @@ public class RenderDataFactory {
                         long meta = this.modelMan.getModelMetadataFromClientId(this.modelMan.getModelId(Mapper.getBlockId(neighborId)));
                         if (ModelQueries.isFullyOpaque(meta)) {
                             oki = false;
-                        } else if (CHECK_NEIGHBOR_FACE_OCCLUSION && ModelQueries.faceOccludes(meta, (2 << 1) | (1 - 0))) {
+                        } else if (CHECK_NEIGHBOR_FACE_OCCLUSION && ModelQueries.faceOccludes(meta, (2 << 1) | (1 - 1))) {
                             //TODO check self occlsion
                             oki = false;
                         }
@@ -1748,9 +1752,9 @@ public class RenderDataFactory {
         aabb |= this.minX;
         aabb |= this.minY<<5;
         aabb |= this.minZ<<10;
-        aabb |= (this.maxX-this.minX-1)<<15;
-        aabb |= (this.maxY-this.minY-1)<<20;
-        aabb |= (this.maxZ-this.minZ-1)<<25;
+        aabb |= Math.max(0, this.maxX-this.minX-1)<<15;
+        aabb |= Math.max(0, this.maxY-this.minY-1)<<20;
+        aabb |= Math.max(0, this.maxZ-this.minZ-1)<<25;
 
         return new BuiltSection(section.key, section.getNonEmptyChildren(), aabb, buff, offsets);
     }

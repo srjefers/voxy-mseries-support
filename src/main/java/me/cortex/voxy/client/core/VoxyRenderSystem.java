@@ -49,6 +49,7 @@ import static org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER;
 import static org.lwjgl.opengl.GL43C.GL_SHADER_STORAGE_BUFFER_BINDING;
 
 public class VoxyRenderSystem {
+    private final RendererLifecycle lifecycle = new RendererLifecycle();
     private final WorldEngine worldIn;
 
 
@@ -157,6 +158,10 @@ public class VoxyRenderSystem {
         //Keep the world loaded, NOTE: this is done FIRST, to keep and ensure that even if the rest of loading takes more
         // than timeout, we keep the world acquired
         world.acquireRef();
+        this.worldIn = world;
+        this.lifecycle.on(RendererLifecycle.Phase.WORLD, world::releaseRef);
+        int[] oldBufferBindings = null;
+        try {
         System.gc();
 
         if (Minecraft.getInstance().options.getEffectiveRenderDistance()<3) {
@@ -185,31 +190,39 @@ public class VoxyRenderSystem {
         }
 
         //Fking HATE EVERYTHING AAAAAAAAAAAAAAAA
-        int[] oldBufferBindings = new int[10];
+        oldBufferBindings = new int[10];
         for (int i = 0; i < oldBufferBindings.length; i++) {
             oldBufferBindings[i] = glGetIntegeri(GL_SHADER_STORAGE_BUFFER_BINDING, i);
         }
 
-        try {
             //wait for opengl to be finished, this should hopefully ensure all memory allocations are free
             glFinish();
             glFinish();
-
-            this.worldIn = world;
 
             long geometryCapacity = getGeometryBufferSize();
             var backendFactory = getRenderBackendFactory();
 
             {
-                this.modelService = new ModelBakerySubsystem(world.getMapper());
-                this.renderGen = new RenderGenerationService(world, this.modelService, sm, IUsesMeshlets.class.isAssignableFrom(backendFactory.clz()));
+                this.modelService = this.lifecycle.own(new ModelBakerySubsystem(world.getMapper()), RendererLifecycle.Phase.RELEASE, ModelBakerySubsystem::shutdown);
+                this.lifecycle.on(RendererLifecycle.Phase.BAKERY_STOP, this.modelService::quiesce);
+                this.renderGen = this.lifecycle.own(new RenderGenerationService(world, this.modelService, sm, IUsesMeshlets.class.isAssignableFrom(backendFactory.clz())), RendererLifecycle.Phase.RELEASE, RenderGenerationService::shutdown);
 
-                this.geometryData = new BasicSectionGeometryData(1 << 20, geometryCapacity);
+                this.lifecycle.on(RendererLifecycle.Phase.MESH_STOP, this.renderGen::quiesce);
+                this.geometryData = this.lifecycle.own(new BasicSectionGeometryData(1 << 20, geometryCapacity), RendererLifecycle.Phase.RELEASE, IGeometryData::free);
 
-                this.nodeManager = new AsyncNodeManager(1 << 21, this.geometryData, this.renderGen);
-                this.nodeCleaner = new NodeCleaner(this.nodeManager);
-                this.traversal = new HierarchicalOcclusionTraverser(this.nodeManager, this.nodeCleaner, this.renderGen);
+                this.nodeManager = this.lifecycle.own(new AsyncNodeManager(1 << 21, this.geometryData, this.renderGen), RendererLifecycle.Phase.RELEASE, AsyncNodeManager::stop);
+                this.lifecycle.on(RendererLifecycle.Phase.NODE_STOP, this.nodeManager::quiesce);
+                this.nodeCleaner = this.lifecycle.own(new NodeCleaner(this.nodeManager), RendererLifecycle.Phase.RELEASE, NodeCleaner::free);
+                this.traversal = this.lifecycle.own(new HierarchicalOcclusionTraverser(this.nodeManager, this.nodeCleaner, this.renderGen), RendererLifecycle.Phase.RELEASE, HierarchicalOcclusionTraverser::free);
 
+                this.lifecycle.on(RendererLifecycle.Phase.DETACH, () -> {
+                    world.setDirtyCallback(null);
+                    world.getMapper().setBiomeCallback(null);
+                    world.getMapper().setStateCallback(null);
+                });
+                this.lifecycle.on(RendererLifecycle.Phase.DOWNLOAD, DownloadStream.INSTANCE::flushWaitClear);
+                this.lifecycle.on(RendererLifecycle.Phase.UPLOAD, UploadStream.INSTANCE::flushWaitClear);
+                this.lifecycle.on(RendererLifecycle.Phase.FINALIZE, UploadStream.INSTANCE::discardClear);
                 world.setDirtyCallback(this.nodeManager::worldEvent);
 
                 Arrays.stream(world.getMapper().getBiomeEntries()).forEach(this.modelService::addBiome);
@@ -218,11 +231,13 @@ public class VoxyRenderSystem {
                 this.nodeManager.start();
             }
 
-            this.pipeline = RenderPipelineFactory.createPipeline(this.nodeManager, this.nodeCleaner, this.traversal, this::frexStillHasWork);
+            this.pipeline = this.lifecycle.own(RenderPipelineFactory.createPipeline(this.nodeManager, this.nodeCleaner, this.traversal, this::frexStillHasWork), RendererLifecycle.Phase.RELEASE, AbstractRenderPipeline::free);
+            this.lifecycle.on(RendererLifecycle.Phase.FINALIZE,
+                    me.cortex.voxy.client.core.util.MetalVxResolvePass::reset);
             this.pipeline.setupExtraModelBakeryData(this.modelService);//Configure the model service
             var sectionRenderer = backendFactory.create(this.pipeline, this.modelService.getStore(), this.geometryData);
             this.pipeline.setSectionRenderer(sectionRenderer);
-            this.viewportSelector = new ViewportSelector<>(sectionRenderer::createViewport);
+            this.viewportSelector = this.lifecycle.own(new ViewportSelector<>(sectionRenderer::createViewport), RendererLifecycle.Phase.RELEASE, ViewportSelector::free);
 
             {
                 int minSec = Minecraft.getInstance().level.getMinSectionY() >> 5;
@@ -243,16 +258,19 @@ public class VoxyRenderSystem {
                 this.setRenderDistance(VoxyConfig.CONFIG.sectionRenderDistance);
             }
 
-            this.chunkBoundRenderer = new ChunkBoundRenderer(this.pipeline);
+            this.chunkBoundRenderer = this.lifecycle.own(new ChunkBoundRenderer(this.pipeline), RendererLifecycle.Phase.RELEASE, ChunkBoundRenderer::free);
 
             Logger.info("Voxy render system created with " + geometryCapacity + " geometry capacity, using pipeline '" + this.pipeline.getClass().getSimpleName() + "' with renderer '" + sectionRenderer.getClass().getSimpleName() + "'");
-        } catch (RuntimeException e) {
-            world.releaseRef();//If something goes wrong, we must release the world first
-            throw e;
-        }
-
-        for (int i = 0; i < oldBufferBindings.length; i++) {
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, oldBufferBindings[i]);
+        } catch (RuntimeException | Error failure) {
+            try { this.lifecycle.close(); }
+            catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        } finally {
+            if (oldBufferBindings != null) {
+                for (int i = 0; i < oldBufferBindings.length; i++) {
+                    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, oldBufferBindings[i]);
+                }
+            }
         }
 
         for (int i = 0; i < 12; i++) {
@@ -412,6 +430,9 @@ public class VoxyRenderSystem {
         return this.smoothedFog;
     }
 
+    private final FrameTransformHistory frameTransforms = new FrameTransformHistory();
+    public FrameTransformHistory getFrameTransforms() { return this.frameTransforms; }
+
     public Viewport<?> setupViewport(ChunkRenderMatrices matrices, FogParameters fogParameters, double cameraX, double cameraY, double cameraZ) {
         var viewport = this.getViewport();
         if (viewport == null) {
@@ -474,7 +495,7 @@ public class VoxyRenderSystem {
                 && me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
                         != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
             // The projection's FOV includes spyglass zoom (getFov(..., true) in
-            // makeProjectionMatrix) but the HOT traversal's minSSS is uploaded
+            // computeProjectionMat) but the HOT traversal's minSSS is uploaded
             // FOV-independent — zooming inflates every node's screenspace area
             // ~170x, so the walk demands 3-4 finer LOD levels that each need a
             // request→build→upload round trip (~3s of pop-in). Scale minSSS by
@@ -566,9 +587,11 @@ public class VoxyRenderSystem {
                 .update();
 
         if (VoxyClient.getOcclusionDebugState()==0) {
-            viewport.frameId++;
+            viewport.frameId = (int)(WorldFrameCapture.frame() & 0x7fffffff);
         }
 
+        this.frameTransforms.advance(this, WorldFrameCapture.frame(), width, height,
+                IrisUtil.shadowsBeingRendered(), viewport.projection, viewport.modelView);
         return viewport;
     }
 
@@ -807,34 +830,20 @@ public class VoxyRenderSystem {
         }
     }
 
-    private static Matrix4f makeProjectionMatrix(float near, float far) {
-        //TODO: use the existing projection matrix use mulLocal by the inverse of the projection and then mulLocal our projection
-
-        var projection = new Matrix4f();
-        var client = Minecraft.getInstance();
-        var gameRenderer = client.gameRenderer;//tickCounter.getTickDelta(true);
-
-        float fov = gameRenderer.getFov(gameRenderer.getMainCamera(), client.getDeltaTracker().getGameTimeDeltaPartialTick(true), true);
-
-        projection.setPerspective(fov * 0.01745329238474369f,
-                (float) client.getWindow().getWidth() / (float)client.getWindow().getHeight(),
-                near, far);
-        return projection;
-    }
-
-    //TODO: Make a reverse z buffer
+    // Adapted from upstream 98d800a: keep Minecraft's actual raw projection and camera extras.
+    // Metal's existing clip distances and depth convention are intentionally retained here.
     private static Matrix4f computeProjectionMat(Matrix4fc base) {
-        //THis is a wild and insane problem to have
-        // at short render distances the vanilla terrain doesnt end up covering the 16f near plane voxy uses
-        // meaning that it explodes (due to near plane clipping).. _badly_ with the rastered culling being wrong in rare cases for the immediate
-        // sections rendered after the vanilla render distance
-        float nearVoxy = Minecraft.getInstance().gameRenderer.getRenderDistance()<=32.0f?8f:16f;
+        var client = Minecraft.getInstance();
+        var renderer = client.gameRenderer;
+        float fov = renderer.getFov(renderer.getMainCamera(), client.getDeltaTracker().getGameTimeDeltaPartialTick(true), true);
+        var raw = renderer.getProjectionMatrix(fov);
+        var cameraExtra = raw.invert(new Matrix4f()).mul(base);
+        float nearVoxy = renderer.getRenderDistance() <= 32.0f ? 8f : 16f;
         nearVoxy = VoxyClient.disableSodiumChunkRender()?0.1f:nearVoxy;
-
-        return base.mulLocal(
-                makeProjectionMatrix(0.05f, Minecraft.getInstance().gameRenderer.getDepthFar()).invert(),
-                new Matrix4f()
-        ).mulLocal(makeProjectionMatrix(nearVoxy, 16*3000));
+        float farVoxy = 16 * 3000;
+        return cameraExtra.mulLocal(new Matrix4f(raw)
+                .m22((farVoxy + nearVoxy) / (nearVoxy - farVoxy))
+                .m32((farVoxy + farVoxy) * nearVoxy / (nearVoxy - farVoxy)));
     }
 
     private boolean frexStillHasWork() {
@@ -883,77 +892,10 @@ public class VoxyRenderSystem {
     }
 
     public void shutdown() {
-        Logger.info("Flushing download stream");
-        DownloadStream.INSTANCE.flushWaitClear();
-        // World-rejoin fix: UploadStream is a process-lifetime singleton but
-        // its queued copies target the world-lifetime buffers freed below.
-        // Un-flushed session-N entries used to execute on session-N+1's first
-        // commit against freed Metal handles (native use-after-free — prime
-        // suspect for the white/untextured LODs on rejoin). Drain here while
-        // every target is still alive; VOXY_UPLOAD_FLUSH_FIX=0 reverts.
-        if (!"0".equals(System.getenv("VOXY_UPLOAD_FLUSH_FIX"))) {
-            try {
-                Logger.info("Flushing upload stream");
-                me.cortex.voxy.client.core.rendering.util.UploadStream.INSTANCE.flushWaitClear();
-            } catch (Exception e) {
-                Logger.error("Error flushing upload stream", e);
-            }
-        }
-        Logger.info("Shutting down rendering");
-        try {
-            //Cleanup callbacks
-            this.worldIn.setDirtyCallback(null);
-            this.worldIn.getMapper().setBiomeCallback(null);
-            this.worldIn.getMapper().setStateCallback(null);
-
-            this.nodeManager.stop();
-
-            this.modelService.shutdown();
-            this.renderGen.shutdown();
-            this.traversal.free();
-            this.nodeCleaner.free();
-
-            this.geometryData.free();
-            this.chunkBoundRenderer.free();
-
-            this.viewportSelector.free();
-        } catch (Exception e) {Logger.error("Error shutting down renderer components", e);}
-        Logger.info("Shutting down render pipeline");
-        try {this.pipeline.free();} catch (Exception e){Logger.error("Error releasing render pipeline", e);}
-
-        // The vx resolve pass caches its build in STATICS that outlive this
-        // instance (GL programs compiled against ONE Iris pipeline generation +
-        // a native UBO scratch sized for that generation's uniform layout).
-        // Iris recreates its pipeline on every world rejoin, so free the stale
-        // build here — on the render thread with the GL context current — and
-        // let the next contract frame rebuild against the live pipeline. The
-        // per-frame identity check in MetalVxResolvePass covers recreations
-        // that don't pass through this shutdown (shader option toggles). No-op
-        // on the GL backend (nothing is ever built there) and under
-        // VOXY_VX_RESOLVE_REBUILD=0.
-        try {
-            me.cortex.voxy.client.core.util.MetalVxResolvePass.reset();
-        } catch (Exception e) {
-            Logger.error("Error resetting vx resolve pass", e);
-        }
-
-
-
-        Logger.info("Flushing download stream");
-        DownloadStream.INSTANCE.flushWaitClear();
-        // Anything queued into the upload stream DURING the teardown above
-        // targets buffers that may already be freed — drop those entries
-        // WITHOUT executing them (see UploadStream.discardClear).
-        if (!"0".equals(System.getenv("VOXY_UPLOAD_FLUSH_FIX"))) {
-            try {
-                me.cortex.voxy.client.core.rendering.util.UploadStream.INSTANCE.discardClear();
-            } catch (Exception e) {
-                Logger.error("Error discarding upload stream", e);
-            }
-        }
-
-        //Release hold on the world
-        this.worldIn.releaseRef();
+        WorldFrameCapture.release(this);
+        me.cortex.voxy.client.core.rendering.SodiumDrawCoverage.INSTANCE.release(this.pipeline);
+        SectionProbe.stop(this.worldIn);
+        this.lifecycle.close();
         Logger.info("Render shutdown completed");
     }
 

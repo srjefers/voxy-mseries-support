@@ -18,6 +18,7 @@ import me.cortex.voxy.client.core.rendering.section.geometry.BasicSectionGeometr
 import me.cortex.voxy.client.core.rendering.util.DownloadStream;
 import me.cortex.voxy.client.core.rendering.util.LightMapHelper;
 import me.cortex.voxy.client.core.rendering.util.MetalMvpUtil;
+import me.cortex.voxy.client.core.rendering.util.NativeUniformWriter;
 import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
 import me.cortex.voxy.client.core.rendering.util.UploadStream;
 import me.cortex.voxy.common.Logger;
@@ -88,40 +89,20 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
     // MDIC operates inside AbstractRenderPipeline's FBO context, not a
     // RenderEncoder.
 
+    private final me.cortex.voxy.common.util.ResourceScope resources = new me.cortex.voxy.common.util.ResourceScope();
     private final me.cortex.voxy.client.core.gpu.RenderBackend backend = RenderBackendFactory.get();
 
-    private final me.cortex.voxy.client.core.gpu.IGpuPipeline commandGenPipeline = this.backend.createComputePipeline(
-            new me.cortex.voxy.client.core.gpu.ComputePipelineDesc(
-                    ShaderLoader.parse("voxy:lod/gl46/cmdgen.comp"),
-                    cmdgenDefines(),
-                    null, null,
-                    128, 1, 1, // matches cmdgen.comp's local_size_x=128 (and prep.comp's /128 dispatch math)
-                    "MDICSectionRenderer.cmdgen"));
+    private final me.cortex.voxy.client.core.gpu.IGpuPipeline commandGenPipeline;
     // M12 chunk 3: commandGen prepass is dispatched via ComputeEncoder; no
     // cached glProgram id needed.
 
-    private final me.cortex.voxy.client.core.gpu.IGpuPipeline prepPipeline = this.backend.createComputePipeline(
-            new me.cortex.voxy.client.core.gpu.ComputePipelineDesc(
-                    ShaderLoader.parse("voxy:lod/gl46/prep.comp"),
-                    java.util.Map.of(),
-                    null, null,
-                    1, 1, 1,
-                    "MDICSectionRenderer.prep"));
+    private final me.cortex.voxy.client.core.gpu.IGpuPipeline prepPipeline;
     // M12 chunk 2: prep prepass is dispatched via ComputeEncoder; no cached
     // glProgram id needed (encoder pulls it from GlComputePipeline on GL,
     // MTLComputePipelineState on Metal).
 
-    private final me.cortex.voxy.client.core.gpu.IGpuPipeline cullPipeline = this.backend.createGraphicsPipeline(
-            new me.cortex.voxy.client.core.gpu.GraphicsPipelineDesc(
-                    ShaderLoader.parse("voxy:lod/gl46/cull/raster.vert"),
-                    ShaderLoader.parse("voxy:lod/gl46/cull/raster.frag"),
-                    java.util.Map.of(),
-                    null, null, null, null,
-                    GL_RGBA8,
-                    me.cortex.voxy.client.core.gpu.VertexLayout.EMPTY,
-                    me.cortex.voxy.client.core.gpu.PipelineState.DEFAULT,
-                    "MDICSectionRenderer.cull"));
-    private final int cullProgram = mdicProgramId(this.cullPipeline);
+    private final me.cortex.voxy.client.core.gpu.IGpuPipeline cullPipeline;
+    private final int cullProgram;
 
     /**
      * M12 chunk 5 Metal stub: substitutes for the depth-test-based cull pass
@@ -134,42 +115,14 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
      * (gating allocation behind a backend check) makes the class harder to
      * read for no real benefit.
      */
-    private final me.cortex.voxy.client.core.gpu.IGpuPipeline forceAllVisiblePipeline = this.backend.createComputePipeline(
-            new me.cortex.voxy.client.core.gpu.ComputePipelineDesc(
-                    ShaderLoader.parse("voxy:lod/gl46/force_all_visible.comp"),
-                    java.util.Map.of(),
-                    null, null,
-                    128, 1, 1,
-                    "MDICSectionRenderer.forceAllVisible"));
+    private final me.cortex.voxy.client.core.gpu.IGpuPipeline forceAllVisiblePipeline;
 
-    private final me.cortex.voxy.client.core.gpu.IGpuPipeline prefixSumPipeline = this.backend.createComputePipeline(
-            new me.cortex.voxy.client.core.gpu.ComputePipelineDesc(
-                    ShaderLoader.parse(Capabilities.INSTANCE.subgroup ? "voxy:util/prefixsum/inital3.comp" : "voxy:util/prefixsum/simple.comp"),
-                    java.util.Map.of("IO_BUFFER", "0"),
-                    null, null,
-                    256, 1, 1, // matches WORK_SIZE 256 declared in both prefixsum variants
-                    "MDICSectionRenderer.prefixSum"));
+    private final me.cortex.voxy.client.core.gpu.IGpuPipeline prefixSumPipeline;
     // M12 chunk 1: prefixSum prepass is dispatched via ComputeEncoder, so it
     // does not need a cached glProgram id (the encoder pulls it from the
     // GlComputePipeline directly on GL; Metal uses the MTLComputePipelineState).
 
-    private final me.cortex.voxy.client.core.gpu.IGpuPipeline translucentGenPipeline = this.backend.createComputePipeline(
-            new me.cortex.voxy.client.core.gpu.ComputePipelineDesc(
-                    ShaderLoader.parse("voxy:lod/gl46/buildtranslucents.comp"),
-                    java.util.Map.of(
-                            "TRANSLUCENT_WRITE_BASE", "1024",
-                            "TRANSLUCENT_DISTANCE_BUFFER_BINDING", "5",
-                            "TRANSLUCENT_OFFSET", Integer.toString(TRANSLUCENT_OFFSET),
-                            // Exclusive upper bound of the translucent region
-                            // [TRANSLUCENT_OFFSET, TEMPORAL_OFFSET): buildtranslucents.comp
-                            // drops any command whose prefix-sum cursor would land in the
-                            // temporal slice or off the buffer end. INT_MAX under the
-                            // VOXY_CMDGEN_NOCLAMP A/B switch.
-                            "MAX_TRANSLUCENT_DRAW_END",
-                            Integer.toString(cmdgenNoClamp() ? Integer.MAX_VALUE : TEMPORAL_OFFSET)),
-                    null, null,
-                    128, 1, 1, // matches buildtranslucents.comp's local_size_x=128
-                    "MDICSectionRenderer.translucentGen"));
+    private final me.cortex.voxy.client.core.gpu.IGpuPipeline translucentGenPipeline;
     // M12 chunk 4: translucentGen prepass is dispatched via ComputeEncoder;
     // no cached glProgram id needed.
 
@@ -211,665 +164,150 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         return 0;
     }
 
-    private final IGpuBuffer uniform = RenderBackendFactory.get().createBuffer(1024).zero();//TODO move to viewport?
+    private final IGpuBuffer uniform;//TODO move to viewport?
 
-    // Far-water alpha ramp (2026-07-03, Metal translucent shader only —
-    // see the VOXY_WATER_FAR_ALPHA injection + quads.frag). Target alpha at
-    // the far end of the ramp; 0 disables. Ramp distances default to a
-    // render-distance-relative window (uploadUniformBuffer) unless the
-    // START/END envs pin them in blocks.
-    private static final float WATER_FAR_ALPHA = parseEnvFloat("VOXY_WATER_FAR_ALPHA", 0.95f);
-    private static final float WATER_FAR_ALPHA_START = parseEnvFloat("VOXY_WATER_FAR_ALPHA_START", 0.0f);
-    private static final float WATER_FAR_ALPHA_END = parseEnvFloat("VOXY_WATER_FAR_ALPHA_END", 0.0f);
-
-    // Near-cull metric (2026-07-03 round 3). XZ mode compares the horizontal
-    // Chebyshev distance max(|dx|,|dz|) against the threshold — the metric MC
-    // renders chunks in — instead of the 3D slant distance, which from a high
-    // camera / toward the square's diagonals let LOD water survive INSIDE the
-    // MC ring and double-composite with BSL/Sodium water (the flickering pale
-    // squares). VOXY_TRANS_NEAR_CULL_XZ=0 restores the slant metric. The
-    // margin shrinks from 48 to 16 in XZ mode because Chebyshev matches the
-    // loaded-chunk square exactly (48 only papered over the slant mismatch);
-    // VOXY_TRANS_NEAR_CULL_MARGIN overrides in blocks.
-    private static final boolean TRANS_NEAR_CULL_XZ =
-            !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_XZ"));
-    // 2026-07-03 round 5: Sodium renders sections in a Euclidean XZ CYLINDER
-    // (OcclusionCuller fx*fx+fz*fz <= r*r), so the Chebyshev SQUARE cull left
-    // a ring toward the render square's diagonals (Euclid RD..RD*sqrt(2))
-    // with NEITHER MC water NOR LOD water — the naked kelp/seafloor band the
-    // colortex16 clear fix exposed. Radial matches Sodium's real coverage and
-    // turns the diagonal gap into the same ~margin-wide overlap ring the axes
-    // already have (handled by the chunk-bound mask).
-    // VOXY_TRANS_NEAR_CULL_RADIAL=0 falls back to the Chebyshev square.
-    private static final boolean TRANS_NEAR_CULL_RADIAL =
-            TRANS_NEAR_CULL_XZ && !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_RADIAL"));
-    private static final float TRANS_NEAR_CULL_MARGIN =
-            parseEnvFloat("VOXY_TRANS_NEAR_CULL_MARGIN", TRANS_NEAR_CULL_XZ ? 16f : 48f);
-    // 2026-07-15 border-band panes: the masked cull's radius gate stopped at
-    // rdBlocks - margin while Sodium renders real water out to ~rdBlocks, so
-    // in the margin-wide overlap ring at the vanilla border the mask test was
-    // structurally UNREACHABLE (nested inside the radius test) — LOD water
-    // there double-composited over real mid-distance water as undimmed pale
-    // panes, entering the frame only at near-horizon pitches. Round 5's
-    // comment assumed "handled by the chunk-bound mask"; in MASKED mode
-    // extend the radius to the full border so it actually can be — coverage
-    // still decides per pixel (built -> ghost-cull, unbuilt -> kept fallback).
-    // The unmasked legacy cull keeps the margin (no per-pixel safety net).
-    // 2026-07-16 round-14 FALSIFIED as the pane fix (panes persisted with the
-    // full ring live; the probe run showed they never enter the resolve water
-    // branch at all) — now opt-in via VOXY_TRANS_NEAR_CULL_FULLRING=1, default
-    // back to the -margin radius.
-    private static final boolean TRANS_NEAR_CULL_MASKED_ON =
-            !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_MASKED"));
-    private static final boolean TRANS_NEAR_CULL_FULLRING = TRANS_NEAR_CULL_MASKED_ON
-            && "1".equals(System.getenv("VOXY_TRANS_NEAR_CULL_FULLRING"));
     private static boolean loggedNearCullRuntime;
 
-    private static float parseEnvFloat(String name, float def) {
-        String v = System.getenv(name);
-        if (v == null || v.isBlank()) return def;
-        try {
-            return Float.parseFloat(v.trim());
-        } catch (NumberFormatException e) {
-            return def;
-        }
-    }
-
     //TODO: needs to be in the viewport, since it contains the compute indirect call/values
-    private final IGpuBuffer distanceCountBuffer = RenderBackendFactory.get().createBuffer(1024*4+100_000*4).zero();//TODO move to viewport?
+    private final IGpuBuffer distanceCountBuffer;//TODO move to viewport?
 
     //Statistics
-    private final IGpuBuffer statisticsBuffer = RenderBackendFactory.get().createBuffer(1024).zero();
+    private final IGpuBuffer statisticsBuffer;
 
     private final AbstractRenderPipeline pipeline;
     public MDICSectionRenderer(AbstractRenderPipeline pipeline, ModelStore modelStore, BasicSectionGeometryData geometryData) {
         super(modelStore, geometryData);
         this.pipeline = pipeline;
-        //The pipeline can be used to transform the renderer in abstract ways
+        try {
+            this.commandGenPipeline = this.resources.own(this.backend.createComputePipeline(
+                new me.cortex.voxy.client.core.gpu.ComputePipelineDesc(
+                        ShaderLoader.parse("voxy:lod/gl46/cmdgen.comp"),
+                        cmdgenDefines(),
+                        null, null,
+                        128, 1, 1, // matches cmdgen.comp's local_size_x=128 (and prep.comp's /128 dispatch math)
+                        "MDICSectionRenderer.cmdgen")), me.cortex.voxy.client.core.gpu.IGpuPipeline::close);
+            this.prepPipeline = this.resources.own(this.backend.createComputePipeline(
+                new me.cortex.voxy.client.core.gpu.ComputePipelineDesc(
+                        ShaderLoader.parse("voxy:lod/gl46/prep.comp"),
+                        java.util.Map.of(),
+                        null, null,
+                        1, 1, 1,
+                        "MDICSectionRenderer.prep")), me.cortex.voxy.client.core.gpu.IGpuPipeline::close);
+            this.cullPipeline = this.resources.own(this.backend.createGraphicsPipeline(
+                new me.cortex.voxy.client.core.gpu.GraphicsPipelineDesc(
+                        ShaderLoader.parse("voxy:lod/gl46/cull/raster.vert"),
+                        ShaderLoader.parse("voxy:lod/gl46/cull/raster.frag"),
+                        java.util.Map.of(),
+                        null, null, null, null,
+                        GL_RGBA8,
+                        me.cortex.voxy.client.core.gpu.VertexLayout.EMPTY,
+                        me.cortex.voxy.client.core.gpu.PipelineState.DEFAULT,
+                        "MDICSectionRenderer.cull")), me.cortex.voxy.client.core.gpu.IGpuPipeline::close);
+            this.forceAllVisiblePipeline = this.resources.own(this.backend.createComputePipeline(
+                new me.cortex.voxy.client.core.gpu.ComputePipelineDesc(
+                        ShaderLoader.parse("voxy:lod/gl46/force_all_visible.comp"),
+                        java.util.Map.of(),
+                        null, null,
+                        128, 1, 1,
+                        "MDICSectionRenderer.forceAllVisible")), me.cortex.voxy.client.core.gpu.IGpuPipeline::close);
+            this.prefixSumPipeline = this.resources.own(this.backend.createComputePipeline(
+                new me.cortex.voxy.client.core.gpu.ComputePipelineDesc(
+                        ShaderLoader.parse(Capabilities.INSTANCE.subgroup ? "voxy:util/prefixsum/inital3.comp" : "voxy:util/prefixsum/simple.comp"),
+                        java.util.Map.of("IO_BUFFER", "0"),
+                        null, null,
+                        256, 1, 1, // matches WORK_SIZE 256 declared in both prefixsum variants
+                        "MDICSectionRenderer.prefixSum")), me.cortex.voxy.client.core.gpu.IGpuPipeline::close);
+            this.translucentGenPipeline = this.resources.own(this.backend.createComputePipeline(
+                new me.cortex.voxy.client.core.gpu.ComputePipelineDesc(
+                        ShaderLoader.parse("voxy:lod/gl46/buildtranslucents.comp"),
+                        java.util.Map.of(
+                                "TRANSLUCENT_WRITE_BASE", "1024",
+                                "TRANSLUCENT_DISTANCE_BUFFER_BINDING", "5",
+                                "TRANSLUCENT_OFFSET", Integer.toString(TRANSLUCENT_OFFSET),
+                                // Exclusive upper bound of the translucent region
+                                // [TRANSLUCENT_OFFSET, TEMPORAL_OFFSET): buildtranslucents.comp
+                                // drops any command whose prefix-sum cursor would land in the
+                                // temporal slice or off the buffer end. INT_MAX under the
+                                // VOXY_CMDGEN_NOCLAMP A/B switch.
+                                "MAX_TRANSLUCENT_DRAW_END",
+                                Integer.toString(cmdgenNoClamp() ? Integer.MAX_VALUE : TEMPORAL_OFFSET)),
+                        null, null,
+                        128, 1, 1, // matches buildtranslucents.comp's local_size_x=128
+                        "MDICSectionRenderer.translucentGen")), me.cortex.voxy.client.core.gpu.IGpuPipeline::close);
+            this.uniform = this.resources.own(RenderBackendFactory.get().createBuffer(1024), IGpuBuffer::free).zero();
+            this.distanceCountBuffer = this.resources.own(RenderBackendFactory.get().createBuffer(1024*4+100_000*4), IGpuBuffer::free).zero();
+            this.statisticsBuffer = this.resources.own(RenderBackendFactory.get().createBuffer(1024), IGpuBuffer::free).zero();
+            this.cullProgram = mdicProgramId(this.cullPipeline);
+            //The pipeline can be used to transform the renderer in abstract ways
 
-        // M13 chunk 3: sampler for the bound-depth texture at binding 2 —
-        // quads.frag only texelFetches it, but the MSL signature still wants
-        // a sampler bound alongside the texture.
-        this.boundDepthSampler = this.backend.getType() != BackendType.OPENGL
-                ? this.backend.createSampler(me.cortex.voxy.client.core.gpu.SamplerDesc.builder()
-                        .filter(me.cortex.voxy.client.core.gpu.SamplerDesc.Filter.NEAREST,
-                                me.cortex.voxy.client.core.gpu.SamplerDesc.Filter.NEAREST)
-                        .mipFilter(me.cortex.voxy.client.core.gpu.SamplerDesc.MipFilter.NEAREST)
-                        .wrap(me.cortex.voxy.client.core.gpu.SamplerDesc.Wrap.CLAMP_TO_EDGE,
-                                me.cortex.voxy.client.core.gpu.SamplerDesc.Wrap.CLAMP_TO_EDGE)
-                        .label("MDIC.boundDepthSampler")
-                        .build())
-                : null;
+            // M13 chunk 3: sampler for the bound-depth texture at binding 2 —
+            // quads.frag only texelFetches it, but the MSL signature still wants
+            // a sampler bound alongside the texture.
+            this.boundDepthSampler = this.backend.getType() != BackendType.OPENGL
+                    ? this.resources.own(this.backend.createSampler(me.cortex.voxy.client.core.gpu.SamplerDesc.builder()
+                            .filter(me.cortex.voxy.client.core.gpu.SamplerDesc.Filter.NEAREST,
+                                    me.cortex.voxy.client.core.gpu.SamplerDesc.Filter.NEAREST)
+                            .mipFilter(me.cortex.voxy.client.core.gpu.SamplerDesc.MipFilter.NEAREST)
+                            .wrap(me.cortex.voxy.client.core.gpu.SamplerDesc.Wrap.CLAMP_TO_EDGE,
+                                    me.cortex.voxy.client.core.gpu.SamplerDesc.Wrap.CLAMP_TO_EDGE)
+                            .label("MDIC.boundDepthSampler")
+                            .build()), me.cortex.voxy.client.core.gpu.IGpuSampler::close)
+                    : null;
 
-        String vertex = ShaderLoader.parse("voxy:lod/gl46/quads3.vert");
-        String taa = pipeline.taaFunction("taaShift");
-        if (taa != null) {
-            vertex += "\n"+taa;//inject it at the end
+            String vertex = ShaderLoader.parse("voxy:lod/gl46/quads3.vert");
+            String taa = pipeline.taaFunction("taaShift");
+            if (taa != null) {
+                vertex += "\n"+taa;//inject it at the end
+            }
+            var builder = Shader.make()
+                    .defineIf("TAA_PATCH", taa != null)
+                    .defineIf("DEBUG_RENDER", false)
+
+                    //.defineIf("USE_NV_BARRY", Capabilities.INSTANCE.nvBarryCoords)
+
+                    .addSource(ShaderType.VERTEX, vertex);
+
+            //Apply per face tinting
+            addDirectionalFaceTint(builder, Minecraft.getInstance().level);
+
+            String frag = ShaderLoader.parse("voxy:lod/gl46/quads.frag");
+
+            String opaqueFrag = pipeline.patchOpaqueShader(this, frag);
+            boolean opaquePatched = opaqueFrag != null;
+            if (!opaquePatched) opaqueFrag = frag;
+
+            String translucentFrag = pipeline.patchTranslucentShader(this, frag);
+            boolean translucentPatched = translucentFrag != null;
+            if (!translucentPatched) translucentFrag = frag;
+
+            if (opaquePatched || translucentPatched) {
+                // Iris-patched path stays on the legacy Shader.Builder. It's GL-only
+                // because the Iris pipeline itself is now gated to OpenGL in
+                // RenderPipelineFactory (commit 1e2a1190).
+                this.terrainShader = this.resources.own(tryCompilePatchedOrNormal(builder, opaqueFrag, frag), Shader::free);
+                this.translucentTerrainShader = this.resources.own(tryCompilePatchedOrNormal(
+                        builder.define("TRANSLUCENT"), translucentFrag, frag), Shader::free);
+                this.terrainPipeline = null;
+                this.translucentTerrainPipeline = null;
+                this.terrainProgram = 0;
+                this.translucentTerrainProgram = 0;
+            } else {
+                // Unpatched path — runs on every backend including Metal. Build the
+                // two pipelines via the cross-backend abstraction. Defines mirror
+                // what Shader.Builder collected above (face-tint floats from
+                // addDirectionalFaceTint + TAA_PATCH if a TAA function exists).
+                this.terrainShader = null;
+                this.translucentTerrainShader = null;
+                var configuration = TerrainShaderConfiguration.load(pipeline, this.backend.getType());
+                this.terrainPipeline = this.resources.own(this.backend.createGraphicsPipeline(configuration.opaque()), me.cortex.voxy.client.core.gpu.IGpuPipeline::close);
+                this.translucentTerrainPipeline = this.resources.own(this.backend.createGraphicsPipeline(configuration.translucent()), me.cortex.voxy.client.core.gpu.IGpuPipeline::close);
+                this.terrainProgram = mdicProgramId(this.terrainPipeline);
+                this.translucentTerrainProgram = mdicProgramId(this.translucentTerrainPipeline);
+            }
+        } catch (RuntimeException | Error failure) {
+            this.resources.rollback(failure);
+            throw failure;
         }
-        var builder = Shader.make()
-                .defineIf("TAA_PATCH", taa != null)
-                .defineIf("DEBUG_RENDER", false)
-
-                //.defineIf("USE_NV_BARRY", Capabilities.INSTANCE.nvBarryCoords)
-
-                .addSource(ShaderType.VERTEX, vertex);
-
-        //Apply per face tinting
-        addDirectionalFaceTint(builder, Minecraft.getInstance().level);
-
-        String frag = ShaderLoader.parse("voxy:lod/gl46/quads.frag");
-
-        String opaqueFrag = pipeline.patchOpaqueShader(this, frag);
-        boolean opaquePatched = opaqueFrag != null;
-        if (!opaquePatched) opaqueFrag = frag;
-
-        String translucentFrag = pipeline.patchTranslucentShader(this, frag);
-        boolean translucentPatched = translucentFrag != null;
-        if (!translucentPatched) translucentFrag = frag;
-
-        if (opaquePatched || translucentPatched) {
-            // Iris-patched path stays on the legacy Shader.Builder. It's GL-only
-            // because the Iris pipeline itself is now gated to OpenGL in
-            // RenderPipelineFactory (commit 1e2a1190).
-            this.terrainShader = tryCompilePatchedOrNormal(builder, opaqueFrag, frag);
-            this.translucentTerrainShader = tryCompilePatchedOrNormal(
-                    builder.define("TRANSLUCENT"), translucentFrag, frag);
-            this.terrainPipeline = null;
-            this.translucentTerrainPipeline = null;
-            this.terrainProgram = 0;
-            this.translucentTerrainProgram = 0;
-        } else {
-            // Unpatched path — runs on every backend including Metal. Build the
-            // two pipelines via the cross-backend abstraction. Defines mirror
-            // what Shader.Builder collected above (face-tint floats from
-            // addDirectionalFaceTint + TAA_PATCH if a TAA function exists).
-            this.terrainShader = null;
-            this.translucentTerrainShader = null;
-            java.util.Map<String, String> commonDefines = buildTerrainDefines(taa);
-            java.util.Map<String, String> opaqueDefines = new java.util.LinkedHashMap<>(commonDefines);
-            java.util.Map<String, String> translucentDefines = new java.util.LinkedHashMap<>(commonDefines);
-            translucentDefines.put("TRANSLUCENT", "");
-
-            // Phase C material g-buffer mode (Metal + Iris vx-contract). Compile
-            // quads.frag's PATCHED_SHADER path with the MRT emitter appended so it
-            // writes the 3 material planes (albedo/tint/misc) instead of a final
-            // colour; the pack's real voxy_opaque/voxy_translucent runs later GL-side
-            // in MetalVxResolvePass. quads.frag's water/flat early-outs are guarded by
-            // !defined(PATCHED_SHADER), so they are bypassed automatically here.
-            boolean vxMaterial = pipeline.vxMaterialMode();
-            // Opaque uses the material emitter (3 planes for the GL resolve) ONLY when
-            // opaque-material is explicitly opted in. Default trans-only: opaque keeps the
-            // proven base shader (single lit colour → bridge → normal composite, untouched
-            // on dev); only the TRANSLUCENT (water) layer goes through the material g-buffer
-            // + voxy_translucent resolve (issue #11). This is the mergeable shape.
-            boolean vxOpaqueMat = pipeline.vxOpaqueMaterialMode();
-            String emitter = me.cortex.voxy.client.core.util.MetalVxGbufferEmitter.SOURCE;
-            String vxOpaqueFrag = vxOpaqueMat ? frag + emitter : frag;
-            String vxTransFrag = vxMaterial ? frag + emitter : frag;
-            boolean gbufferDebug = "1".equals(System.getenv("VOXY_VX_GBUFFER_DEBUG"));
-            if (vxOpaqueMat) {
-                opaqueDefines.put("PATCHED_SHADER", "");
-                opaqueDefines.put("VOXY_VX_GBUFFER", "");
-                if (gbufferDebug) opaqueDefines.put("VOXY_VX_GBUFFER_DEBUG", "");
-            }
-            if (vxMaterial) {
-                translucentDefines.put("PATCHED_SHADER", "");
-                translucentDefines.put("VOXY_VX_GBUFFER", "");
-                if (gbufferDebug) translucentDefines.put("VOXY_VX_GBUFFER_DEBUG", "");
-            }
-            if (this.backend.getType() != BackendType.OPENGL) {
-                // M13 chunk 3: the chunk-bound depth mask now renders on Metal
-                // (ChunkBoundRenderer.renderMetal → viewport.depthBoundingBuffer,
-                // bound at texture slot 2 in renderTerrainMetal), so the
-                // per-fragment depth-bound test is ON by default.
-                // VOXY_NO_DEPTH_BOUND=1 is the kill switch restoring the old
-                // skip-the-sample behaviour; VOXY_BOUND_DEBUG=1 tints
-                // bound-discarded fragments red instead of discarding
-                // (mask-verification aid, opaque + translucent).
-                boolean noDepthBound = "1".equals(System.getenv("VOXY_NO_DEPTH_BOUND"));
-                boolean boundDebug = !noDepthBound && "1".equals(System.getenv("VOXY_BOUND_DEBUG"));
-                if (noDepthBound) {
-                    opaqueDefines.put("VOXY_NO_DEPTH_BOUND", "");
-                    translucentDefines.put("VOXY_NO_DEPTH_BOUND", "");
-                } else {
-                    // Round 20: the bound test reads the mask from a plain
-                    // buffer (binding 6), not from the depthTex sampler —
-                    // depth-format textures sampled via texture2d<float>
-                    // silently read zeros on Metal, which left the mask
-                    // INERT since M13 chunk 3 (exposed by the Iris gbuffer
-                    // inject writing real depth: LODs stomped pack terrain).
-                    // ChunkBoundRenderer.exportBoundMaskMetal feeds it.
-                    opaqueDefines.put("VOXY_METAL_BOUND_SSBO", "");
-                    translucentDefines.put("VOXY_METAL_BOUND_SSBO", "");
-                }
-                if (boundDebug) {
-                    opaqueDefines.put("VOXY_BOUND_DEBUG", "");
-                    translucentDefines.put("VOXY_BOUND_DEBUG", "");
-                }
-                opaqueDefines.put("VOXY_FORCE_OPAQUE_ALPHA", "");
-
-                // 2026-07-16 round-15 pane probe: orange-tint in-ring OPAQUE-layer
-                // LOD fragments (see quads.frag). The pale border panes evaded every
-                // translucent-resolve/abyss tint; this classifies whether they are
-                // opaque-layer LOD content in one run. Probe only — no behavior
-                // without the env.
-                if ("1".equals(System.getenv("VOXY_OPAQUE_RING_DEBUG"))) {
-                    opaqueDefines.put("VOXY_OPAQUE_RING_DEBUG", "");
-                    Logger.info("[Metal-LODTEST] opaque ring debug ARMED (in-ring opaque-layer"
-                            + " LOD fragments tint ORANGE; panes orange = they are opaque-layer"
-                            + " LOD content, outside every water/abyss path probed so far)");
-                }
-
-                // VOXY_LOD_FIXED_MIP — sample atlas at LOD 0 instead of the
-                //   derivative-based mip. DEFAULT ON for Metal (2026-06-09): the
-                //   dFdx/dFdy-based mip collapses to the smallest mip on Metal,
-                //   flattening every face to its texture's average colour (the
-                //   "paper" look). Forcing mip 0 restored full texture detail at
-                //   no measured FPS cost (user-verified ~111 fps).
-                //   VOXY_LOD_FIXED_MIP=0 opts back into derivative mips.
-                // VOXY_LOD_NO_DISCARD — skip the alpha discard (tests whether the
-                //   discard is punching the flickering transparent holes).
-                String fixedMipEnv = System.getenv("VOXY_LOD_FIXED_MIP");
-                boolean lodFixedMip = fixedMipEnv == null || !"0".equals(fixedMipEnv.trim());
-                boolean lodNoDiscard = "1".equals(System.getenv("VOXY_LOD_NO_DISCARD"));
-                if (lodFixedMip) {
-                    opaqueDefines.put("VOXY_LOD_FIXED_MIP", "");
-                    translucentDefines.put("VOXY_LOD_FIXED_MIP", "");
-                }
-                if (lodNoDiscard) {
-                    opaqueDefines.put("VOXY_LOD_NO_DISCARD", "");
-                    translucentDefines.put("VOXY_LOD_NO_DISCARD", "");
-                }
-                if (lodFixedMip || lodNoDiscard) {
-                    Logger.info("[Metal-LODTEST] fixedMip=" + lodFixedMip + " noDiscard=" + lodNoDiscard);
-                }
-                // VOXY_LOD_DIST_MIP — analytic distance-based atlas mip
-                //   (2026-07-03), DEFAULT ON, takes precedence over the
-                //   fixed-mip-0 diagnostic above (#ifdef order in quads.frag).
-                //   Fixed mip 0 means NO minification: every distant pixel
-                //   picks one arbitrary texel of its 16x16 face cell — the
-                //   spyglass moire on LOD water and the pixel shimmer on
-                //   distant terrain. Screen-space derivatives stay unusable
-                //   (1-2 px quads -> noisy dFdx, the original "paper" collapse),
-                //   so quads.frag computes the mip analytically from view
-                //   distance, quad lodScale and the per-frame projection scale
-                //   (voxyLodParams.x — tracks spyglass FOV). The mip chain has
-                //   been in the atlas all along (MipGen bakes + uploads levels
-                //   0..LAYERS-1 per cell; cell origins stay 2^lvl-aligned so
-                //   NEAREST never crosses cells).
-                //   VOXY_LOD_DIST_MIP=0 reverts to fixed mip 0.
-                //   VOXY_LOD_MIP_BIAS=<f> biases the level (+0.5 = blurrier).
-                String distMipEnv = System.getenv("VOXY_LOD_DIST_MIP");
-                boolean lodDistMip = distMipEnv == null || !"0".equals(distMipEnv.trim());
-                if (lodDistMip) {
-                    float mipBias = 0.0f;
-                    String mb = System.getenv("VOXY_LOD_MIP_BIAS");
-                    if (mb != null && !mb.isBlank()) {
-                        try {
-                            mipBias = Float.parseFloat(mb.trim());
-                        } catch (NumberFormatException e) {
-                            mipBias = 0.0f;
-                        }
-                    }
-                    String maxLod = String.format(java.util.Locale.ROOT, "%.1f",
-                            (float) (me.cortex.voxy.client.core.model.ModelFactory.LAYERS - 1));
-                    String biasStr = String.format(java.util.Locale.ROOT, "%.4f", mipBias);
-                    opaqueDefines.put("VOXY_LOD_DIST_MIP", "");
-                    opaqueDefines.put("VOXY_ATLAS_MAX_LOD", maxLod);
-                    opaqueDefines.put("VOXY_LOD_DIST_MIP_BIAS", biasStr);
-                    translucentDefines.put("VOXY_LOD_DIST_MIP", "");
-                    translucentDefines.put("VOXY_ATLAS_MAX_LOD", maxLod);
-                    translucentDefines.put("VOXY_LOD_DIST_MIP_BIAS", biasStr);
-                    Logger.info("[Metal-LODTEST] distance-based atlas mip ON (maxLod=" + maxLod
-                            + ", bias=" + biasStr + "); VOXY_LOD_DIST_MIP=0 reverts to fixed mip 0");
-                }
-                // VOXY_WATER_FAR_ALPHA — far-water opacity ramp (2026-07-03),
-                //   DEFAULT ON, translucent only. Constant vanilla alpha 0.706
-                //   out to the horizon lets seafloor/kelp ghost through LOD
-                //   water and the fog-coloured bridge clear bleed up through
-                //   it (the washed-out flat-blue sheet). Ramp start sits past
-                //   the LOD<->MC seam so ring parity (alpha 0.706 exactly at
-                //   neutral knobs) is untouched; params ride per frame in
-                //   voxyLodParams.yzw (see uploadUniformBuffer).
-                //   VOXY_WATER_FAR_ALPHA=0 kills it; =<f> sets the far target
-                //   (default 0.95). VOXY_WATER_FAR_ALPHA_START/_END override
-                //   the ramp distances in blocks.
-                if (WATER_FAR_ALPHA > 0.0f) {
-                    translucentDefines.put("VOXY_WATER_FAR_ALPHA", "");
-                    Logger.info("[Metal-LODTEST] far-water alpha ramp ON (target=" + WATER_FAR_ALPHA
-                            + "); VOXY_WATER_FAR_ALPHA=0 disables");
-                }
-                // VOXY_LOD_ABS_INDENT — lodScale-invariant face indentation
-                //   (2026-07-03), DEFAULT ON. quad_util scales the model-space
-                //   indent by lodScale, so a level-L water plane sat
-                //   0.109*2^L blocks below its cell top: parent planes floated
-                //   ~0.9 blocks above child planes → stacked translucent
-                //   blending (pale section-aligned veil squares), an exposed
-                //   gap band at LOD ring transitions, and wrong mid/far water
-                //   heights. VOXY_LOD_ABS_INDENT=0 restores upstream scaling.
-                String absIndentEnv = System.getenv("VOXY_LOD_ABS_INDENT");
-                boolean absIndent = absIndentEnv == null || !"0".equals(absIndentEnv.trim());
-                if (absIndent) {
-                    opaqueDefines.put("VOXY_LOD_ABS_INDENT", "");
-                    translucentDefines.put("VOXY_LOD_ABS_INDENT", "");
-                    Logger.info("[Metal-LODTEST] absolute face indent ON (water plane height "
-                            + "lodScale-invariant); VOXY_LOD_ABS_INDENT=0 reverts");
-                }
-                // VOXY_TRANS_NEAR_CULL — vx contract only (2026-07-03),
-                //   DEFAULT ON. BSL composites the injected LOD water AND
-                //   draws MC's own water inside render distance; LOD water
-                //   that survives the chunk-bound mask there (the depth
-                //   compare flips with camera pitch at grazing angles)
-                //   double-blends into pale veil squares on near/mid water.
-                //   Hard-cull translucent LOD fragments inside the MC ring;
-                //   the cull distance rides in voxyLodParams2.x per frame.
-                //   VOXY_TRANS_NEAR_CULL=0 disables.
-                String nearCullEnv = System.getenv("VOXY_TRANS_NEAR_CULL");
-                boolean transNearCull = (nearCullEnv == null || !"0".equals(nearCullEnv.trim()))
-                        && me.cortex.voxy.client.core.util.IrisUtil.vxContractActive();
-                if (transNearCull) {
-                    translucentDefines.put("VOXY_TRANS_NEAR_CULL", "");
-                    if (TRANS_NEAR_CULL_XZ) {
-                        translucentDefines.put("VOXY_TRANS_NEAR_CULL_XZ", "");
-                        if (TRANS_NEAR_CULL_RADIAL) {
-                            translucentDefines.put("VOXY_TRANS_NEAR_CULL_RADIAL", "");
-                        }
-                    }
-                    // 2026-07-04: gate the cull on chunk-bound mask coverage so
-                    // LOD water survives over UNBUILT sections inside the ring
-                    // (naked-seafloor "gray squares" fix — see quads.frag).
-                    // VOXY_TRANS_NEAR_CULL_MASKED=0 restores the unconditional cull.
-                    if (TRANS_NEAR_CULL_MASKED_ON) {
-                        translucentDefines.put("VOXY_TRANS_NEAR_CULL_MASKED", "");
-                        Logger.info("[Metal-LODTEST] trans near-cull MASKED (cull only under built-"
-                                + "section coverage; LOD water kept over unbuilt sections); "
-                                + "VOXY_TRANS_NEAR_CULL_MASKED=0 reverts");
-                        // 2026-07-14: masked-culled LOD water keeps a depth-only
-                        // "ghost" write so the trans depth bridge carries the water
-                        // surface (dT < d) and the seafloor water-column dim reaches
-                        // LOD floors under REAL MC water (the near pale patches —
-                        // the plain discard erased the depth too, so dT==d made the
-                        // dim structurally unreachable at exactly those pixels).
-                        // VOXY_TRANS_NEAR_CULL_GHOST=0 reverts to the plain discard.
-                        if (!"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_GHOST"))) {
-                            translucentDefines.put("VOXY_TRANS_NEAR_CULL_GHOST", "");
-                            Logger.info("[Metal-LODTEST] trans near-cull GHOST depth ON "
-                                    + "(culled LOD water keeps its depth write; floors under "
-                                    + "real MC water get the seafloor dim); "
-                                    + "VOXY_TRANS_NEAR_CULL_GHOST=0 reverts");
-                        }
-                    }
-                    Logger.info("[Metal-LODTEST] translucent near-cull ON (vx contract: no LOD water "
-                            + "inside MC render distance; metric="
-                            + (TRANS_NEAR_CULL_RADIAL ? "xz-radial" : TRANS_NEAR_CULL_XZ ? "xz-chebyshev" : "3d-slant")
-                            + ", margin=" + TRANS_NEAR_CULL_MARGIN + "); VOXY_TRANS_NEAR_CULL=0 disables, "
-                            + "VOXY_TRANS_NEAR_CULL_RADIAL=0 restores the Chebyshev square, "
-                            + "VOXY_TRANS_NEAR_CULL_XZ=0 restores the slant metric");
-                }
-                // VOXY_WLOG_TINT_FIX — the pale plant-field squares (2026-07-04,
-                //   issue 2). Waterlogged plant models (seagrass/kelp) inherit
-                //   the water model's biome-LUT flag (ModelFactory keeps it so
-                //   the mesher preserves per-voxel biome bits) but bake no
-                //   colour provider, leaving the uint(-1) sentinel in the
-                //   colour slot; the vertex-side LUT fetch colourData[-1+biome]
-                //   wraps unsigned into another model's entry (pale water blue)
-                //   and tints every plant-field quad of the DOUBLE-SIDED opaque
-                //   batch — which has no near-cull, so the quads shine through
-                //   INSIDE MC render distance wherever the fail-open chunk-bound
-                //   mask misses. Guard the sentinel shader-side (Metal-injected
-                //   define; GL source unchanged). VOXY_WLOG_TINT_FIX=0 reverts;
-                //   VOXY_DEBUG_WLOG_TINT=1 paints affected quads magenta for
-                //   one-screenshot adjudication.
-                String wlogFixEnv = System.getenv("VOXY_WLOG_TINT_FIX");
-                if (wlogFixEnv == null || !"0".equals(wlogFixEnv.trim())) {
-                    opaqueDefines.put("VOXY_WLOG_TINT_FIX", "");
-                    translucentDefines.put("VOXY_WLOG_TINT_FIX", "");
-                    Logger.info("[Metal-LODTEST] waterlogged-plant tint sentinel guard ON "
-                            + "(biome-LUT flag + colour=-1 no longer wraps into another model's "
-                            + "tint); VOXY_WLOG_TINT_FIX=0 reverts");
-                }
-                if ("1".equals(System.getenv("VOXY_DEBUG_WLOG_TINT"))) {
-                    opaqueDefines.put("VOXY_DEBUG_WLOG_TINT", "");
-                    translucentDefines.put("VOXY_DEBUG_WLOG_TINT", "");
-                    Logger.info("[Metal-LODTEST] wlog tint DEBUG ON — sentinel-tint quads render "
-                            + "solid magenta");
-                }
-                // Seam-ring brightness parity: GL runs SSAO between opaque and
-                // translucent; that pass is parked on Metal, so LOD terrain sits
-                // ~10% brighter than AO-darkened Sodium terrain — the visible
-                // brightness step at the render-distance boundary. Interim
-                // compensation until the SSAO port: darken opaque LOD slightly.
-                // VOXY_LOD_BRIGHTNESS=<f> tunes it; 1.0 disables.
-                // vx contract mode: the pack's deferred applies ITS OWN AO
-                // to LOD pixels (BSL deferred.glsl reads vxDepthTexOpaque),
-                // so the interim darkening would double-darken — neutral.
-                boolean vxContract = me.cortex.voxy.client.core.util.IrisUtil.vxContractActive();
-                if (!vxContract) {
-                    float brightness = 0.92f;
-                    String b = System.getenv("VOXY_LOD_BRIGHTNESS");
-                    if (b != null && !b.isBlank()) {
-                        try {
-                            brightness = Float.parseFloat(b.trim());
-                        } catch (NumberFormatException e) {
-                            brightness = 0.92f;
-                        }
-                    }
-                    if (brightness != 1.0f) {
-                        opaqueDefines.put("VOXY_LOD_BRIGHTNESS", String.format(java.util.Locale.ROOT, "%.4f", brightness));
-                        Logger.info("[Metal-LODTEST] LOD brightness compensation = " + brightness + " (SSAO parity interim)");
-                    }
-                }
-                // Water parity knobs — NEUTRAL by default since the chunk-bound
-                // depth mask landed. The 0.90/0.85 interim defaults were tuned
-                // for blending against the bright fog clear; with the bound the
-                // seam background is real LOD seafloor and any non-neutral
-                // value CREATES a tone step at the LOD<->MC water line (MC
-                // water is alpha 0.706 exactly; LOD matches term-for-term at
-                // neutral). Tunables kept for experiments:
-                // VOXY_WATER_SHADE (1.0 = off), VOXY_WATER_MIN_ALPHA (0 = off).
-                {
-                    float waterShade = 1.0f;
-                    float waterMinAlpha = 0.0f;
-                    String ws = System.getenv("VOXY_WATER_SHADE");
-                    if (ws != null && !ws.isBlank()) {
-                        try {
-                            waterShade = Float.parseFloat(ws.trim());
-                        } catch (NumberFormatException e) {
-                            waterShade = 1.0f;
-                        }
-                    }
-                    String wa = System.getenv("VOXY_WATER_MIN_ALPHA");
-                    if (wa != null && !wa.isBlank()) {
-                        try {
-                            waterMinAlpha = Float.parseFloat(wa.trim());
-                        } catch (NumberFormatException e) {
-                            waterMinAlpha = 0.0f;
-                        }
-                    }
-                    if (waterShade != 1.0f) {
-                        translucentDefines.put("VOXY_WATER_SHADE", String.format(java.util.Locale.ROOT, "%.4f", waterShade));
-                    }
-                    if (waterMinAlpha > 0.0f) {
-                        translucentDefines.put("VOXY_WATER_MIN_ALPHA", String.format(java.util.Locale.ROOT, "%.4f", waterMinAlpha));
-                    }
-                    if (waterShade != 1.0f || waterMinAlpha > 0.0f) {
-                        Logger.info("[Metal-LODTEST] water parity: shade=" + waterShade + " minAlpha=" + waterMinAlpha);
-                    }
-                }
-                // Water diagnostic: paint translucent LOD water solid magenta so
-                // a screenshot reveals exactly where water geometry rasterizes.
-                if ("1".equals(System.getenv("VOXY_LOD_WATER_DEBUG"))) {
-                    translucentDefines.put("VOXY_LOD_WATER_DEBUG", "");
-                    Logger.info("[Metal-LODTEST] VOXY_LOD_WATER_DEBUG: translucent LOD water = solid magenta + depth test OFF");
-                }
-                // Probe (2026-07-14): orange-tint OPAQUE-pass fragments whose
-                // model carries a water customId. The near pale water quads
-                // showed NO tint from any voxy_translucent/voxy_opaque debug
-                // arm — if they turn orange here, they are water faces meshed
-                // into the OPAQUE LOD pass (Mipper rep-selection), which the
-                // whole pack-side water path can never touch.
-                if ("1".equals(System.getenv("VOXY_LOD_OPAQUE_WATER_DEBUG"))) {
-                    opaqueDefines.put("VOXY_OPAQUE_WATER_DEBUG", "");
-                    Logger.info("[Metal-LODTEST] VOXY_LOD_OPAQUE_WATER_DEBUG: opaque-pass water-customId fragments = solid orange");
-                }
-                // Depth bias for translucent LOD water (toward the camera).
-                // DEFAULT 0 (off): testing on 2026-05-26 proved the water "holes"
-                // are NOT z-fighting — VOXY_LOD_WATER_DEBUG (magenta + depth OFF)
-                // still showed holes, i.e. the translucent water GEOMETRY itself
-                // is missing in those patches (an LOD meshing/coverage gap, not a
-                // depth-test loss). A non-zero bias here only caused artifacts
-                // ("water bleeds through the ground"), so it stays off. Kept as a
-                // tunable knob (VOXY_WATER_DEPTH_BIAS=<f>) for future experiments.
-                {
-                    String waterBias = System.getenv("VOXY_WATER_DEPTH_BIAS");
-                    if (waterBias == null || waterBias.isBlank()) waterBias = "0";
-                    try {
-                        Float.parseFloat(waterBias.trim());
-                    } catch (NumberFormatException e) {
-                        waterBias = "0";
-                    }
-                    translucentDefines.put("VOXY_WATER_DEPTH_BIAS", waterBias.trim());
-                    if (!"0".equals(waterBias.trim())) {
-                        Logger.info("[Metal-LODTEST] translucent water depth bias = " + waterBias.trim());
-                    }
-                }
-                // Real translucent water is now the default (quads.frag falls
-                // through to the atlas+tint+blend path). VOXY_LOD_FLAT_WATER=1
-                // restores the interim flat ocean-blue via the VOXY_FLAT_WATER
-                // define. Injected ONLY inside this non-GL guard — the old gate
-                // (bare TRANSLUCENT) leaked the flat colour into plain-GL runs
-                // because TRANSLUCENT is injected for every backend above (~:240).
-                if ("1".equals(System.getenv("VOXY_LOD_FLAT_WATER"))) {
-                    translucentDefines.put("VOXY_FLAT_WATER", "");
-                    Logger.info("[Metal-LODTEST] VOXY_LOD_FLAT_WATER: translucent LOD water = flat ocean blue (interim path)");
-                }
-
-                // M13 diagnostic — log the Metal shader define set ONCE at
-                // construction so it's unambiguous in the runtime log
-                // which terrain shader variant compiled. Catches "the
-                // expected define wasn't injected" bugs that pure source
-                // grep can't.
-                boolean bakeryOff = "1".equals(System.getenv("VOXY_BAKERY_OFF"));
-                boolean debugMissing = "1".equals(System.getenv("VOXY_BAKERY_DEBUG_MISSING"));
-                Logger.info("[Metal-DEFINES] terrain shader injections: " +
-                        (noDepthBound
-                                ? "VOXY_NO_DEPTH_BOUND (depth-bound kill switch)"
-                                : "depth-bound ON" + (boundDebug ? " + VOXY_BOUND_DEBUG (red tint)" : "")) +
-                        " + VOXY_FORCE_OPAQUE_ALPHA" +
-                        (bakeryOff
-                                ? " + VOXY_NO_ATLAS (bakery disabled hash-colour fallback)"
-                                : (debugMissing ? " + VOXY_DEBUG_MAGENTA_MISSING" : " + atlas bakery")) +
-                        (pipeline.useEnvFog() ? " + USE_ENV_FOG" : ""));
-
-                // Default Metal now uses the real atlas path. VOXY_BAKERY_OFF
-                // is retained as a runtime kill switch: ModelTextureBakery
-                // writes synthetic face-visibility data and the shader skips
-                // atlas sampling, restoring the old hash-colour fallback.
-                if (bakeryOff) {
-                    opaqueDefines.put("VOXY_NO_ATLAS", "");
-                    translucentDefines.put("VOXY_NO_ATLAS", "");
-                } else if (debugMissing) {
-                    opaqueDefines.put("VOXY_DEBUG_MAGENTA_MISSING", "");
-                    translucentDefines.put("VOXY_DEBUG_MAGENTA_MISSING", "");
-                }
-
-                // M13 chunk 5: on the Metal terrain path we apply fog
-                // per-fragment inside quads.frag because the GL post-pass
-                // (NormalRenderPipeline.finish) is skipped on this backend.
-                // Gated on the pipeline's useEnvFog() so Iris / chunk-debug
-                // pipelines don't pull fog in. The CPU-side uploadUniformBuffer
-                // packs the fog params into SceneUniform regardless — at
-                // zero alpha if the flag is off — but the shader only reads
-                // them when this define is present.
-                if (pipeline.useEnvFog()) {
-                    opaqueDefines.put("USE_ENV_FOG", "");
-                    translucentDefines.put("USE_ENV_FOG", "");
-                }
-
-                // M13 2026-05-14 baseInstance workaround. Metal's
-                // drawIndexedPrimitives:indirectBuffer: doesn't propagate
-                // the indirect args' baseInstance to [[base_instance]] in
-                // the vertex function — diagnosed via shader probes
-                // (gl_BaseInstance + gl_InstanceID both read 0). The
-                // MetalRenderEncoder.drawIndexedIndirect loop pushes the
-                // per-draw baseInstance via setVertexBytes at binding 6;
-                // quads3.vert reads it from a small UBO when this define
-                // is set, instead of gl_BaseInstance.
-                opaqueDefines.put("VOXY_METAL_BI_FIX", "");
-                translucentDefines.put("VOXY_METAL_BI_FIX", "");
-            }
-
-            // NOTE: MDIC terrain pipelines do NOT opt into supportIndirectCommandBuffers.
-            // quads.frag uses gl_FragDepth writes + discard, both incompatible
-            // with Metal's ICB linking ("Fragment shader cannot be used with
-            // indirect command buffers"). For now MDIC uses the CPU-readback
-            // path on Metal (read drawCountCallBuffer back, issue per-draw
-            // glMultiDrawElementsIndirect — which MetalRenderEncoder.drawIndexedIndirect
-            // implements as a CPU loop). The ICB infrastructure stays available
-            // (smoke-tested independently) for future simpler-shader use cases.
-            //
-            // M12 chunk 6 polish: on non-GL backends the pipeline state uses
-            // NO_CULL because the GL renderTerrain path explicitly calls
-            // glDisable(GL_CULL_FACE) at draw time — that override doesn't
-            // apply to Metal where the cull mode is baked into the pipeline.
-            // Without this, ~half the LOD triangles disappear due to wrong-
-            // winding back-face culling.
-            me.cortex.voxy.client.core.gpu.PipelineState opaqueState
-                    = me.cortex.voxy.client.core.gpu.PipelineState.OPAQUE_MESH;
-            me.cortex.voxy.client.core.gpu.PipelineState translucentState
-                    = me.cortex.voxy.client.core.gpu.PipelineState.TRANSLUCENT_MESH;
-            if (this.backend.getType() != BackendType.OPENGL) {
-                // DIAGNOSTIC (2026-05-25): VOXY_LOD_NO_DEPTH=1 disables the LOD
-                // opaque depth test/write to check whether the view-dependent
-                // flicker is z-fighting in the LOD's own depth buffer (overlapping
-                // LOD geometry competing for depth; winner flips with tiny camera
-                // angle changes). If the per-angle disappearing stops, depth/z-fight
-                // is confirmed (the image may look unordered with depth off).
-                boolean lodNoDepth = "1".equals(System.getenv("VOXY_LOD_NO_DEPTH"));
-                if (lodNoDepth) {
-                    Logger.info("[Metal-LODTEST] VOXY_LOD_NO_DEPTH active: opaque LOD depth test/write DISABLED");
-                }
-                opaqueState = new me.cortex.voxy.client.core.gpu.PipelineState(
-                        lodNoDepth
-                                ? me.cortex.voxy.client.core.gpu.PipelineState.DepthState.DISABLED
-                                : me.cortex.voxy.client.core.gpu.PipelineState.DepthState.DEFAULT,
-                        me.cortex.voxy.client.core.gpu.PipelineState.BlendState.OPAQUE,
-                        me.cortex.voxy.client.core.gpu.PipelineState.RasterState.NO_CULL);
-                // VOXY_LOD_WATER_DEBUG also DISABLES the depth test for the
-                // translucent pass so the magenta shows ALL water geometry
-                // regardless of depth — distinguishing "water missing" (coverage
-                // / meshing) from "water depth-rejected" (z-fight vs seafloor).
-                boolean waterDebugDepth = "1".equals(System.getenv("VOXY_LOD_WATER_DEBUG"));
-                // Phase D (issue #11): in vx-contract mode the translucent
-                // pass renders into its OWN depth attachment (seeded with
-                // opaque depth) and must WRITE depth — the water surface
-                // depth becomes vxDepthTexTrans, which the pack's deferred
-                // uses to composite LOD water as water.
-                var transDepthState = me.cortex.voxy.client.core.util.IrisUtil.vxContractActive()
-                        ? me.cortex.voxy.client.core.gpu.PipelineState.DepthState.DEFAULT
-                        : me.cortex.voxy.client.core.gpu.PipelineState.DepthState.TEST_NO_WRITE;
-                // Material mode: the 3 g-buffer planes carry DATA (straight-alpha
-                // albedo + nibble-packed light/face/id), not composited colour —
-                // the pack's blender does the real compositing at resolve time.
-                // Blending them is doubly wrong: MetalRenderBackend only wires
-                // blending onto attachment 0 (planes 1/2 were silently
-                // last-writer-wins anyway), and plane 0 would premultiplied-over-
-                // accumulate straight-alpha samples under any overlapping draws
-                // (RGB x1.294 / alpha 0.914 for water — "pale, more opaque").
-                // OPAQUE writes + depth LEQUAL+write make all 3 planes agree on
-                // nearest-fragment-wins. VOXY_VX_PLANE_BLEND=1 restores blending.
-                var transBlend = vxMaterial && !"1".equals(System.getenv("VOXY_VX_PLANE_BLEND"))
-                        ? me.cortex.voxy.client.core.gpu.PipelineState.BlendState.OPAQUE
-                        : me.cortex.voxy.client.core.gpu.PipelineState.BlendState.PREMULTIPLIED_ALPHA;
-                translucentState = new me.cortex.voxy.client.core.gpu.PipelineState(
-                        waterDebugDepth
-                                ? me.cortex.voxy.client.core.gpu.PipelineState.DepthState.DISABLED
-                                : transDepthState,
-                        transBlend,
-                        me.cortex.voxy.client.core.gpu.PipelineState.RasterState.NO_CULL);
-            }
-            // Material mode renders 3 BGRA8 planes (P0 albedo, P1 tint, P2 misc);
-            // otherwise the single colour attachment as before.
-            // 3-plane material g-buffer only for the layer(s) that go through the resolve:
-            // opaque only when opted in, translucent under vxMaterial; else single bridge colour.
-            int[] threePlane = new int[]{GL_RGBA8, GL_RGBA8, GL_RGBA8};
-            int[] onePlane = new int[]{GL_RGBA8};
-            int[] opaqueFormats = vxOpaqueMat ? threePlane : onePlane;
-            int[] translucentFormats = vxMaterial ? threePlane : onePlane;
-            this.terrainPipeline = this.backend.createGraphicsPipeline(
-                    new me.cortex.voxy.client.core.gpu.GraphicsPipelineDesc(
-                            vertex, vxOpaqueFrag, opaqueDefines,
-                            null, null, null, null,
-                            opaqueFormats,
-                            me.cortex.voxy.client.core.gpu.VertexLayout.EMPTY,
-                            opaqueState,
-                            "MDIC.terrain"));
-            this.translucentTerrainPipeline = this.backend.createGraphicsPipeline(
-                    new me.cortex.voxy.client.core.gpu.GraphicsPipelineDesc(
-                            vertex, vxTransFrag, translucentDefines,
-                            null, null, null, null,
-                            translucentFormats,
-                            me.cortex.voxy.client.core.gpu.VertexLayout.EMPTY,
-                            translucentState,
-                            "MDIC.translucentTerrain"));
-            this.terrainProgram = mdicProgramId(this.terrainPipeline);
-            this.translucentTerrainProgram = mdicProgramId(this.translucentTerrainPipeline);
-        }
-    }
-
-    /** Mirror addDirectionalFaceTint + the TAA flag so the cross-backend pipeline desc gets the same defines. */
-    private static java.util.Map<String, String> buildTerrainDefines(String taa) {
-        var m = new java.util.LinkedHashMap<String, String>();
-        net.minecraft.client.multiplayer.ClientLevel level = Minecraft.getInstance().level;
-        if (level != null) {
-            m.put("NO_SHADE_FACE_TINT", Float.toString(level.getShade(Direction.UP, false)) + "f");
-            m.put("UP_FACE_TINT",       Float.toString(level.getShade(Direction.UP, true))  + "f");
-            m.put("DOWN_FACE_TINT",     Float.toString(level.getShade(Direction.DOWN, true))+ "f");
-            m.put("Z_AXIS_FACE_TINT",   Float.toString(level.getShade(Direction.NORTH, true))+ "f");
-            m.put("X_AXIS_FACE_TINT",   Float.toString(level.getShade(Direction.EAST, true)) + "f");
-        }
-        if (taa != null) m.put("TAA_PATCH", "");
-        return m;
     }
 
     private void uploadUniformBuffer(MDICViewport viewport) {
@@ -886,16 +324,16 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         if (MetalMvpUtil.METAL_NDC_REMAP && this.backend.getType() != BackendType.OPENGL) {
             MetalMvpUtil.applyNdcRemap(mat);
         }
-        mat.getToAddress(ptr); ptr += 4*4*4;
+        NativeUniformWriter.putMatrix4f(ptr, mat); ptr += 4*4*4;
 
-        viewport.section.getToAddress(ptr); ptr += 4*3;
+        NativeUniformWriter.putVector3i(ptr, viewport.section); ptr += 4*3;
 
         if (viewport.frameId<0) {
             Logger.error("Frame ID negative, this will cause things to break, wrapping around");
             viewport.frameId &= 0x7fffffff;
         }
         MemoryUtil.memPutInt(ptr, viewport.frameId&0x7fffffff); ptr += 4;
-        viewport.innerTranslation.getToAddress(ptr); ptr += 4*3;
+        NativeUniformWriter.putVector3f(ptr, viewport.innerTranslation); ptr += 4*3;
 
         // std140 padding: cameraSubPos (vec3 at offset 80) consumes 12B; the
         // next vec4 must be 16B-aligned, so skip the 4B trailing pad before
@@ -955,34 +393,34 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             // Ramp window: start past the LOD<->MC seam (seam parity keeps MC's
             // exact 0.706), reach the target alpha a few render distances out.
             float rdBlocks = Math.max(Minecraft.getInstance().gameRenderer.getRenderDistance(), 32f);
-            float rampStart = WATER_FAR_ALPHA_START > 0f
-                    ? WATER_FAR_ALPHA_START
+            float rampStart = TerrainShaderConfiguration.WATER_FAR_ALPHA_START > 0f
+                    ? TerrainShaderConfiguration.WATER_FAR_ALPHA_START
                     : Math.max(rdBlocks * 1.5f, 384f);
-            float rampEnd = WATER_FAR_ALPHA_END > rampStart
-                    ? WATER_FAR_ALPHA_END
+            float rampEnd = TerrainShaderConfiguration.WATER_FAR_ALPHA_END > rampStart
+                    ? TerrainShaderConfiguration.WATER_FAR_ALPHA_END
                     : Math.max(rdBlocks * 4f, rampStart + 768f);
             MemoryUtil.memPutFloat(lodBase,      projK);
             MemoryUtil.memPutFloat(lodBase +  4, rampStart);
             MemoryUtil.memPutFloat(lodBase +  8, 1.0f / (rampEnd - rampStart));
-            MemoryUtil.memPutFloat(lodBase + 12, WATER_FAR_ALPHA);
+            MemoryUtil.memPutFloat(lodBase + 12, TerrainShaderConfiguration.WATER_FAR_ALPHA);
             // voxyLodParams2.x: translucent near-cull distance (vx contract —
             // see VOXY_TRANS_NEAR_CULL). GL and no-pack sessions read 0.
             float nearCull = 0.0f;
-            if (me.cortex.voxy.client.core.util.IrisUtil.vxContractActive()) {
+            if (this.pipeline.materialPolicy().legacyWater()) {
                 // FULLRING (masked mode): radius = the full vanilla border so the
                 // mask gate is reachable in the border overlap ring — see the
-                // TRANS_NEAR_CULL_FULLRING static. MetalVxResolvePass.ringCullNow()
+                // The configured full-ring mode. MetalVxResolvePass.ringCullNow()
                 // mirrors this formula (intentionally identical).
-                nearCull = TRANS_NEAR_CULL_FULLRING
+                nearCull = TerrainShaderConfiguration.TRANS_NEAR_CULL_FULLRING
                         ? Math.max(rdBlocks, 64f)
-                        : Math.max(rdBlocks - TRANS_NEAR_CULL_MARGIN, 64f);
+                        : Math.max(rdBlocks - TerrainShaderConfiguration.TRANS_NEAR_CULL_MARGIN, 64f);
             }
             if (!loggedNearCullRuntime) {
                 loggedNearCullRuntime = true;
                 // One-shot: getRenderDistance() units (blocks vs chunks) decide
                 // whether the cull radius is ~RD or degenerate ~64.
                 Logger.info("[Metal-LODTEST] trans near-cull runtime: rdBlocks=" + rdBlocks
-                        + " cullDist=" + nearCull + " fullRing=" + TRANS_NEAR_CULL_FULLRING
+                        + " cullDist=" + nearCull + " fullRing=" + TerrainShaderConfiguration.TRANS_NEAR_CULL_FULLRING
                         + " (vxContract="
                         + me.cortex.voxy.client.core.util.IrisUtil.vxContractActive()
                         + "); VOXY_TRANS_NEAR_CULL_FULLRING=0 reverts to the -margin radius");
@@ -1128,8 +566,8 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
 
     /**
      * M12 Metal-side translucent render — uses the dedicated translucent
-     * pipeline ({@code TRANSLUCENT_MESH}-style state with depth-test-no-write
-     * + premultiplied-alpha blend, both baked in at pipeline creation) and
+     * pipeline (Metal surface depth-test-and-write state
+     * + mode-specific blending, both baked in at pipeline creation) and
      * draws from the translucent slice of {@code drawCallBuffer}
      * ({@code TRANSLUCENT_OFFSET}+ slots, populated by buildtranslucents.comp).
      * Same SSBO bindings as opaque since both share quads3.vert + quads.frag;
@@ -1137,12 +575,16 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
      * changes needed.
      */
     public void renderTranslucentMetal(me.cortex.voxy.client.core.gpu.RenderEncoder encoder, MDICViewport viewport) {
-        if (this.geometryManager.getSectionCount() == 0) return;
-        if (this.translucentTerrainPipeline == null) return;
+        renderTranslucentMetal(encoder, viewport, this.translucentTerrainPipeline);
+    }
+
+    /** Shares geometry bindings and draw bounds with the shaders-off layer captures. */
+    public void renderTranslucentMetal(me.cortex.voxy.client.core.gpu.RenderEncoder encoder, MDICViewport viewport, me.cortex.voxy.client.core.gpu.IGpuPipeline layerPipeline) {
+        if (this.geometryManager.getSectionCount() == 0 || layerPipeline == null) return;
         int translucentMax = Math.min(this.geometryManager.getSectionCount(), 100_000);
         translucentMax = metalDrawCount(viewport, TRANSLUCENT_DRAW_COUNT_OFFSET, translucentMax);
         if (translucentMax == 0) return;
-        this.renderTerrainMetal(encoder, this.translucentTerrainPipeline, viewport,
+        this.renderTerrainMetal(encoder, layerPipeline, viewport,
                 /*indirectOffset bytes*/ (long) TRANSLUCENT_OFFSET * 5L * 4L,
                 translucentMax);
     }
@@ -1195,6 +637,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         // cross-backend sampler at binding 0 (blockModelAtlas in quads.frag).
         this.modelStore.bindBuffers(encoder, 3, 4, 0);
         encoder.setBuffer(5, viewport.positionScratchBuffer, 0);
+        this.pipeline.bindUniforms(encoder);
         // Texture / sampler binding 1 — MC's 16×16 RGBA8 lightmap, mirrored
         // into a Shared-storage Metal texture each frame (M13 chunk 2).
         LightMapHelper.bindMetal(encoder, 1, viewport.frameId);
@@ -1491,19 +934,6 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
 
     @Override
     public void free() {
-        this.uniform.free();
-        this.distanceCountBuffer.free();
-        if (this.translucentTerrainShader != null) this.translucentTerrainShader.free();
-        if (this.terrainShader != null) this.terrainShader.free();
-        if (this.translucentTerrainPipeline != null) this.translucentTerrainPipeline.close();
-        if (this.terrainPipeline != null) this.terrainPipeline.close();
-        this.commandGenPipeline.close();
-        this.cullPipeline.close();
-        this.forceAllVisiblePipeline.close();
-        this.prepPipeline.close();
-        this.translucentGenPipeline.close();
-        this.prefixSumPipeline.close();
-        this.statisticsBuffer.free();
-        if (this.boundDepthSampler != null) this.boundDepthSampler.close();
+        this.resources.close();
     }
 }

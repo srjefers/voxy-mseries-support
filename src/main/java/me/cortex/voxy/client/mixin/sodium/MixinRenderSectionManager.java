@@ -5,6 +5,8 @@ import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.client.core.IGetVoxyRenderSystem;
 import me.cortex.voxy.client.core.VoxyRenderSystem;
 import me.cortex.voxy.common.world.service.VoxelIngestService;
+import me.cortex.voxy.client.core.rendering.SectionCoverageTracker;
+import net.caffeinemc.mods.sodium.client.render.chunk.RenderSectionFlags;
 import me.cortex.voxy.commonImpl.VoxyCommon;
 import net.caffeinemc.mods.sodium.client.gl.device.CommandList;
 import net.caffeinemc.mods.sodium.client.render.chunk.RenderSection;
@@ -39,12 +41,7 @@ public class MixinRenderSectionManager {
 
     @Inject(method = "<init>", at = @At("TAIL"))
     private void voxy$resetChunkTracker(ClientLevel level, int renderDistance, SortBehavior sortBehavior, CommandList commandList, CallbackInfo ci) {
-        if (level.levelRenderer != null) {
-            var system = ((IGetVoxyRenderSystem)(level.levelRenderer)).getVoxyRenderSystem();
-            if (system != null) {
-                system.chunkBoundRenderer.reset();
-            }
-        }
+        this.voxy$coverageGeneration = SectionCoverageTracker.INSTANCE.beginGeneration();
         this.bottomSectionY = this.level.getMinY()>>4;
     }
 
@@ -76,93 +73,53 @@ public class MixinRenderSectionManager {
         }
     }
 
-    /*
-    @Inject(method = "onChunkRemoved", at = @At("HEAD"))
-    private void voxy$trackChunkRemove(int x, int z, CallbackInfo ci) {
-        if (this.level.worldRenderer != null) {
-            var system = ((IGetVoxyRenderSystem)(this.level.worldRenderer)).getVoxyRenderSystem();
-            if (system != null) {
-                system.chunkBoundRenderer.removeSection(ChunkPos.toLong(x, z));
-            }
-        }
-    }*/
-
+    @Unique private SectionCoverageTracker.Generation voxy$coverageGeneration;
     @Unique private long cachedChunkPos = -1;
     @Unique private int cachedChunkStatus;
     @Unique private int bottomSectionY;
 
+    // Sodium 0.8.11 completes region uploads before updating metadata here.
+    // setInfo may return false on a rebuild with unchanged flags; material class can still change.
     @Redirect(method = "updateSectionInfo", at = @At(value = "INVOKE", target = "Lnet/caffeinemc/mods/sodium/client/render/chunk/RenderSection;setInfo(Lnet/caffeinemc/mods/sodium/client/render/chunk/data/BuiltSectionInfo;)Z"))
     private boolean voxy$updateOnUpload(RenderSection instance, BuiltSectionInfo info) {
-        boolean wasBuilt = instance.getFlags()!=0;
-        int flags = instance.getFlags();
-        if (!instance.setInfo(info)) {
-            return false;
-        }
-        if (wasBuilt == (instance.getFlags()!=0)) {//Only want to do stuff on change
-            // Rebuild-in-place (built→built, no flag transition): the
-            // section's opaque/trans-only class may still have FLIPPED
-            // (last opaque block mined out of a water section, …) — the
-            // bound mask must re-route it between the real-depth and
-            // coverage-epsilon instance sets or the split goes stale.
-            if (wasBuilt && instance.getFlags() != 0 && info != null) {
-                boolean hasOpaque = voxy$hasOpaque(info);
-                long rpos = voxy$boundPos(instance.getChunkX(), instance.getChunkY(), instance.getChunkZ());
-                if (me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorReclass(rpos, hasOpaque)) {
-                    VoxyRenderSystem sys = ((IGetVoxyRenderSystem)(this.level.levelRenderer)).getVoxyRenderSystem();
-                    if (sys != null) {
-                        sys.chunkBoundRenderer.removeSection(rpos);
-                        sys.chunkBoundRenderer.addSection(rpos, hasOpaque);
-                    }
-                }
-            }
-            return true;
-        }
+        boolean wasUploaded = (instance.getFlags() & RenderSectionFlags.MASK_HAS_BLOCK_GEOMETRY) != 0;
+        boolean changed = instance.setInfo(info);
+        boolean uploaded = instance.isBuilt() && !instance.isDisposed()
+                && (instance.getFlags() & RenderSectionFlags.MASK_HAS_BLOCK_GEOMETRY) != 0;
+        var coverage = !uploaded ? SectionCoverageTracker.Coverage.NONE
+                : voxy$hasOpaque(info) ? SectionCoverageTracker.Coverage.OPAQUE
+                : SectionCoverageTracker.Coverage.TRANSLUCENT;
+        long position = voxy$boundPos(instance.getChunkX(), instance.getChunkY(), instance.getChunkZ());
+        if (!SectionCoverageTracker.INSTANCE.publish(this.voxy$coverageGeneration, position, coverage)) return changed;
+        if (wasUploaded && !uploaded && VoxyConfig.CONFIG.ingestEnabled) this.voxy$ingestRemovedSection(instance);
+        return changed;
+    }
 
-        flags |= instance.getFlags();
-        if (flags == 0)//Only process things with stuff
-            return true;
-
-        VoxyRenderSystem system = ((IGetVoxyRenderSystem)(this.level.levelRenderer)).getVoxyRenderSystem();
-        if (system == null) {
-            return true;
-        }
+    @Unique
+    private void voxy$ingestRemovedSection(RenderSection instance) {
+        if (this.level.levelRenderer == null) return;
+        VoxyRenderSystem system = ((IGetVoxyRenderSystem)this.level.levelRenderer).getVoxyRenderSystem();
+        if (system == null) return;
         int x = instance.getChunkX(), y = instance.getChunkY(), z = instance.getChunkZ();
-
-        if (wasBuilt && VoxyConfig.CONFIG.ingestEnabled) {
-            var tracker = ((AccessorChunkTracker)ChunkTrackerHolder.get(this.level)).getChunkStatus();
-            //in theory the cache value could be wrong but is so soso unlikely and at worst means we either duplicate ingest a chunk
-            // which... could be bad ;-; or we dont ingest atall which is ok!
-            long key = ChunkPos.asLong(x, z);
-            if (key != this.cachedChunkPos) {
-                this.cachedChunkPos = key;
-                this.cachedChunkStatus = tracker.getOrDefault(key, 0);
-            }
-            if (this.cachedChunkStatus == 3) {//If this chunk still has surrounding chunks
-                var section = this.level.getChunk(x,z).getSection(y-this.bottomSectionY);
-                var lp = this.level.getLightEngine();
-
-                var csp = SectionPos.of(x,y,z);
-                var blp = lp.getLayerListener(LightLayer.BLOCK).getDataLayerData(csp);
-                var slp = lp.getLayerListener(LightLayer.SKY).getDataLayerData(csp);
-
-                //Note: we dont do this check and just blindly ingest, it shouldbe ok :tm:
-                //if (blp != null || slp != null)
-                    VoxelIngestService.rawIngest(system.getEngine(), section, x,y,z, blp==null?null:blp.copy(), slp==null?null:slp.copy());
-            }
+        var tracker = ((AccessorChunkTracker)ChunkTrackerHolder.get(this.level)).getChunkStatus();
+        long key = ChunkPos.asLong(x, z);
+        if (key != this.cachedChunkPos) {
+            this.cachedChunkPos = key;
+            this.cachedChunkStatus = tracker.getOrDefault(key, 0);
         }
-
-        long pos = voxy$boundPos(x, y, z);
-        if (wasBuilt) {//Remove
-            //TODO: on chunk remove do ingest if is surrounded by built chunks (or when the tracker says is ok)
-
-            me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorRemove(pos);
-            system.chunkBoundRenderer.removeSection(pos);
-        } else {//Add
-            boolean hasOpaque = voxy$hasOpaque(info);
-            me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorAdd(pos, hasOpaque);
-            system.chunkBoundRenderer.addSection(pos, hasOpaque);
-        }
-        return true;
+        if (this.cachedChunkStatus != 3) return;
+        // Do not create a default chunk or ingest a cache slot belonging to another position.
+        var chunk = this.level.getChunkSource().getChunk(x, z, ChunkStatus.FULL, false);
+        if (chunk == null) return;
+        int sectionIndex = y - this.bottomSectionY;
+        if (sectionIndex < 0 || sectionIndex >= chunk.getSections().length) return;
+        var section = chunk.getSection(sectionIndex);
+        var lighting = this.level.getLightEngine();
+        var sectionPos = SectionPos.of(x, y, z);
+        var block = lighting.getLayerListener(LightLayer.BLOCK).getDataLayerData(sectionPos);
+        var sky = lighting.getLayerListener(LightLayer.SKY).getDataLayerData(sectionPos);
+        VoxelIngestService.rawIngest(system.getEngine(), section, x, y, z,
+                block == null ? null : block.copy(), sky == null ? null : sky.copy());
     }
 
     /**
@@ -190,11 +147,8 @@ public class MixinRenderSectionManager {
         return SectionPos.asLong(x,y,z);
     }
 
-    @org.spongepowered.asm.mixin.injection.Inject(method = "<init>", at = @At("RETURN"))
-    private void voxy$resetBoundMirror(org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
-        // Fresh RenderSectionManager = all sections rebuild from scratch;
-        // clear the bound-mask mirror so stale entries can't discard LODs
-        // over chunks Sodium no longer renders.
-        me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorReset();
+    @Inject(method = "destroy", at = @At("HEAD"))
+    private void voxy$releaseCoverage(CallbackInfo ci) {
+        SectionCoverageTracker.INSTANCE.endGeneration(this.voxy$coverageGeneration);
     }
 }

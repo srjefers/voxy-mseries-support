@@ -3,7 +3,7 @@ package me.cortex.voxy.client.config;
 import me.cortex.voxy.client.RenderStatistics;
 import me.cortex.voxy.client.config.SodiumConfigBuilder.*;
 import me.cortex.voxy.client.VoxyClient;
-import me.cortex.voxy.client.VoxyClientInstance;
+import me.cortex.voxy.client.ClientSessionEvents;
 import me.cortex.voxy.client.core.IGetVoxyRenderSystem;
 import me.cortex.voxy.common.util.cpu.CpuLayout;
 import me.cortex.voxy.commonImpl.VoxyCommon;
@@ -40,7 +40,7 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
                                         ()->CFG.enabled, v->CFG.enabled=v)
                                         .setPostChangeRunner(c->{
                                             if (c) {
-                                                if (VoxyClientInstance.isInGame) {
+                                                if (ClientSessionEvents.inSession) {
                                                     VoxyCommon.createInstance();
                                                     var vrsh = (IGetVoxyRenderSystem) Minecraft.getInstance().levelRenderer;
                                                     if (vrsh != null && CFG.enableRendering) {
@@ -66,7 +66,7 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
                                         "voxy:use_sodium_threads",
                                         Component.translatable("voxy.config.general.useSodiumBuilder"),
                                         ()->!CFG.dontUseSodiumBuilderThreads, v->CFG.dontUseSodiumBuilderThreads=!v)
-                                        .setPostChangeFlags("voxy:update_threads")
+                                        .setPostChangeFlags("voxy:update_threads", OptionFlag.REQUIRES_RENDERER_RELOAD.getId().toString())
                         ), new Group(
                                 new BoolOption(
                                         "voxy:ingest_enabled",

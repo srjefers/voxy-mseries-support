@@ -54,13 +54,17 @@ public final class VxFogCap {
     }
 
     public static boolean enabled() {
-        if (CAP_F <= 0f) return false;
+        if (CAP_F <= 0f || !isAllowed(Boolean.getBoolean("voxy.bslCompatibility"))) return false;
         try {
             return me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
                     != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
         } catch (Throwable t) {
             return false;
         }
+    }
+
+    private static boolean isAllowed(boolean bslCompatibility) {
+        return bslCompatibility;
     }
 
     private static final String DEFERRED_ANCHOR = "Fog(color.rgb, viewPos.xyz);";
