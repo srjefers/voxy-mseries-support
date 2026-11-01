@@ -126,6 +126,20 @@ public abstract class VoxyInstance {
         return world;
     }
 
+    // Upstream API kept for addons (Voxy SeedGen): incrementRef hands the caller a ref it must releaseRef().
+    public WorldEngine getOrCreate(WorldIdentifier identifier, boolean incrementRef) {
+        var world = this.getOrCreate(identifier);
+        if (world != null) {
+            world.markActive();
+            if (incrementRef) world.acquireRef();
+        }
+        return world;
+    }
+
+    public boolean isRunning() {
+        return this.isRunning;
+    }
+
     public WorldEngine getOrCreate(WorldIdentifier identifier) {
         if (!this.isRunning) {
             Logger.error("Tried getting world object on voxy instance but its not running");
