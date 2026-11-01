@@ -248,7 +248,7 @@ tasks.register('makeExcludedRocksDB', Zip) {
     exclude {
         def file = it.name
         if (file.endsWith(".jnilib")) {
-            return true
+            return !file.contains("osx-arm64") // keep the Apple Silicon native
         }
         if (!file.endsWith(".so")) {
             return false
@@ -308,8 +308,9 @@ dependencies {
     // Runtime shader translation (Metal/Vulkan backends only).
     // GL backend on Win/Linux uses the driver compiler and never touches these
     // — natives are shipped only for macos-arm64 to keep jar size minimal.
-    implementation "org.lwjgl:lwjgl-shaderc"
-    implementation "org.lwjgl:lwjgl-spvc"
+    // MC doesn't ship these LWJGL modules, so bundle the Java side too.
+    include(implementation "org.lwjgl:lwjgl-shaderc:$lwjglVersion")
+    include(implementation "org.lwjgl:lwjgl-spvc:$lwjglVersion")
     include(runtimeOnly "org.lwjgl:lwjgl-shaderc:$lwjglVersion:natives-macos-arm64")
     include(runtimeOnly "org.lwjgl:lwjgl-spvc:$lwjglVersion:natives-macos-arm64")
 
