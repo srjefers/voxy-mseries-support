@@ -1,0 +1,57 @@
+title: "[Testing] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ask here about testing: installing the test build, launchers, the helper scripts, or "is this expected?".
+
+        To report a test result, open a [test report](https://github.com/srjefers/voxy-mseries-support/issues/new?template=test-report.yml) instead. Results are tracked as issues.
+
+        Start with the [testing guide](https://github.com/srjefers/voxy-mseries-support/blob/dev/docs/testing/README.md).
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What you are trying to do and where you got stuck.
+    validations:
+      required: true
+
+  - type: input
+    id: test-ids
+    attributes:
+      label: Test IDs
+      description: The tests from the guide you are working on, if any.
+      placeholder: PT-01
+
+  - type: input
+    id: mac
+    attributes:
+      label: Mac, chip, memory and macOS
+      description: Apple menu > About This Mac.
+      placeholder: MacBook Pro 14-inch 2023, M3 Pro, 18 GB, macOS 15.6.1
+
+  - type: dropdown
+    id: launcher
+    attributes:
+      label: Launcher
+      options:
+        - Official Minecraft Launcher
+        - Prism Launcher
+        - Modrinth App
+        - CurseForge
+        - Dev client (./gradlew runClient)
+        - Other
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you tried
+      description: Steps, settings or commands you already tried. You can drag screenshots into this box.
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Script or log output
+      description: A short excerpt only. Attach long logs as files.
+      render: shell

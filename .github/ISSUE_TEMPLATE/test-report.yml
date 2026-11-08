@@ -1,0 +1,179 @@
+name: Test report
+description: Report the result of one or more tests from the testing guide.
+title: "[Test] "
+labels: ["testing"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing Voxy on Apple Silicon.
+
+        Follow the [testing guide](https://github.com/srjefers/voxy-mseries-support/blob/dev/docs/testing/README.md), then fill in this form. Write one report per session: one Mac, one jar, one sitting. A Pass helps as much as a Fail.
+
+        Put the test IDs and your Mac in the title, for example `[Test] PT-01, PT-02 on M2, 16 GB, macOS 14`.
+
+  - type: dropdown
+    id: track
+    attributes:
+      label: Track
+      description: Player means the release jar in a launcher. Developer means a build from source or `./gradlew runClient`.
+      options:
+        - Player
+        - Developer
+    validations:
+      required: true
+
+  - type: input
+    id: test-ids
+    attributes:
+      label: Test IDs
+      description: The IDs from the testing guide, separated by commas. Players use PT-01 to PT-13. Not following a test? Write "free play".
+      placeholder: PT-01, PT-02
+    validations:
+      required: true
+
+  - type: dropdown
+    id: result
+    attributes:
+      label: Overall result
+      description: Pass means everything matched the guide. Fail means something broke. Partial means some steps passed and some could not be checked. Blocked means you could not run the test. With several tests, pick Fail if any failed, else Partial if the results differ. List each test's result under What happened.
+      options:
+        - Pass
+        - Fail
+        - Partial
+        - Blocked
+    validations:
+      required: true
+
+  - type: input
+    id: mac-model
+    attributes:
+      label: Mac model and chip
+      description: Apple menu > About This Mac. Add the GPU core count if you know it.
+      placeholder: MacBook Air 13-inch 2022, M2, 8-core GPU
+    validations:
+      required: true
+
+  - type: dropdown
+    id: memory
+    attributes:
+      label: Unified memory
+      description: Apple menu > About This Mac > Memory.
+      options:
+        - 8 GB
+        - 16 GB
+        - 18 GB
+        - 24 GB
+        - 32 GB
+        - 36 GB
+        - 48 GB
+        - 64 GB
+        - 96 GB
+        - 128+ GB
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: Apple menu > About This Mac.
+      placeholder: macOS 15.6.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: launcher
+    attributes:
+      label: Launcher
+      description: If you pick Other, name it under What happened.
+      options:
+        - Official Minecraft Launcher
+        - Prism Launcher
+        - Modrinth App
+        - CurseForge
+        - Dev client (./gradlew runClient)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: java
+    attributes:
+      label: Java version
+      description: Leave it empty if you use your launcher's own Java. The versions.txt file in the report zip lists it.
+      placeholder: "21.0.7"
+
+  - type: dropdown
+    id: shader-pack
+    attributes:
+      label: Shader pack
+      description: Shader packs need Iris 1.10.7. Name the pack version and the Iris version under What happened.
+      options:
+        - None (no shader pack)
+        - BSL
+        - Complementary
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: voxy-build
+    attributes:
+      label: Voxy jar or commit
+      description: "Players: the jar file name in your mods folder. Developers: the output of `git rev-parse --short HEAD`."
+      placeholder: voxy-0.2.8-alpha-455d8cbb.jar
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you saw, and what you expected. For a Fail, list the steps so we can repeat them. You can drag screenshots into this box.
+      placeholder: |
+        PT-01: Fail, see below
+        PT-02: Pass
+
+        JVM arguments: -Xmx6G -Dvoxy.forceMetal=true
+        Settings: Minecraft render distance 12, Voxy render distance 512
+        Memory of "java" in Activity Monitor: 9.8 GB
+
+        1. Created the world voxytest.
+        2. Flew north for 2 minutes, then stood still.
+        3. Far terrain flickered near the horizon. See screenshot.
+
+        Expected: no flicker.
+    validations:
+      required: true
+
+  - type: textarea
+    id: log-check
+    attributes:
+      label: log-check.sh output
+      description: Quit the game, run log-check.sh and paste what it prints. Player track `bash ~/voxy-testing/log-check.sh`, developer track `bash scripts/testing/log-check.sh`. Do not paste the whole latest.log here. It is in the report zip.
+      render: shell
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Attachments
+
+        After you quit the game, run `bash ~/voxy-testing/collect-report.sh --redact` (player track) or `bash scripts/testing/collect-report.sh --redact` (developer track). It prints the path of a zip file. Drag that zip and your screenshots into the box below. GitHub accepts a zip up to 25 MB and images up to 10 MB.
+
+        No Terminal? Attach `logs/latest.log` from your game folder instead. After a crash, also attach the newest file in `crash-reports/` and any `hs_err_pid*.log`.
+
+  - type: textarea
+    id: attachments
+    attributes:
+      label: Files
+      description: Drop the report zip and screenshots here.
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      description: Logs can show your Minecraft name, your Mac user name and the servers you joined. `--redact` hides the first two. This issue is public.
+      options:
+        - label: I removed personal info I don't want public.
+          required: true
