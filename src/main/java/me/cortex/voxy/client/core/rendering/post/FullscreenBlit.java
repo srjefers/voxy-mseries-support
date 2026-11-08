@@ -1,5 +1,6 @@
 package me.cortex.voxy.client.core.rendering.post;
 
+import me.cortex.voxy.client.core.RenderProperties;
 import me.cortex.voxy.client.core.gl.GlGraphicsPipeline;
 import me.cortex.voxy.client.core.gl.shader.ShaderLoader;
 import me.cortex.voxy.client.core.gpu.GraphicsPipelineDesc;
@@ -8,7 +9,9 @@ import me.cortex.voxy.client.core.gpu.PipelineState;
 import me.cortex.voxy.client.core.gpu.RenderBackendFactory;
 import me.cortex.voxy.client.core.gpu.VertexLayout;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.Consumer;
 
 import static org.lwjgl.opengl.GL11C.GL_RGBA8;
 import static org.lwjgl.opengl.GL11C.GL_TRIANGLE_STRIP;
@@ -59,6 +62,41 @@ public class FullscreenBlit {
         this(vertId, fragId, Map.of());
     }
 
+    public FullscreenBlit(RenderProperties properties, String fragId) {
+        this(properties, "voxy:post/fullscreen.vert", fragId, d->{});
+    }
+
+    public FullscreenBlit(RenderProperties properties, String vertId, String fragId) {
+        this(properties, vertId, fragId, d->{});
+    }
+
+    public FullscreenBlit(RenderProperties properties, String fragId, Consumer<Defines> applyer) {
+        this(properties, "voxy:post/fullscreen.vert", fragId, applyer);
+    }
+
+    public FullscreenBlit(RenderProperties properties, String vertId, String fragId, Consumer<Defines> applyer) {
+        this(vertId, fragId, Defines.of(properties, applyer));
+    }
+
+    /** Collects shader defines with the same calls upstream makes on Shader.Builder. */
+    public static final class Defines {
+        private final Map<String, String> map = new LinkedHashMap<>();
+
+        static Map<String, String> of(RenderProperties properties, Consumer<Defines> applyer) {
+            var d = new Defines()
+                    .defineIf("USE_ZERO_ONE_DEPTH", properties.isZero2One())
+                    .defineIf("USE_REVERSE_Z", properties.isReverseZ());
+            applyer.accept(d);
+            return d.map;
+        }
+
+        public Defines define(String name) { this.map.put(name, ""); return this; }
+        public Defines define(String name, int value) { this.map.put(name, Integer.toString(value)); return this; }
+        public Defines define(String name, String value) { this.map.put(name, value); return this; }
+        public Defines defineIf(String name, boolean condition) { return condition ? this.define(name) : this; }
+        public Defines defineIf(String name, boolean condition, int value) { return condition ? this.define(name, value) : this; }
+    }
+
     /** Backend-agnostic constructor — supply a defines map for shader permutations. */
     public FullscreenBlit(String vertId, String fragId, Map<String, String> defines) {
         // Default pipeline state — callers manage depth/blend/stencil themselves
@@ -75,7 +113,19 @@ public class FullscreenBlit {
                 VertexLayout.EMPTY,   // gl_VertexID-driven full-screen quad
                 PipelineState.DEFAULT,// caller sets depth/blend/cull via raw GL
                 fragId);
-        this.pipeline = RenderBackendFactory.get().createGraphicsPipeline(desc);
+        IGpuPipeline created;
+        try {
+            created = RenderBackendFactory.get().createGraphicsPipeline(desc);
+        } catch (RuntimeException e) {
+            // Off GL these blits are never drawn (blit() is GL-only), so a shader
+            // that only compiles for GL (e.g. location uniforms) must not abort setup.
+            if (RenderBackendFactory.get().getType() == me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+                throw e;
+            }
+            me.cortex.voxy.common.Logger.warn("Skipping GL-only fullscreen pass " + fragId + " on " + RenderBackendFactory.get().getType());
+            created = null;
+        }
+        this.pipeline = created;
         this.glProgram = (this.pipeline instanceof GlGraphicsPipeline gp) ? gp.program() : 0;
     }
 
@@ -128,7 +178,9 @@ public class FullscreenBlit {
             glDeleteBuffers(this.pushUbo);
             this.pushUbo = 0;
         }
-        this.pipeline.close();
+        if (this.pipeline != null) {
+            this.pipeline.close();
+        }
     }
 
     /** Direct access to the underlying pipeline, for callers ready to move onto the encoder API. */

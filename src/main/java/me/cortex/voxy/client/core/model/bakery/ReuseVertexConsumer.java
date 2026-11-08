@@ -1,17 +1,17 @@
 package me.cortex.voxy.client.core.model.bakery;
 
 
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import me.cortex.voxy.common.util.MemoryBuffer;
 import net.minecraft.client.model.geom.builders.UVPair;
-import net.minecraft.client.renderer.block.model.BakedQuad;
+import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.texture.MipmapStrategy;
+import net.minecraft.client.resources.model.geometry.BakedQuad;
+import net.minecraft.core.Direction;
 import org.lwjgl.system.MemoryUtil;
 
-import static me.cortex.voxy.client.core.model.bakery.BudgetBufferRenderer.VERTEX_FORMAT_SIZE;
-
-import com.mojang.blaze3d.vertex.VertexConsumer;
-
 public final class ReuseVertexConsumer implements VertexConsumer {
+    public static final int VERTEX_FORMAT_SIZE = 24;
     private MemoryBuffer buffer = new MemoryBuffer(8192);
     private long ptr;
     private int count;
@@ -19,9 +19,15 @@ public final class ReuseVertexConsumer implements VertexConsumer {
 
     public boolean anyShaded;
     public boolean anyDarkendTex;
+    public boolean anyDiscard;
 
+    private final int globalOrMetadata;
     public ReuseVertexConsumer() {
+        this(0);
+    }
+    public ReuseVertexConsumer(int globalOrMetadata) {
         this.reset();
+        this.globalOrMetadata = globalOrMetadata;
     }
 
     public ReuseVertexConsumer setDefaultMeta(int meta) {
@@ -29,11 +35,15 @@ public final class ReuseVertexConsumer implements VertexConsumer {
         return this;
     }
 
+    public int getDefaultMeta() {
+        return this.defaultMeta;
+    }
+
     @Override
     public ReuseVertexConsumer addVertex(float x, float y, float z) {
         this.ensureCanPut();
         this.ptr += VERTEX_FORMAT_SIZE; this.count++; //Goto next vertex
-        this.meta(this.defaultMeta);
+        this.meta(this.defaultMeta|this.globalOrMetadata);
         MemoryUtil.memPutFloat(this.ptr, x);
         MemoryUtil.memPutFloat(this.ptr + 4, y);
         MemoryUtil.memPutFloat(this.ptr + 8, z);
@@ -41,6 +51,7 @@ public final class ReuseVertexConsumer implements VertexConsumer {
     }
 
     public ReuseVertexConsumer meta(int metadata) {
+        this.anyDiscard |= (metadata&1)!=0;
         MemoryUtil.memPutInt(this.ptr + 12, metadata);
         return this;
     }
@@ -73,18 +84,33 @@ public final class ReuseVertexConsumer implements VertexConsumer {
     }
 
     @Override
+    public ReuseVertexConsumer setUv3(float u, float v) { return this; }
+
+    @Override
     public ReuseVertexConsumer setNormal(float x, float y, float z) {
         return this;
     }
 
     @Override
-    public VertexConsumer setLineWidth(float f) {
-        return null;
+    public ReuseVertexConsumer setLineWidth(float f) {
+        return this;
+    }
+
+    public ReuseVertexConsumer quad(BakedQuad quad) {
+        return this.quad(quad, false);
+    }
+
+    public ReuseVertexConsumer quad(BakedQuad quad, boolean forceSolid) {
+        int meta = 0;
+        meta |= forceSolid?0:(quad.materialInfo().layer()!=ChunkSectionLayer.SOLID?1:0);//has discard
+        meta |= quad.materialInfo().isTinted()?4:0;//has tinting
+        return this.quad(quad, meta);
     }
 
     public ReuseVertexConsumer quad(BakedQuad quad, int metadata) {
-        this.anyShaded |= quad.shade();
-        this.anyDarkendTex |= quad.sprite().contents().mipmapStrategy == MipmapStrategy.DARK_CUTOUT;
+        //TODO: FIXME: this is wrong, e.g. stuff becomes conditionally shaded, e.g. the shade comes from the override pretty sure
+        this.anyShaded |= quad.materialInfo().shadeDirectionOverride() == null;
+        this.anyDarkendTex |= quad.materialInfo().sprite().contents().mipmapStrategy == MipmapStrategy.DARK_CUTOUT;
         this.ensureCanPut();
         for (int i = 0; i < 4; i++) {
             var pos = quad.position(i);
@@ -92,7 +118,7 @@ public final class ReuseVertexConsumer implements VertexConsumer {
             long puv = quad.packedUV(i);
             this.setUv(UVPair.unpackU(puv),UVPair.unpackV(puv));
 
-            this.meta(metadata);
+            this.meta(metadata|this.globalOrMetadata);
         }
         return this;
     }
@@ -113,6 +139,7 @@ public final class ReuseVertexConsumer implements VertexConsumer {
     public ReuseVertexConsumer reset() {
         this.anyShaded = false;
         this.anyDarkendTex = false;
+        this.anyDiscard = false;
         this.defaultMeta = 0;//RESET THE DEFAULT META
         this.count = 0;
         this.ptr = this.buffer.address - VERTEX_FORMAT_SIZE;//the thing is first time this gets incremented by FORMAT_STRIDE

@@ -1,34 +1,27 @@
 package me.cortex.voxy.client;
 
-import me.cortex.voxy.client.core.IGetVoxyRenderSystem;
-import me.cortex.voxy.client.core.VoxyRenderSystem;
 import me.cortex.voxy.client.core.gl.Capabilities;
 import me.cortex.voxy.client.core.gpu.RenderBackend;
 import me.cortex.voxy.client.core.gpu.RenderBackendFactory;
-import me.cortex.voxy.client.core.model.bakery.BudgetBufferRenderer;
 import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.commonImpl.VoxyCommon;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.components.debug.DebugScreenDisplayer;
-import net.minecraft.client.gui.components.debug.DebugScreenEntries;
-import net.minecraft.client.gui.components.debug.DebugScreenEntry;
-import net.minecraft.resources.Identifier;
-import net.minecraft.world.level.Level;
-import net.minecraft.world.level.chunk.LevelChunk;
-import org.jspecify.annotations.Nullable;
 
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.channels.FileLock;
+import java.nio.channels.NonWritableChannelException;
 import java.util.HashSet;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
 public class VoxyClient implements ClientModInitializer {
     private static final HashSet<String> FREX = new HashSet<>();
-
+    private static FileLock EXCLUSIVE_LOCK;
     public static void initVoxyClient() {
         Capabilities.init();//Ensure clinit is called
 
@@ -62,9 +55,11 @@ public class VoxyClient implements ClientModInitializer {
         // separately from regular env vars so opting in is intentional —
         // until the full MDIC encoder migration lands, this path produces
         // a clear color via the IOSurfaceBridge, not actual LOD chunks.
-        boolean forceMetal = "1".equals(System.getenv("VOXY_FORCE_METAL"))
-                || "true".equals(System.getenv("VOXY_FORCE_METAL"))
-                || "true".equals(System.getProperty("voxy.forceMetal", "false"));
+        // Drag-and-drop build: Metal is on by default; VOXY_FORCE_METAL=0 or
+        // -Dvoxy.forceMetal=false turns it off.
+        boolean forceMetal = !"0".equals(System.getenv("VOXY_FORCE_METAL"))
+                && !"false".equals(System.getenv("VOXY_FORCE_METAL"))
+                && !"false".equals(System.getProperty("voxy.forceMetal", "true"));
 
         if (systemSupported && backend.getType() != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
             if (forceMetal) {
@@ -80,10 +75,30 @@ public class VoxyClient implements ClientModInitializer {
             }
         }
 
+        if (!systemSupported) {
+             Logger.error("Voxy is unsupported on your system.");
+        }
+
+        if (systemSupported && System.getProperty("voxy.exclusiveLock", "false").equalsIgnoreCase("true")) {
+            //Try acquire the lock file
+            var vf = Minecraft.getInstance().gameDirectory.toPath().resolve(".voxy");
+            if (!vf.toFile().isDirectory()) {
+                vf.toFile().mkdir();
+            }
+            try {
+                FileOutputStream fis = new FileOutputStream(vf.resolve("voxy.lock").toFile());
+                EXCLUSIVE_LOCK = fis.getChannel().lock(0, Long.MAX_VALUE, false);
+            } catch (NonWritableChannelException | IOException e) {
+                //If some error write to log and unsupport
+                Logger.error("Failed to acquire exclusive voxy lock file, mod will be disabled");
+                systemSupported = false;
+            }
+
+        }
+
         if (systemSupported) {
 
             SharedIndexBuffer.INSTANCE.id();
-            BudgetBufferRenderer.init();
 
             VoxyCommon.setInstanceFactory(VoxyClientInstance::new);
 
@@ -91,41 +106,13 @@ public class VoxyClient implements ClientModInitializer {
                 Logger.warn("GPU does not support subgroup operations, expect some performance degradation");
             }
 
-        } else {
-            Logger.error("Voxy is unsupported on your system.");
         }
     }
 
     @Override
     public void onInitializeClient() {
-        // Iris-pack + Metal coexistence now happens at the SOLID-pass head:
-        // IrisGbufferInjector draws the LOD bridge into the pack's terrain
-        // gbuffer (MixinDefaultChunkRenderer). The former HUD-time late
-        // composite that lived here is gone — it ran after Iris finalized but
-        // painted over the pack's post chain and skipped entirely with the
-        // HUD hidden (F1).
-        DebugScreenEntries.register(Identifier.fromNamespaceAndPath("voxy", "version"), new DebugScreenEntry() {
-            @Override
-            public void display(DebugScreenDisplayer lines, @Nullable Level level, @Nullable LevelChunk levelChunk, @Nullable LevelChunk levelChunk2) {
-                if (!VoxyCommon.isAvailable()) {
-                    lines.addLine(ChatFormatting.RED + "voxy-"+VoxyCommon.MOD_VERSION);//Voxy installed, not avalible
-                    return;
-                }
-                var instance = VoxyCommon.getInstance();
-                if (instance == null) {
-                    lines.addLine(ChatFormatting.YELLOW + "voxy-" + VoxyCommon.MOD_VERSION);//Voxy avalible, no instance active
-                    return;
-                }
-                VoxyRenderSystem vrs = null;
-                var wr = Minecraft.getInstance().levelRenderer;
-                if (wr != null) vrs = ((IGetVoxyRenderSystem) wr).getVoxyRenderSystem();
+        DebugEntries.init();
 
-                //Voxy instance active
-                lines.addLine((vrs==null?ChatFormatting.DARK_GREEN:ChatFormatting.GREEN)+"voxy-"+VoxyCommon.MOD_VERSION);
-            }
-        });
-
-        DebugScreenEntries.register(Identifier.fromNamespaceAndPath("voxy","debug"), new VoxyDebugScreenEntry());
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
             if (VoxyCommon.isAvailable()) {
                 dispatcher.register(VoxyCommands.register());
@@ -148,12 +135,12 @@ public class VoxyClient implements ClientModInitializer {
             final long intervalNanos = parsedInterval * 1_000_000_000L;
             final long[] last = {System.nanoTime()};
             net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(client -> {
-                if (client.level == null || client.getMainRenderTarget() == null) return;
+                if (client.level == null || client.gameRenderer.mainRenderTarget() == null) return;
                 long now = System.nanoTime();
                 if (now - last[0] < intervalNanos) return;
                 last[0] = now;
                 net.minecraft.client.Screenshot.grab(client.gameDirectory,
-                        client.getMainRenderTarget(), component -> {});
+                        client.gameRenderer.mainRenderTarget(), component -> {});
             });
             Logger.info("VOXY_AUTO_SCREENSHOT active: every " + parsedInterval + "s");
         }
@@ -205,7 +192,7 @@ public class VoxyClient implements ClientModInitializer {
                     }
                     case 2 -> {
                         if (client.level == null
-                                && client.screen instanceof net.minecraft.client.gui.screens.TitleScreen) {
+                                && client.gui.screen() instanceof net.minecraft.client.gui.screens.TitleScreen) {
                             settle[0] = 0;
                             phase[0] = 3;
                         }
@@ -222,7 +209,7 @@ public class VoxyClient implements ClientModInitializer {
                         Logger.info("[VOXY_DEBUG_REJOIN] rejoining '" + rejoinWorld + "'");
                         // Same call vanilla QuickPlay.joinSingleplayerWorld makes:
                         client.createWorldOpenFlows().openWorld(rejoinWorld,
-                                () -> client.setScreen(new net.minecraft.client.gui.screens.TitleScreen()));
+                                () -> client.gui.setScreen(new net.minecraft.client.gui.screens.TitleScreen()));
                     }
                     default -> {}
                 }

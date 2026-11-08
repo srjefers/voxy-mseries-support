@@ -102,12 +102,10 @@ public final class IrisGbufferInjector {
         if (!(pipeline instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline irisPipeline)) {
             return false;
         }
-        var programs = irisPipeline.getSodiumPrograms();
-        if (programs == null) {
-            return false;
-        }
-        net.irisshaders.iris.gl.framebuffer.GlFramebuffer framebuffer =
-                programs.getFramebuffer(DefaultTerrainRenderPasses.SOLID);
+        // Iris 1.11 (26.3) dropped getSodiumPrograms(); until the SOLID gbuffer
+        // framebuffer is reachable again, injection is off and LODs stay hidden
+        // under an active shader pack.
+        net.irisshaders.iris.gl.framebuffer.GlFramebuffer framebuffer = null;
         if (framebuffer == null) {
             return false;
         }
@@ -149,7 +147,7 @@ public final class IrisGbufferInjector {
             // (which ends at renderDistance << frac*far), still < 1.0 for the
             // pack's sky test, but outside the saturated fog band.
             // VOXY_IRIS_DEPTH_CLAMP_FRAC tunes (default 0.75).
-            float mcFar = net.minecraft.client.Minecraft.getInstance().gameRenderer.getDepthFar();
+            float mcFar = (me.cortex.voxy.client.core.VoxyRenderSystem.getVanillaRenderDistance() * 4.0f);
             org.joml.Vector4f clampPoint = new org.joml.Vector4f(0, 0, -DEPTH_CLAMP_FRAC * mcFar, 1)
                     .mul(viewport.vanillaProjection);
             float maxNdcZ = clampPoint.z / clampPoint.w;

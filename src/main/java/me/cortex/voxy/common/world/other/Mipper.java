@@ -10,6 +10,10 @@ public class Mipper {
 
     //TODO: also pass in the level its mipping from, cause at lower levels you want to preserve block details
     // but at higher details you want more air
+
+
+
+    //TODO: instead of opacity only, add a level to see if the visual bounding box allows for seeing through top down etc
     public static long mip(long I000, long I100, long I001, long I101,
                            long I010, long I110, long I011, long I111,
                           Mapper mapper) {
@@ -70,10 +74,10 @@ public class Mipper {
                     (Mapper.getLightId(I100) & 0xF0) + (Mapper.getLightId(I101) & 0xF0) + (Mapper.getLightId(I110) & 0xF0) + (Mapper.getLightId(I111) & 0xF0);
             int skyLight = (Mapper.getLightId(I000) & 0x0F) + (Mapper.getLightId(I001) & 0x0F) + (Mapper.getLightId(I010) & 0x0F) + (Mapper.getLightId(I011) & 0x0F) +
                     (Mapper.getLightId(I100) & 0x0F) + (Mapper.getLightId(I101) & 0x0F) + (Mapper.getLightId(I110) & 0x0F) + (Mapper.getLightId(I111) & 0x0F);
-            blockLight = blockLight / 8;
+            blockLight = (blockLight / 8) & 0xF0;
             skyLight = (int) Math.ceil((double) skyLight / 8);
 
-            return withLight(I111, (blockLight << 4) | skyLight);
+            return withLight(I111, blockLight | skyLight);
         }
     }
 }

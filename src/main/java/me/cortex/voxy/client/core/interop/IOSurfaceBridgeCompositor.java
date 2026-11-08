@@ -231,7 +231,7 @@ public final class IOSurfaceBridgeCompositor {
         glActiveTexture(prevActiveTex0);
 
         var mc = Minecraft.getInstance();
-        var mainRT = mc.getMainRenderTarget();
+        var mainRT = mc.gameRenderer.mainRenderTarget();
         int fbw = mainRT.width;
         int fbh = mainRT.height;
 
@@ -768,44 +768,49 @@ public final class IOSurfaceBridgeCompositor {
     }
 
     /**
-     * Resolve the GL framebuffer id backing MC's main RenderTarget. MC 1.21+
-     * doesn't expose this directly; we go through the color GpuTexture which
-     * on the GL backend is a {@code com.mojang.blaze3d.opengl.GlTexture}
-     * with a private {@code firstFboId}. Cached after first successful read.
+     * GL framebuffer over MC's main RenderTarget. 26.3's renderpearl keeps its
+     * FBOs in a private FrameBufferCache, so instead of reading MC internals we
+     * build our own FBO around the target's color + depth textures (public
+     * {@code glId()}), rebuilt whenever MC reallocates them (resize).
      */
     private static int cachedMcMainFbo = -1;
-    private static Object cachedMcMainColorTex;
-    private static java.lang.reflect.Field firstFboIdField;
+    private static int cachedMcColorId = -1;
+    private static int cachedMcDepthId = -1;
     private static int resolveMcMainFbo(com.mojang.blaze3d.pipeline.RenderTarget mainRT) {
         try {
-            Object colorTex = mainRT.getColorTexture();
-            if (colorTex == null) return cachedMcMainFbo;
-            if (colorTex == cachedMcMainColorTex && cachedMcMainFbo > 0) {
+            if (!(mainRT.getColorTexture() instanceof com.mojang.renderpearl.backend.opengl.GlTexture color)) {
                 return cachedMcMainFbo;
             }
-            cachedMcMainColorTex = colorTex;
-            if (firstFboIdField == null
-                    || !firstFboIdField.getDeclaringClass().isInstance(colorTex)) {
-                Class<?> c = colorTex.getClass();
-                while (c != null && c != Object.class) {
-                    try {
-                        firstFboIdField = c.getDeclaredField("firstFboId");
-                        firstFboIdField.setAccessible(true);
-                        break;
-                    } catch (NoSuchFieldException ignored) {
-                        c = c.getSuperclass();
-                    }
-                }
-                if (firstFboIdField == null) {
-                    Logger.warn("IOSurfaceBridgeCompositor: could not locate firstFboId on " + colorTex.getClass().getName());
-                    return cachedMcMainFbo;
-                }
+            int colorId = color.glId();
+            int depthId = mainRT.getDepthTexture() instanceof com.mojang.renderpearl.backend.opengl.GlTexture depth ? depth.glId() : 0;
+            if (cachedMcMainFbo > 0 && colorId == cachedMcColorId && depthId == cachedMcDepthId) {
+                return cachedMcMainFbo;
             }
-            int fbo = firstFboIdField.getInt(colorTex);
-            if (fbo > 0) {
-                cachedMcMainFbo = fbo;
+            if (cachedMcMainFbo > 0) {
+                org.lwjgl.opengl.GL30C.glDeleteFramebuffers(cachedMcMainFbo);
+                cachedMcMainFbo = -1;
             }
-            return cachedMcMainFbo;
+            int prevFb = glGetInteger(org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_BINDING);
+            int fbo = org.lwjgl.opengl.GL30C.glGenFramebuffers();
+            glBindFramebuffer(org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER, fbo);
+            org.lwjgl.opengl.GL30C.glFramebufferTexture2D(org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER,
+                    org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, colorId, 0);
+            if (depthId != 0) {
+                org.lwjgl.opengl.GL30C.glFramebufferTexture2D(org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER,
+                        org.lwjgl.opengl.GL30C.GL_DEPTH_ATTACHMENT, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, depthId, 0);
+            }
+            int status = org.lwjgl.opengl.GL30C.glCheckFramebufferStatus(org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER);
+            glBindFramebuffer(org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER, prevFb);
+            if (status != org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_COMPLETE) {
+                Logger.warn("IOSurfaceBridgeCompositor: MC mainRT FBO incomplete (status=0x" + Integer.toHexString(status) + ")");
+                org.lwjgl.opengl.GL30C.glDeleteFramebuffers(fbo);
+                return -1;
+            }
+            cachedMcMainFbo = fbo;
+            cachedMcColorId = colorId;
+            cachedMcDepthId = depthId;
+            Logger.info("IOSurfaceBridgeCompositor: built MC mainRT FBO " + fbo + " (color=" + colorId + ", depth=" + depthId + ")");
+            return fbo;
         } catch (Throwable t) {
             Logger.warn("IOSurfaceBridgeCompositor: failed to resolve MC mainRT FBO", t);
             return cachedMcMainFbo;

@@ -1,20 +1,10 @@
+#import <voxy:lod/pos_util.glsl>
+#import <voxy:lod/lighting.glsl>
 //Common utility functions for decoding and operating on quads
 
 vec3 swizzelDataAxis(uint axis, vec3 data) {
     //Metal fix: bool-select mix() overload miscompiles via SPIRV-Cross MSL (see frustum.glsl)
     return axis==1 ? data : (axis==0 ? data.xzy : data.zxy);
-}
-
-uint extractDetail(uvec2 encPos) {
-    return encPos.x>>28;
-}
-
-ivec3 extractLoDPosition(uvec2 encPos) {
-    //Metal fix: (v<<L)>>R sign-extension shifts miscompile via SPIR-V->MSL (see screenspace.glsl); bitfieldExtract is well-defined
-    int y = bitfieldExtract(int(encPos.x), 20, 8);
-    int x = bitfieldExtract(int(encPos.y), 4, 24);
-    int z = bitfieldExtract(int(((encPos.x&((1u<<20)-1))<<4)|(encPos.y>>28)), 0, 24);
-    return ivec3(x,y,z);
 }
 
 vec4 getFaceSize(uint faceData) {
@@ -160,10 +150,10 @@ uvec3 makeRemainingAttributes(const in BlockModel model, const in Quad quad, uin
 }
 
 void setupQuad(out QuadData quad, const in Quad rawQuad, uvec2 sPos, bool generateAttributes) {
-    uint lodLevel = extractDetail(sPos);
+    uint lodLevel = getLoDLevel(sPos);
     float lodScale = 1<<lodLevel;
-    //Metal fix: '<<' on negative position ints is UB (see screenspace.glsl); use multiplication
-    ivec3 baseSection = (extractLoDPosition(sPos)*(1<<lodLevel)) - baseSectionPos;
+    //Metal fix: '<<' on negative position ints is UB; use multiplication
+    ivec3 baseSection = (getLoDPosition(sPos)*(1<<lodLevel)) - baseSectionPos;
 
     uint face = extractFace(rawQuad);
     uint modelId = extractStateId(rawQuad);

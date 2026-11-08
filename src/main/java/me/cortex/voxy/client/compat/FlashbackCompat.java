@@ -4,7 +4,6 @@ import com.moulberry.flashback.Flashback;
 import com.moulberry.flashback.playback.ReplayServer;
 import com.moulberry.flashback.record.FlashbackMeta;
 import me.cortex.voxy.common.Logger;
-import me.cortex.voxy.common.config.section.SectionStorageConfig;
 import net.fabricmc.loader.api.FabricLoader;
 
 import java.nio.file.Path;

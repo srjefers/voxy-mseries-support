@@ -1,3 +1,4 @@
+#import <voxy:lod/pos_util.glsl>
 /*
 struct SectionMeta {
     uint posA;
@@ -20,15 +21,11 @@ uvec2 extractRawPos(SectionMeta section) {
 }
 
 uint extractDetail(SectionMeta section) {
-    return section.a.x>>28;
+    return getLoDLevel(section.a.xy);
 }
 
 ivec3 extractPosition(SectionMeta section) {
-    //Metal fix: (v<<L)>>R sign-extension shifts miscompile via SPIR-V->MSL (see screenspace.glsl); bitfieldExtract is well-defined
-    int y = bitfieldExtract(int(section.a.x), 20, 8);
-    int x = bitfieldExtract(int(section.a.y), 4, 24);
-    int z = bitfieldExtract(int(((section.a.x&((1u<<20)-1))<<4)|(section.a.y>>28)), 0, 24);
-    return ivec3(x,y,z);
+    return getLoDPosition(section.a.xy);
 }
 
 uint extractQuadStart(SectionMeta meta) {

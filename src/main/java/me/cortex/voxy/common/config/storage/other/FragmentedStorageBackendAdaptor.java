@@ -9,6 +9,7 @@ import me.cortex.voxy.common.config.storage.StorageBackend;
 import me.cortex.voxy.common.config.storage.StorageConfig;
 import me.cortex.voxy.common.util.MemoryBuffer;
 import net.minecraft.world.level.levelgen.RandomSupport;
+
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -33,9 +34,9 @@ public class FragmentedStorageBackendAdaptor extends StorageBackend {
     }
 
     @Override
-    public void iterateStoredSectionPositions(LongConsumer consumer) {
+    public void iteratePositions(int level, LongConsumer consumer) {
         for (var backend : this.backends) {
-            backend.iterateStoredSectionPositions(consumer);
+            backend.iteratePositions(level, consumer);
         }
     }
 

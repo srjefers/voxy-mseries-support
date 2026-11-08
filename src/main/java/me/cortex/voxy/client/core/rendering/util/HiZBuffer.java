@@ -1,5 +1,6 @@
 package me.cortex.voxy.client.core.rendering.util;
 
+import me.cortex.voxy.client.core.RenderProperties;
 import me.cortex.voxy.client.core.gl.shader.ShaderLoader;
 import me.cortex.voxy.client.core.gpu.GraphicsPipelineDesc;
 import me.cortex.voxy.client.core.gpu.IGpuFramebuffer;
@@ -62,13 +63,15 @@ public class HiZBuffer {
     private int levels;
     private int width;
     private int height;
+    private final RenderProperties properties;
 
-    public HiZBuffer() {
-        this(GL_DEPTH24_STENCIL8);
+    public HiZBuffer(RenderProperties properties) {
+        this(properties, GL_DEPTH24_STENCIL8);
     }
 
-    public HiZBuffer(int type) {
+    public HiZBuffer(RenderProperties properties, int type) {
         this.type = type;
+        this.properties = properties;
         // Depth-only pass: ALWAYS pass + write depth, no blend, no cull,
         // empty vertex layout (gl_VertexID-driven fullscreen quad).
         PipelineState state = new PipelineState(
@@ -78,7 +81,7 @@ public class HiZBuffer {
         this.blitPipeline = this.backend.createGraphicsPipeline(new GraphicsPipelineDesc(
                 ShaderLoader.parse("voxy:hiz/blit.vsh"),
                 ShaderLoader.parse("voxy:hiz/blit.fsh"),
-                null,                       // no defines
+                properties.defineMap(),
                 null, null,                  // no MSL
                 null, null,                  // no SPIRV
                 0,                           // no color format — depth-only pass

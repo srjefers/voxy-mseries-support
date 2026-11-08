@@ -30,10 +30,10 @@ import java.util.function.BooleanSupplier;
 public class MetalVxRenderPipeline extends NormalRenderPipeline {
     private final IrisVoxyRenderPipelineData pipelineData;
 
-    public MetalVxRenderPipeline(IrisVoxyRenderPipelineData data,
+    public MetalVxRenderPipeline(RenderProperties properties, IrisVoxyRenderPipelineData data,
                                  AsyncNodeManager nodeManager, NodeCleaner nodeCleaner,
                                  HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier) {
-        super(nodeManager, nodeCleaner, traversal, frexSupplier);
+        super(properties, nodeManager, nodeCleaner, traversal, frexSupplier);
         this.pipelineData = data;
     }
 

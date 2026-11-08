@@ -269,9 +269,58 @@ public class ChunkBoundRenderer {
         MIRROR_TRANS_ONLY.remove(pos);
     }
 
+    /**
+     * Newly built sections wait here until Sodium actually draws them. Masking a
+     * section the moment it is built leaves a frame or two where neither the LOD
+     * nor the real chunk is on screen (the load-in flash at the render-distance edge).
+     */
+    private static final it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap PENDING = new it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap();
+    private static final it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap READY = new it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap();
+
+    public static synchronized void pendingPut(long pos, boolean hasOpaque) {
+        if (READY.containsKey(pos)) {
+            READY.put(pos, hasOpaque);
+        } else {
+            PENDING.put(pos, hasOpaque);
+        }
+    }
+
+    public static synchronized void pendingRemove(long pos) {
+        PENDING.remove(pos);
+        READY.remove(pos);
+    }
+
+    /** Called for every section Sodium collects for rendering this frame (may be off-thread). */
+    public static synchronized void markDrawn(long pos) {
+        if (PENDING.isEmpty() || !PENDING.containsKey(pos)) {
+            return;
+        }
+        READY.put(pos, PENDING.remove(pos));
+    }
+
+    /** Render thread: move sections Sodium has started drawing into the mask. */
+    public void drainReady() {
+        synchronized (ChunkBoundRenderer.class) {
+            if (READY.isEmpty()) {
+                return;
+            }
+            for (var e : READY.long2BooleanEntrySet()) {
+                mirrorAdd(e.getLongKey(), e.getBooleanValue());
+                this.addSection(e.getLongKey(), e.getBooleanValue());
+            }
+            READY.clear();
+        }
+    }
+
+    public static synchronized boolean mirrorContains(long pos) {
+        return MIRROR_OPAQUE.contains(pos) || MIRROR_TRANS_ONLY.contains(pos);
+    }
+
     public static synchronized void mirrorReset() {
         MIRROR_OPAQUE.clear();
         MIRROR_TRANS_ONLY.clear();
+        PENDING.clear();
+        READY.clear();
     }
 
     /**
@@ -474,7 +523,7 @@ public class ChunkBoundRenderer {
                 (float) (viewport.cameraY - sy),
                 (float) (viewport.cameraZ - sz));
         negInnerSec.getToAddress(ptr + 80);
-        float renderDistance = Math.max(Minecraft.getInstance().gameRenderer.getRenderDistance(), 20 * 16);
+        float renderDistance = Math.max(me.cortex.voxy.client.core.VoxyRenderSystem.getVanillaRenderDistance(), 20 * 16);
         MemoryUtil.memPutFloat(ptr + 92, renderDistance);
 
         var mvp = viewport.MVP.translate(negInnerSec.negate(), new Matrix4f());

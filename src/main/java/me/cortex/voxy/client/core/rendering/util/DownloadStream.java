@@ -176,8 +176,10 @@ public class DownloadStream {
         UploadStream.flushBackendFences();
         var fence = RenderBackendFactory.get().createFence();
         glFinish();
-        while (!fence.signaled())
+        while (!fence.signaled()) {
+            glFinish();
             Thread.onSpinWait();
+        }
         fence.free();
         this.tick();
         if (!this.frames.isEmpty()) {

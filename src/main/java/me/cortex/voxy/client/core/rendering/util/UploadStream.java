@@ -5,6 +5,10 @@ import me.cortex.voxy.client.core.gpu.IGpuBuffer;
 import me.cortex.voxy.client.core.gpu.IGpuFence;
 import me.cortex.voxy.client.core.gpu.IGpuPersistentBuffer;
 import me.cortex.voxy.client.core.gpu.RenderBackendFactory;
+import me.cortex.voxy.client.core.gl.Capabilities;
+import me.cortex.voxy.client.core.gl.GlBuffer;
+import me.cortex.voxy.client.core.gl.GlFence;
+import me.cortex.voxy.client.core.gl.GlPersistentMappedBuffer;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.util.AllocationArena;
 import me.cortex.voxy.common.util.MemoryBuffer;
@@ -16,9 +20,12 @@ import static me.cortex.voxy.common.util.AllocationArena.SIZE_LIMIT;
 import static org.lwjgl.opengl.ARBMapBufferRange.*;
 import static org.lwjgl.opengl.GL11.glFinish;
 import static org.lwjgl.opengl.GL42C.GL_BUFFER_UPDATE_BARRIER_BIT;
+import static org.lwjgl.opengl.GL44.GL_CLIENT_STORAGE_BIT;
 import static org.lwjgl.opengl.GL44.GL_MAP_COHERENT_BIT;
 
 public class UploadStream {
+    public static final int BASE_ALLOCATION_ALIGNEMENT = Math.max(Capabilities.INSTANCE.ssboBindingAlignment, 16);
+
     private final AllocationArena allocationArena = new AllocationArena();
     private final IGpuPersistentBuffer uploadBuffer;
 
@@ -60,12 +67,14 @@ public class UploadStream {
             throw new IllegalStateException("Negative size");
         }
 
+        //Force natural size alignment, this should ensure that _all_ allocations are aligned to this size, note, this only effects the allocation block
+        // not how much data is moved or copied
+        size = alignUp(size, BASE_ALLOCATION_ALIGNEMENT);
+        //size = (size+15)&~15;//Alignment to 16 bytes
+
         if (size > this.uploadBuffer.size()) {
             throw new IllegalArgumentException();
         }
-        //Force natural size alignment, this should ensure that _all_ allocations are aligned to this size, note, this only effects the allocation block
-        // not how much data is moved or copied
-        size = (size+15)&~15;//Alignment to 16 bytes
 
         long addr;
         if (this.caddr == -1 || !this.allocationArena.expand(this.caddr, (int) size)) {
@@ -256,4 +265,13 @@ public class UploadStream {
     // MUST ONLY BE USED ON THE RENDER THREAD
     public static final UploadStream INSTANCE = new UploadStream(1<<26);//64 mb upload buffer
 
+    public static long alignUp(long val, long alignment) {
+        return ((val+alignment-1)/alignment)*alignment;
+    }
+    public static int alignUp(int val, int alignment) {
+        return ((val+alignment-1)/alignment)*alignment;
+    }
+    public static int alignUpAlloc(int val) {
+        return ((val+BASE_ALLOCATION_ALIGNEMENT-1)/BASE_ALLOCATION_ALIGNEMENT)*BASE_ALLOCATION_ALIGNEMENT;
+    }
 }

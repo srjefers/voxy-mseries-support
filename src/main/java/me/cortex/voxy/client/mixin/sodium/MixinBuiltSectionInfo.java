@@ -31,7 +31,7 @@ public class MixinBuiltSectionInfo implements IVoxyBuiltSectionInfo {
                                     Collection<BlockEntity> globalBlockEntities,
                                     Collection<BlockEntity> culledBlockEntities,
                                     Collection<TextureAtlasSprite> animatedSprites,
-                                    VisibilitySet occlusionData,
+                                    VisibilitySet[] occlusionData,
                                     CallbackInfo ci) {
         // SOLID only (not translucent, no fragment discard). CUTOUT passes
         // must NOT count as opaque: an open-ocean surface section whose only

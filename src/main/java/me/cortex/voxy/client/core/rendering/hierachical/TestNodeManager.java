@@ -192,7 +192,7 @@ public class TestNodeManager {
             if (geometrySize != 0) {
                 buff = new MemoryBuffer(geometrySize);
             }
-            var builtGeometry = new BuiltSection(pos, (byte) childExistence, -2, buff, null);
+            var builtGeometry = new BuiltSection(pos, (byte) childExistence, -2, buff, null, null);
             this.nodeManager.processGeometryResult(builtGeometry);
         }
 

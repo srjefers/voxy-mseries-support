@@ -61,9 +61,13 @@ public class LightMapHelper {
     private static int lastSyncedFrame = -1;
     private static boolean lightmapSizeWarned = false;
 
+    public static int getLightmapTextureId() {
+        return ((com.mojang.renderpearl.backend.opengl.GlTexture)(Minecraft.getInstance().gameRenderer.levelLightmap().texture())).glId();
+    }
+
     public static void bind(int lightingIndex) {
         glBindSampler(lightingIndex, 0);
-        bindTextureUnit(lightingIndex, ((com.mojang.blaze3d.opengl.GlTexture)(Minecraft.getInstance().gameRenderer.lightTexture().getTextureView().texture())).glId());
+        bindTextureUnit(lightingIndex, ((com.mojang.renderpearl.backend.opengl.GlTexture)(Minecraft.getInstance().gameRenderer.levelLightmap().texture())).glId());
     }
 
     /**
@@ -118,8 +122,8 @@ public class LightMapHelper {
         if (frameId == lastSyncedFrame) return;
         lastSyncedFrame = frameId;
 
-        var lightTex = Minecraft.getInstance().gameRenderer.lightTexture().getTextureView().texture();
-        int glId = ((com.mojang.blaze3d.opengl.GlTexture) lightTex).glId();
+        var lightTex = Minecraft.getInstance().gameRenderer.levelLightmap().texture();
+        int glId = ((com.mojang.renderpearl.backend.opengl.GlTexture) lightTex).glId();
 
         int prevActive = glGetInteger(GL_ACTIVE_TEXTURE);
         glActiveTexture(GL_TEXTURE0);

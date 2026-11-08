@@ -4,6 +4,15 @@
 // GL_ARB_shader_draw_parameters as an extension at earlier versions.
 #extension GL_ARB_gpu_shader_int64 : enable
 
+#ifdef GL_ARB_gpu_shader_int64
+#define QUAD_DATA_USE_64_BIT
+#endif
+
+
+#ifdef USE_NV_JANK
+#extension GL_NV_gpu_shader5 : enable
+#endif
+
 #define QUAD_BUFFER_BINDING 1
 #define MODEL_BUFFER_BINDING 3
 #define MODEL_COLOUR_BUFFER_BINDING 4
@@ -36,6 +45,13 @@ layout(location = 1) out vec2 uv;
 layout(binding = 6, std140) uniform VoxyMetalPerDrawUBO {
     uint voxyMetalDrawIndex;
 };
+#endif
+#ifdef USE_NV_JANK
+#ifdef GL_NV_gpu_shader5
+out gl_PerVertex {
+    f16vec4 gl_Position;
+};
+#endif
 #endif
 
 #ifdef DEBUG_RENDER
@@ -94,7 +110,15 @@ void main() {
     setupQuad(quad, quadData[uint(gl_VertexID)>>2], positionBuffer[baseInstanceFix], (gl_VertexID&3) == 1);
 
     uint cornerId = gl_VertexID&3;
-    gl_Position = getQuadCornerPos(quad, cornerId);
+
+    gl_Position =
+    #ifdef USE_NV_JANK
+    #ifdef GL_NV_gpu_shader5
+    f16vec4
+    #endif
+    #endif
+    (getQuadCornerPos(quad, cornerId));
+
 
 #ifdef VOXY_WATER_DEPTH_BIAS
     // Translucent LOD water only (this define is injected into the translucent
@@ -129,7 +153,8 @@ void main() {
     #endif
 
     #ifdef DEBUG_RENDER
-    quadDebug = uint(gl_VertexID)>>(2+5);
+    //quadDebug = uint(extractDetail(pos));
+    quadDebug = uint(gl_VertexID)>>2;
     #endif
 }
 

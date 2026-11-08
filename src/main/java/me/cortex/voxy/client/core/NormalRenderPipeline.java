@@ -6,16 +6,17 @@ import me.cortex.voxy.client.core.gl.shader.ShaderType;
 import me.cortex.voxy.client.core.gpu.IGpuFramebuffer;
 import me.cortex.voxy.client.core.gpu.IGpuTexture;
 import me.cortex.voxy.client.core.gpu.RenderBackendFactory;
+import me.cortex.voxy.client.core.gl.GlFramebuffer;
+import me.cortex.voxy.client.core.gl.GlTexture;
 import me.cortex.voxy.client.core.rendering.Viewport;
 import me.cortex.voxy.client.core.rendering.hierachical.AsyncNodeManager;
 import me.cortex.voxy.client.core.rendering.hierachical.HierarchicalOcclusionTraverser;
 import me.cortex.voxy.client.core.rendering.hierachical.NodeCleaner;
 import me.cortex.voxy.client.core.rendering.post.FullscreenBlit;
-import me.cortex.voxy.client.core.rendering.util.DepthFramebuffer;
-import net.minecraft.client.Minecraft;
+import me.cortex.voxy.client.core.util.GPUTiming;
 import org.joml.Matrix4f;
-import org.lwjgl.system.MemoryStack;
 
+import java.util.List;
 import java.util.function.BooleanSupplier;
 
 import static org.lwjgl.opengl.ARBComputeShader.glDispatchCompute;
@@ -41,43 +42,54 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
     private IGpuTexture colourSSAOTex;
     private final IGpuFramebuffer fbSSAO = RenderBackendFactory.get().createFramebuffer();
 
-    private final boolean useEnvFog;
+    private final FogMode fogMode;
     private final FullscreenBlit finalBlit;
 
-    private final Shader ssaoCompute = Shader.make()
-            .add(ShaderType.COMPUTE, "voxy:post/ssao.comp")
-            .compile();
+    private final SSAO ssao;
+
+    private final boolean useEnvFog;
 
     @Override
     public boolean useEnvFog() {
         return this.useEnvFog;
     }
 
-    protected NormalRenderPipeline(AsyncNodeManager nodeManager, NodeCleaner nodeCleaner, HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier) {
-        super(nodeManager, nodeCleaner, traversal, frexSupplier, false);
-        // Metal + Iris-pack gbuffer injection: the pack's own fog/composite
-        // shades the injected LOD pixels, so Voxy's per-fragment env fog
-        // would double-fog them (and its colour wouldn't match the pack's).
-        // Pack state is baked at construction — quads.frag's USE_ENV_FOG is a
-        // compile-time define — and VoxyRenderSystem watches for a pack
-        // toggle and recreates the renderer (same path as the config toggle).
+    public enum FogMode {
+        FOG_AND_FADE(false, true, true),
+        FOG(false, true, false),
+        FADE(true, false, true),
+        OFF(true, false, false);
+        public final boolean removesVanillaEnvFog;
+        public final boolean hasFog;
+        public final boolean hasFade;
+
+        FogMode(boolean removesVanillaEnvFog, boolean hasFog, boolean hasFade) {
+            this.removesVanillaEnvFog = removesVanillaEnvFog;
+            this.hasFog = hasFog;
+            this.hasFade = hasFade;
+        }
+    }
+
+    protected NormalRenderPipeline(RenderProperties properties, AsyncNodeManager nodeManager, NodeCleaner nodeCleaner, HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier) {
+        super(properties, nodeManager, nodeCleaner, traversal, frexSupplier, false);
+        this.fogMode = VoxyConfig.CONFIG.getFogMode();
+        // Metal + Iris gbuffer injection: the pack fogs the injected LODs itself.
         boolean metal = RenderBackendFactory.get().getType()
                 != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
-        this.useEnvFog = VoxyConfig.CONFIG.useEnvironmentalFog
+        this.useEnvFog = this.fogMode.hasFog
                 && !(metal && (me.cortex.voxy.client.core.util.IrisUtil.irisGbufferInjectMode()
                         || me.cortex.voxy.client.core.util.IrisUtil.vxContractActive()));
-        // M9 migration: defines now flow through a Map<String,String> so the
-        // backend-agnostic GraphicsPipelineDesc can forward them to GL,
-        // Metal, and Vulkan compile paths uniformly.
-        java.util.Map<String, String> defines = new java.util.LinkedHashMap<>();
-        defines.put("EMIT_COLOUR", "");
-        if (this.useEnvFog) defines.put("USE_ENV_FOG", "");
-        this.finalBlit = new FullscreenBlit("voxy:post/fullscreen.vert",
-                "voxy:post/blit_texture_depth_cutout.frag", defines);
+        this.finalBlit = new FullscreenBlit(properties, "voxy:post/blit_texture_depth_cutout.frag",
+                a->a.defineIf("HAS_FOG", this.fogMode.hasFog)
+                        .defineIf("HAS_FADE", this.fogMode.hasFade).define("EMIT_COLOUR"));
+
+
+        // SSAO is a GL compute pass; not ported to Metal yet.
+        this.ssao = metal ? null : SSAO.createSSAO(properties, VoxyConfig.CONFIG.getSSAOMode());
     }
 
     @Override
-    protected int setup(Viewport<?> viewport, int sourceFB, int srcWidth, int srcHeight) {
+    protected int setup(Viewport<?> viewport, int sourceDepthTex, int srcWidth, int srcHeight) {
         if (this.colourTex == null || this.colourTex.getHeight() != viewport.height || this.colourTex.getWidth() != viewport.width) {
             if (this.colourTex != null) {
                 this.colourTex.free();
@@ -99,29 +111,14 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
             textureParameterf(this.fb.getDepthTex().id(), GL_TEXTURE_2D, GL_DEPTH_STENCIL_TEXTURE_MODE, GL_DEPTH_COMPONENT);
         }
 
-        this.initDepthStencil(sourceFB, this.fb.framebuffer.id(), viewport.width, viewport.height, viewport.width, viewport.height);
-
+        this.initDepthStencil(viewport, sourceDepthTex, this.fb.framebuffer.id(), srcWidth, srcHeight, viewport.width, viewport.height);
         return this.fb.getDepthTex().id();
     }
 
     @Override
-    protected void postOpaquePreTranslucent(Viewport<?> viewport) {
-        this.ssaoCompute.bind();
-        try (var stack = MemoryStack.stackPush()) {
-            long ptr = stack.nmalloc(4*4*4);
-            viewport.MVP.getToAddress(ptr);
-            nglUniformMatrix4fv(3, 1, false, ptr);//MVP
-            viewport.MVP.invert(new Matrix4f()).getToAddress(ptr);
-            nglUniformMatrix4fv(4, 1, false, ptr);//invMVP
-        }
-
-
-        glBindImageTexture(0, this.colourSSAOTex.id(), 0, false,0, GL_READ_WRITE, GL_RGBA8);
-        bindTextureUnit(1, GL_TEXTURE_2D, this.fb.getDepthTex().id());
-        bindTextureUnit(2, GL_TEXTURE_2D, this.colourTex.id());
-
-        glDispatchCompute((viewport.width+31)/32, (viewport.height+31)/32, 1);
-
+    protected void postOpaquePreTranslucent(Viewport<?> viewport, int sourceDepthTexture) {
+        GPUTiming.INSTANCE.marker("ao");
+        this.ssao.computeSSAO(viewport, (GlTexture) this.colourSSAOTex, (GlTexture) this.colourTex, (GlTexture) this.fb.getDepthTex(), sourceDepthTexture);
         glBindFramebuffer(GL_FRAMEBUFFER, this.fbSSAO.id());
     }
 
@@ -130,43 +127,50 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
     private static final int FOG_PUSH_SIZE = 4 * 4 * 2;
 
     @Override
-    protected void finish(Viewport<?> viewport, int sourceFrameBuffer, int srcWidth, int srcHeight) {
+    protected void finish(Viewport<?> viewport, int sourceDepthTexture, int outputFramebuffer, int srcWidth, int srcHeight) {
         this.finalBlit.bind();
-        if (this.useEnvFog) {
+        boolean fogCoversAllRendering = viewport.fogParameters.environmentalEnd()<VoxyRenderSystem.getVanillaRenderDistance();
+
+        if (this.fogMode.hasFog) {
             float start = viewport.fogParameters.environmentalStart();
             float end = viewport.fogParameters.environmentalEnd();
-            try (var stack = MemoryStack.stackPush()) {
-                long addr = stack.nmalloc(FOG_PUSH_SIZE);
-                if (Math.abs(end - start) > 1) {
-                    float invEndFogDelta = 1f / (end - start);
-                    float endDistance = Math.max(Minecraft.getInstance().gameRenderer.getRenderDistance(), 20 * 16);//TODO: make this constant a config option
-                    endDistance *= (float) Math.sqrt(3);
-                    float startDelta = -start * invEndFogDelta;
-                    // endParams vec4
-                    org.lwjgl.system.MemoryUtil.memPutFloat(addr +  0, invEndFogDelta);
-                    org.lwjgl.system.MemoryUtil.memPutFloat(addr +  4, startDelta);
-                    org.lwjgl.system.MemoryUtil.memPutFloat(addr +  8, Math.clamp(endDistance * invEndFogDelta + startDelta, 0f, 1f));
-                    org.lwjgl.system.MemoryUtil.memPutFloat(addr + 12, 0f);
-                    // fogColour vec4
-                    org.lwjgl.system.MemoryUtil.memPutFloat(addr + 16, viewport.fogParameters.red());
-                    org.lwjgl.system.MemoryUtil.memPutFloat(addr + 20, viewport.fogParameters.green());
-                    org.lwjgl.system.MemoryUtil.memPutFloat(addr + 24, viewport.fogParameters.blue());
-                    org.lwjgl.system.MemoryUtil.memPutFloat(addr + 28, viewport.fogParameters.alpha());
-                } else {
-                    org.lwjgl.system.MemoryUtil.memSet(addr, 0, FOG_PUSH_SIZE);
-                }
-                this.finalBlit.setBytes(PUSH_FOG_BINDING, addr, FOG_PUSH_SIZE);
+            if (Math.abs(end-start)>1) {
+                float invEndFogDelta = 1f / (end - start);
+                float endDistance = Math.max(VoxyRenderSystem.getVanillaRenderDistance(), 20*16);//TODO: make this constant a config option
+                endDistance *= (float)Math.sqrt(3);
+                float startDelta = -start * invEndFogDelta;
+                glUniform4f(4, invEndFogDelta, startDelta, Math.clamp(endDistance*invEndFogDelta+startDelta, 0, 1),0);//
+                glUniform4f(5, viewport.fogParameters.red(), viewport.fogParameters.green(), viewport.fogParameters.blue(), viewport.fogParameters.alpha());
+            } else {
+                glUniform4f(4, 0, 0, 0, 0);
+                glUniform4f(5, 0, 0, 0, 0);
             }
+        }
+        if (this.fogMode.hasFade) {
+            //TODO: this should be a compile time define
+            int MODE = 1;//0:off, 1:xz, 2:xyz
+            float rd = VoxyConfig.CONFIG.sectionRenderDistance*16*32 - (float)Math.sqrt(MODE>1?32*32*32:32*32);
+            float vanillaRd = VoxyRenderSystem.getVanillaRenderDistance();
+            float start = Math.max(vanillaRd, rd*0.9f);//start at 90% of the render distance (10% fade distance)
+            float end = Math.max(vanillaRd, rd);
+
+            float scale = 1.0f/(end-start);
+            glUniform4f(6, MODE, (-start)*scale, scale, 0);
         }
 
         bindTextureUnit(3, GL_TEXTURE_2D, this.colourSSAOTex.id());
 
         //Do alpha blending
-
-        glEnable(GL_BLEND);
-        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-        AbstractRenderPipeline.transformBlitDepth(this.finalBlit, this.fb.getDepthTex().id(), sourceFrameBuffer, viewport, new Matrix4f(viewport.vanillaProjection).mul(viewport.modelView));
-        glDisable(GL_BLEND);
+        //Unbelievably jank hack, only blit out to the framebuffer if we are rendering fog
+        if (!fogCoversAllRendering) {
+            glEnable(GL_BLEND);
+            glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            AbstractRenderPipeline.transformBlitDepth(this.finalBlit, this.fb.getDepthTex().id(), outputFramebuffer, viewport, new Matrix4f(viewport.vanillaProjection).mul(viewport.modelView));
+            glDisable(GL_BLEND);
+        } else {
+            glDisable(GL_STENCIL_TEST);
+            glDisable(GL_DEPTH_TEST);
+        }
         //glBlitNamedFramebuffer(this.fbSSAO.id, sourceFrameBuffer, 0,0, viewport.width, viewport.height, 0,0, viewport.width, viewport.height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     }
 
@@ -183,12 +187,18 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
     @Override
     public void free() {
         this.finalBlit.delete();
-        this.ssaoCompute.free();
+        if (this.ssao != null) this.ssao.free();
         this.fbSSAO.free();
         if (this.colourTex != null) {
             this.colourTex.free();
             this.colourSSAOTex.free();
         }
         super.free0();
+    }
+
+    @Override
+    public void addDebug(List<String> debug) {
+        super.addDebug(debug);
+        if (this.ssao != null) this.ssao.addDebugInfo(debug);
     }
 }

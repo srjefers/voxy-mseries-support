@@ -11,7 +11,7 @@ import java.lang.invoke.VarHandle;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class WorldEngine {
+public final class WorldEngine {
     public static final int MAX_LOD_LAYER = 4;
 
     public static final int UPDATE_TYPE_BLOCK_BIT = 1;
@@ -20,7 +20,7 @@ public class WorldEngine {
     public static final int DEFAULT_UPDATE_FLAGS = UPDATE_TYPE_BLOCK_BIT | UPDATE_TYPE_CHILD_EXISTENCE_BIT;
 
     public interface ISectionChangeCallback {void accept(WorldSection section, int updateFlags, int neighborMsk);}
-    public interface ISectionSaveCallback {void save(WorldEngine engine, WorldSection section);}
+    public interface ISectionSaveCallback {boolean save(WorldEngine engine, WorldSection section, boolean nonBlocking, boolean sectionAlreadyAcquired);}
 
     private final TrackedObject thisTracker = TrackedObject.createTrackedObject(this);
 
@@ -59,9 +59,10 @@ public class WorldEngine {
         }
 
         this.storage = storage;
-        this.mapper = new Mapper(this.storage);
         //5 cache size bits means that the section tracker has 32 separate maps that it uses
         this.sectionTracker = new ActiveSectionTracker(6, storage::loadSection, cacheSize, this);
+
+        this.mapper = new Mapper(this.storage);
     }
 
     public WorldSection acquireIfExists(int lvl, int x, int y, int z) {
@@ -124,7 +125,7 @@ public class WorldEngine {
         if (this.dirtyCallback != null) {
             this.dirtyCallback.accept(section, changeState, neighborMsk);
         }
-        if ((!section.inSaveQueue)&&(changeState&UPDATE_TYPE_DONT_SAVE)==0) {
+        if ((changeState&UPDATE_TYPE_DONT_SAVE)==0) {
             section.markDirty();
         }
     }
@@ -188,10 +189,14 @@ public class WorldEngine {
         this.lastActiveTime = System.currentTimeMillis();
     }
 
-    public void saveSection(WorldSection section) {
-        section.setNotDirty();
+    public boolean saveSection(WorldSection section) {
+        return this.saveSection(section, false, false);
+    }
+
+    public boolean saveSection(WorldSection section, boolean nonBlocking, boolean sectionAlreadyAcquired) {
         if (this.saveCallback != null) {
-            this.saveCallback.save(this, section);
+            return this.saveCallback.save(this, section, nonBlocking, sectionAlreadyAcquired);
         }
+        return false;
     }
 }

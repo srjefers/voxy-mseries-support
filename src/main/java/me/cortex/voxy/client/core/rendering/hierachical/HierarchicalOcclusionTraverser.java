@@ -3,7 +3,6 @@ package me.cortex.voxy.client.core.rendering.hierachical;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import me.cortex.voxy.client.RenderStatistics;
 import me.cortex.voxy.client.config.VoxyConfig;
-import me.cortex.voxy.client.core.gl.shader.ShaderLoader;
 import me.cortex.voxy.client.core.gpu.ComputeEncoder;
 import me.cortex.voxy.client.core.gpu.ComputePipelineDesc;
 import me.cortex.voxy.client.core.gpu.IGpuBuffer;
@@ -12,6 +11,12 @@ import me.cortex.voxy.client.core.gpu.IGpuSampler;
 import me.cortex.voxy.client.core.gpu.RenderBackend;
 import me.cortex.voxy.client.core.gpu.RenderBackendFactory;
 import me.cortex.voxy.client.core.gpu.SamplerDesc;
+import me.cortex.voxy.client.core.AbstractRenderPipeline;
+import me.cortex.voxy.client.core.gl.GlBuffer;
+import me.cortex.voxy.client.core.gl.shader.AutoBindingShader;
+import me.cortex.voxy.client.core.gl.shader.Shader;
+import me.cortex.voxy.client.core.gl.shader.ShaderLoader;
+import me.cortex.voxy.client.core.gl.shader.ShaderType;
 import me.cortex.voxy.client.core.rendering.Viewport;
 import me.cortex.voxy.client.core.rendering.building.RenderGenerationService;
 import me.cortex.voxy.client.core.rendering.util.DownloadStream;
@@ -30,6 +35,10 @@ import static org.lwjgl.opengl.GL11.GL_UNPACK_ROW_LENGTH;
 import static org.lwjgl.opengl.GL11.GL_UNPACK_SKIP_PIXELS;
 import static org.lwjgl.opengl.GL11.GL_UNPACK_SKIP_ROWS;
 import static org.lwjgl.opengl.GL11.glPixelStorei;
+import java.util.List;
+
+import static me.cortex.voxy.client.core.rendering.util.PrintfDebugUtil.PRINTF_processor;
+import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL12.GL_UNPACK_IMAGE_HEIGHT;
 import static org.lwjgl.opengl.GL12.GL_UNPACK_SKIP_IMAGES;
 
@@ -108,7 +117,9 @@ public class HierarchicalOcclusionTraverser {
             .label("hizSampler")
             .build());
 
-    private final IGpuPipeline traversal;
+    private AbstractRenderPipeline pipeline;
+
+    private IGpuPipeline traversal;
 
     /** Metal/readback diagnostics for the traversal descend request queue. */
     public static final java.util.concurrent.atomic.AtomicLong DIAG_REQUEST_DIRECT_READ_COUNT = new java.util.concurrent.atomic.AtomicLong();
@@ -124,15 +135,22 @@ public class HierarchicalOcclusionTraverser {
         this.requestBuffer = RenderBackendFactory.get().createBuffer(MAX_REQUEST_QUEUE_SIZE * 8L + 8).zero();
         this.nodeBuffer = RenderBackendFactory.get().createBuffer(nodeManager.maxNodeCount * 16L).fill(-1);
 
-        this.traversal = this.backend.createComputePipeline(new ComputePipelineDesc(
-                ShaderLoader.parse("voxy:lod/hierarchical/traversal_dev.comp"),
-                traversalDefines(),
-                null, null,
-                LOCAL_WORK_SIZE, 1, 1,
-                "HierarchicalOcclusionTraverser.traversal"));
 
         this.topNode2idxMapping.defaultReturnValue(-1);
         this.nodeManager.setTLNAddRemoveCallbacks(this::addTLN, this::remTLN);
+    }
+
+    /** Compiled once the pipeline exists, so the traversal picks up its depth convention (reverse-Z etc). */
+    public void lateStageCompile(AbstractRenderPipeline pipeline) {
+        this.pipeline = pipeline;
+        var defines = traversalDefines();
+        defines.putAll(pipeline.properties.defineMap());
+        this.traversal = this.backend.createComputePipeline(new ComputePipelineDesc(
+                ShaderLoader.parse("voxy:lod/hierarchical/traversal_dev.comp"),
+                defines,
+                null, null,
+                LOCAL_WORK_SIZE, 1, 1,
+                "HierarchicalOcclusionTraverser.traversal"));
     }
 
     private static Map<String, String> traversalDefines() {
@@ -391,6 +409,11 @@ public class HierarchicalOcclusionTraverser {
             }
             MemoryUtil.memPutInt(ptr, Math.max(0, Math.min(MAX_REQUEST_QUEUE_SIZE, requestSize))); ptr += 4;
         }
+
+        //Put the render distance here so that it can generate a correct circle, TODO: make it not top level section sized
+        MemoryUtil.memPutFloat(ptr, (float) Math.pow(VoxyConfig.CONFIG.sectionRenderDistance*16*32,2));ptr += 4;
+
+
     }
 
     public void doTraversal(Viewport<?> viewport) {
@@ -601,12 +624,20 @@ public class HierarchicalOcclusionTraverser {
             Logger.error(new IllegalStateException("Count unexpected extreme value: " + count + " things may get weird"));
             return;
         }
-        if (count > (this.requestBuffer.size() >> 3) - 1) {
-            count = (int) ((this.requestBuffer.size() >> 3) - 1);
-            MemoryUtil.memPutInt(ptr - 8, count);
+        if (count > (this.requestBuffer.size()>>3)-1) {
+            //This should not break the synchonization between gpu and cpu as in the traversal shader is
+            // `if (atomRes < REQUEST_QUEUE_SIZE) {` which forcefully clamps to the request size
+
+            //Logger.warn("Count over max buffer size, clamping, got count: " + count + ".");
+
+            count = (int) ((this.requestBuffer.size()>>3)-1);
+
         }
         if (count != 0) {
-            this.nodeManager.submitRequestBatch(new MemoryBuffer(count * 8L + 8).cpyFrom(ptr - 8));
+            var buffer = new MemoryBuffer(count*8L+8).cpyFrom(ptr-8);
+            //Write back the exact count into the new memory buffer (not the download stream buffer)
+            MemoryUtil.memPutInt(buffer.address, count);
+            this.nodeManager.submitRequestBatch(buffer);// the -8 is because we incremented it by 8
         }
     }
 
@@ -615,7 +646,7 @@ public class HierarchicalOcclusionTraverser {
     }
 
     public void free() {
-        this.traversal.close();
+        if (this.traversal != null) this.traversal.close();
         this.requestBuffer.free();
         this.nodeBuffer.free();
         this.uniformBuffer.free();
@@ -625,5 +656,14 @@ public class HierarchicalOcclusionTraverser {
         this.scratchQueueA.free();
         this.scratchQueueB.free();
         this.hizSampler.close();
+    }
+
+    private static final long SCRATCH = MemoryUtil.nmemAlloc(32);//32 bytes of scratch memory
+
+    public void addDebug(List<String> debug) {
+        //Conditionally add debug
+        if (this.topNodeCount>this.idx2topNodeMapping.length/2) {
+            debug.add("TLN#: " + this.topNodeCount);
+        }
     }
 }

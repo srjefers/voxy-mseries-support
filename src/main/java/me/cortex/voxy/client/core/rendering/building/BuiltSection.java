@@ -13,9 +13,10 @@ public final class BuiltSection {
     public final int aabb;
     public final MemoryBuffer geometryBuffer;
     public final int[] offsets;
+    public final MemoryBuffer occupancy;
 
     private BuiltSection(long position, byte children) {
-        this(position, children, -1, null, null);
+        this(position, children, -1, null, null, null);
     }
 
     public static BuiltSection empty(long position) {
@@ -25,7 +26,7 @@ public final class BuiltSection {
         return new BuiltSection(position, children);
     }
 
-    public BuiltSection(long position, byte childExistence, int aabb, MemoryBuffer geometryBuffer, int[] offsets) {
+    public BuiltSection(long position, byte childExistence, int aabb, MemoryBuffer geometryBuffer, int[] offsets, MemoryBuffer occupancy) {
         this.position = position;
         this.childExistence = childExistence;
         this.aabb = aabb;
@@ -39,15 +40,19 @@ public final class BuiltSection {
                 }
             }
         }
+        this.occupancy = occupancy;
     }
 
     public BuiltSection clone() {
-        return new BuiltSection(this.position, this.childExistence, this.aabb, this.geometryBuffer!=null?this.geometryBuffer.copy():null, this.offsets!=null?Arrays.copyOf(this.offsets, this.offsets.length):null);
+        return new BuiltSection(this.position, this.childExistence, this.aabb, this.geometryBuffer!=null?this.geometryBuffer.copy():null, this.offsets!=null?Arrays.copyOf(this.offsets, this.offsets.length):null, this.occupancy!=null?this.occupancy.copy():null);
     }
 
     public void free() {
         if (this.geometryBuffer != null) {
             this.geometryBuffer.free();
+        }
+        if (this.occupancy != null) {
+            this.occupancy.free();
         }
     }
 

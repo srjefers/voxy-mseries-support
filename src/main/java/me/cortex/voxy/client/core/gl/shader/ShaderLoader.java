@@ -1,25 +1,71 @@
 package me.cortex.voxy.client.core.gl.shader;
 
 
-import net.caffeinemc.mods.sodium.client.gl.shader.ShaderConstants;
-import net.caffeinemc.mods.sodium.client.gl.shader.ShaderParser;
+import net.minecraft.resources.Identifier;
+import org.apache.commons.io.IOUtils;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Pattern;
 
 public class ShaderLoader {
     public static String parse(String id) {
-        String src = "#version 460 core\n"+ShaderParser.parseShader("\n#import <" + id + ">\n//beans", ShaderConstants.builder().build()).src().replaceAll("\r\n", "\n").replaceFirst("\n#version .+\n", "\n");
-        // Strip printf calls — same substitution as PrintfDebugUtil.PRINTF_processor
-        // when shader-printf debugging is off (the default). Without this, the
-        // runtime SPIRV/MSL compile path on Metal/Vulkan fails because glslang
-        // rejects `printf(string-literal, ...)` unless GL_EXT_debug_printf is
-        // requested, and Voxy's debug helper functions in node.glsl / queue.glsl
-        // declare them unconditionally. The opt-in
-        // -Dvoxy.enableShaderDebugPrintf=true path keeps the printf calls so
-        // PrintfInjector can transform them downstream.
+        var src =  "#version 460 core\n";
+        src += String.join("\n", ShaderLoadingParser.parseRoot(Identifier.parse(id)));
+        // Metal/Vulkan compile through glslang, which rejects printf unless
+        // GL_EXT_debug_printf is on; strip it unless shader printf debugging is enabled.
         if (!me.cortex.voxy.client.core.rendering.util.PrintfDebugUtil.ENABLE_PRINTF_DEBUGGING) {
             src = src.replace("printf", "//printf");
         }
         return src;
-        //return me.jellysquid.mods.sodium.client.gl.shader.ShaderLoader.getShaderSource(new Identifier(id));
+    }
+
+
+    //Use our own loader
+
+    private static final class ShaderLoadingParser {
+        private static final Pattern IMPORT_PATTERN = Pattern.compile("#import <(?<namespace>.*):(?<path>.*)>");
+        public static List<String> parseRoot(Identifier id) {
+            List<String> out = new ArrayList<>();
+            for (var line : toLines(loadShaderAsset(id))) {
+                if (line.startsWith("#version")) {
+                    continue;
+                } else if (line.startsWith("#import")) {
+                    var match = IMPORT_PATTERN.matcher(line);
+                    if (!match.matches()) throw new IllegalArgumentException("Unknown import: " + line);
+                    var iid = Identifier.fromNamespaceAndPath(match.group("namespace"), match.group("path"));
+                    out.addAll(parseRoot(iid));
+                } else {
+                    out.add(line);
+                }
+            }
+            return out;
+        }
+
+        private static List<String> toLines(String src) {
+            try {
+                return new BufferedReader(new StringReader(src)).readAllLines();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        private static String loadShaderAsset(Identifier id) {
+            String path = String.format("/assets/%s/shaders/%s", id.getNamespace(), id.getPath());
+            try (InputStream in = ShaderLoadingParser.class.getResourceAsStream(path)) {
+                if (in == null) {
+                    throw new RuntimeException("Shader not found: " + path);
+                } else {
+                    return IOUtils.toString(in, StandardCharsets.UTF_8);
+                }
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to read shader source for " + path, e);
+            }
+        }
     }
 
     /**

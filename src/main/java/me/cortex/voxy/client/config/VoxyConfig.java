@@ -3,6 +3,9 @@ package me.cortex.voxy.client.config;
 import com.google.gson.FieldNamingPolicy;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonParseException;
+import me.cortex.voxy.client.core.NormalRenderPipeline;
+import me.cortex.voxy.client.core.SSAO;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.util.cpu.CpuLayout;
 import me.cortex.voxy.commonImpl.VoxyCommon;
@@ -13,6 +16,7 @@ import java.io.IOException;
 import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 
 public class VoxyConfig {
     private static final Gson GSON = new GsonBuilder()
@@ -26,11 +30,38 @@ public class VoxyConfig {
     public boolean enabled = true;
     public boolean enableRendering = true;
     public boolean ingestEnabled = true;
-    public int sectionRenderDistance = 16;
+    public float sectionRenderDistance = 16;
     public int serviceThreads = (int) Math.max(CpuLayout.getCoreCount()/1.5, 1);
     public float subDivisionSize = 64;
-    public boolean useEnvironmentalFog = true;
+    public String fogMode;
     public boolean dontUseSodiumBuilderThreads = false;
+    public String ssaoMode;
+
+    public SSAO.SSAOMode getSSAOMode() {
+        var DEFAULT = SSAO.SSAOMode.AUTO;
+        if (this.ssaoMode == null) return DEFAULT;
+        try {
+            return SSAO.SSAOMode.valueOf(this.ssaoMode.toUpperCase(Locale.ROOT));
+        } catch (Exception e) { return DEFAULT; }
+    }
+
+    public void setSSAOMode(SSAO.SSAOMode mode) {
+        this.ssaoMode = mode.name().toLowerCase(Locale.ROOT);
+    }
+
+
+    public NormalRenderPipeline.FogMode getFogMode() {
+        var DEFAULT = NormalRenderPipeline.FogMode.FOG_AND_FADE;
+        if (this.fogMode == null) return DEFAULT;
+        try {
+            return NormalRenderPipeline.FogMode.valueOf(this.fogMode.toUpperCase(Locale.ROOT));
+        } catch (Exception e) { return DEFAULT;}
+    }
+
+    public void setFogMode(NormalRenderPipeline.FogMode mode) {
+        this.fogMode = mode.name().toLowerCase(Locale.ROOT);
+    }
+
 
     private static VoxyConfig loadOrCreate() {
         if (VoxyCommon.isAvailable()) {
@@ -45,8 +76,13 @@ public class VoxyConfig {
                         Logger.error("Failed to load voxy config, resetting");
                     }
                 } catch (IOException e) {
+                    Logger.error("Could not load config", e);
+                } catch (JsonParseException e) {
                     Logger.error("Could not parse config", e);
                 }
+                Logger.info("Error during config loading, creating new");
+            } else {
+                Logger.info("Config file doesnt exist, creating new");
             }
             var config = new VoxyConfig();
             config.save();
@@ -60,6 +96,11 @@ public class VoxyConfig {
     }
 
     public void save() {
+        if (!VoxyCommon.isAvailable()) {
+            Logger.info("Not saving config since voxy is unavalible");
+            return;
+        }
+
         try {
             Files.writeString(getConfigPath(), GSON.toJson(this));
         } catch (IOException e) {

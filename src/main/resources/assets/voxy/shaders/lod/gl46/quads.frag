@@ -78,6 +78,11 @@ layout(location = 0) out vec4 outColour;
 #endif
 
 #import <voxy:lod/gl46/bindings.glsl>
+#import <voxy:lod/lighting.glsl>
+
+
+#import <voxy:util/depthutils.glsl>
+
 
 vec4 uint2vec4RGBA(uint colour) {
     return vec4((uvec4(colour)>>uvec4(24,16,8,0))&uvec4(0xFF))/255.0;
@@ -99,11 +104,6 @@ uint getFace() {
     return (interData.x>>4)&7u;
 }
 
-#ifdef PATCHED_SHADER
-vec2 getLightmap() {
-    return clamp(vec2((interData.y>>4)&0xFu, interData.y&0xFu)/15, vec2(8.0f/256), vec2(248.0f/256));
-}
-#endif
 
 uint getModelId() {
     return interData.x>>16;
@@ -458,7 +458,7 @@ void main() {
 #else
     float voxyBoundDepth = texelFetch(depthTex, ivec2(gl_FragCoord.xy), 0).r;
 #endif
-    if (gl_FragCoord.z < voxyBoundDepth) {
+    if (DEPTH_SCALAR_COMPARE(gl_FragCoord.z, voxyBoundDepth)) {
         #ifdef VOXY_BOUND_DEBUG
         // VOXY_BOUND_DEBUG=1 (Metal mask-verification aid): paint the
         // bound-discarded fragments solid red instead of discarding so a
@@ -484,6 +484,7 @@ void main() {
 #ifndef VOXY_LOD_NO_DISCARD
     //Also, small quad is really fking over the mipping level somehow
     #ifndef TRANSLUCENT
+    colour.a = 1.0f;
     if (useDiscard() && (textureLod(blockModelAtlas, texPos, 0).a <= 0.1f)) {
     //if (useDiscard() && (colour.a <= 0.1f)) {
     #else
@@ -649,7 +650,7 @@ void main() {
 
     uint face = getFace();
     face ^= uint((face&1u)!=uint(gl_FrontFacing!=((face>>1)!=0u)));
-    voxy_emitFragment(VoxyFragmentParameters(colour, tile, texPos, face, modelId, getLightmap(), tint, model.customId));
+    voxy_emitFragment(VoxyFragmentParameters(colour, tile, texPos, face, modelId, getLightmapUv(interData.y), tint, model.customId));
 
     #endif
 }
@@ -679,3 +680,7 @@ colour = textureGrad(blockModelAtlas, texPos, dx, dy);
 //#else
 //colour = texture(blockModelAtlas, texPos);
 //#endif
+
+//Undefine the depth stuff
+#import <voxy:util/depthutils.glsl>
+

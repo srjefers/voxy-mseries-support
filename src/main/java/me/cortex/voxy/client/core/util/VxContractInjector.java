@@ -558,8 +558,7 @@ public final class VxContractInjector {
             // live-editable in video settings.
             float sfMaxDist = VX_SEAFLOOR_MAX_DIST;
             if (sfMaxDist < 0f) {
-                float rdBlocks = Math.max(net.minecraft.client.Minecraft.getInstance()
-                        .gameRenderer.getRenderDistance(), 32f);
+                float rdBlocks = Math.max(me.cortex.voxy.client.core.VoxyRenderSystem.getVanillaRenderDistance(), 32f);
                 sfMaxDist = SF_FULLRING ? Math.max(rdBlocks, 64f) : Math.max(rdBlocks - 16f, 64f);
             }
             if (seafloorDim && !sfLoggedEngaged) {
@@ -600,9 +599,9 @@ public final class VxContractInjector {
                 boolean abyssDepthOk;
                 try {
                     var mc = net.minecraft.client.Minecraft.getInstance();
-                    if (mc.level != null && mc.gameRenderer.getMainCamera() != null) {
+                    if (mc.level != null && mc.gameRenderer.mainCamera() != null) {
                         seaOffset = (float) (mc.level.getSeaLevel()
-                                - mc.gameRenderer.getMainCamera().position().y);
+                                - mc.gameRenderer.mainCamera().position().y);
                     }
                     abyssDepthOk = VxIrisSideChannel.getOrCreate().abyssDepth(
                             colourRect, depthRect, sfRect, fbw, fbh,
@@ -1313,8 +1312,7 @@ public final class VxContractInjector {
         float nearQ = 16f;
         if (VX_LOD_SHADOW_V2) {
             try {
-                nearQ = net.minecraft.client.Minecraft.getInstance().gameRenderer
-                        .getRenderDistance() <= 32.0f ? 8f : 16f;
+                nearQ = me.cortex.voxy.client.core.VoxyRenderSystem.getVanillaRenderDistance() <= 32.0f ? 8f : 16f;
                 if (me.cortex.voxy.client.VoxyClient.disableSodiumChunkRender()) nearQ = 0.1f;
             } catch (Throwable ignored) {
                 // pre-world edge case: keep the common-case 16

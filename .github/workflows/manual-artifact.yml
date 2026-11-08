@@ -13,19 +13,20 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 25
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          cache-read-only: false
+          cache-disabled: true
           cache-cleanup: always
 
       - name: Gradle build
         run: ./gradlew build
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: voxy-artifacts
           path: build/libs/*.jar
+          archive: false

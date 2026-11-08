@@ -2,17 +2,23 @@ package me.cortex.voxy.client.iris;
 
 import com.google.gson.*;
 import com.google.gson.annotations.JsonAdapter;
+import io.github.douira.glsl_transformer.ast.transform.ASTParser;
+import io.github.douira.glsl_transformer.ast.transform.SingleASTTransformer;
 import it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Object2ObjectLinkedOpenHashMap;
+import me.cortex.voxy.client.mixin.iris.DepthTransformerAccessor;
 import me.cortex.voxy.common.Logger;
 import net.irisshaders.iris.shaderpack.ShaderPack;
 import net.irisshaders.iris.shaderpack.include.AbsolutePackPath;
 import org.lwjgl.opengl.ARBDrawBuffersBlend;
 
+import java.io.IOException;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Type;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.function.Function;
 import java.util.function.IntSupplier;
@@ -22,8 +28,7 @@ import static org.lwjgl.opengl.GL33.*;
 
 public class IrisShaderPatch {
     public static final int VERSION = ((IntSupplier)()->1).getAsInt();
-
-    public static final boolean IMPERSONATE_DISTANT_HORIZONS = System.getProperty("voxy.impersonateDHShader", "false").equalsIgnoreCase("true");
+    public static final int SHADER_DEFINE_VERSION = 3;
 
 
     private static final class SSBODeserializer implements JsonDeserializer<Int2ObjectOpenHashMap<String>> {
@@ -175,6 +180,8 @@ public class IrisShaderPatch {
         public boolean excludeLodsFromVanillaDepth;
         public float[] renderScale;
         public boolean useViewportDims;
+        public boolean skipShaderDepthHackFix;
+        public boolean useDynamicFarPlane;
         //public boolean deferTranslucentRendering;
         public String checkValid() {
             if (this.blending != null) {
@@ -226,6 +233,7 @@ public class IrisShaderPatch {
         return this.patchData.useViewportDims;
     }
 
+    public boolean skipShaderDepthHackFix() { return this.patchData.skipShaderDepthHackFix; }
     public Int2ObjectMap<String> getSSBOs() {
         return new Int2ObjectLinkedOpenHashMap<>(this.ssbos);
     }
@@ -236,7 +244,7 @@ public class IrisShaderPatch {
         return this.patchData.translucentPatchData;
     }
     public String getTAAShift() {
-        return this.patchData.taaOffset == null?"{return vec2(0.0);}":this.patchData.taaOffset;
+        return this.patchData.taaOffset;// == null?"{return vec2(0.0);}":this.patchData.taaOffset;
     }
     public String[] getUniformList() {
         return this.patchData.uniforms;
@@ -270,6 +278,10 @@ public class IrisShaderPatch {
 
     public boolean deferedTranslucentRendering() {
         return false;//this.patchData.deferTranslucentRendering;
+    }
+
+    public boolean useDynamicFarPlane() {
+        return this.patchData.useDynamicFarPlane;
     }
 
     public Runnable createBlendSetup() {
@@ -339,6 +351,10 @@ public class IrisShaderPatch {
                 }
                 voxyPatchData = builder.toString();
             }
+
+            //Stupid chunk fade in patch (should probably just breaks
+            voxyPatchData = voxyPatchData.replaceAll("void _cfi_ignoreMarker\\(\\) \\{\\}", "");
+
             patchData = GSON.fromJson(voxyPatchData, PatchGson.class);
             if (patchData == null) {
                 throw new IllegalStateException("Voxy patch json returned null, this is most likely due to malformed json file");
@@ -369,8 +385,13 @@ public class IrisShaderPatch {
             }
         } catch (Exception e) {
             patchData = null;
-            Logger.error("Failed to parse patch data gson",e);
-            throw new ShaderLoadError("Failed to parse patch data gson",e);
+            Logger.error("Failed to parse patch data gson, dumping json",e);
+            try {
+                Files.writeString(Path.of("JSON_DUMP.txt"), voxyPatchData);
+            } catch (IOException j) {
+                throw new RuntimeException(j);
+            }
+            throw new ShaderLoadError("Failed to parse patch data gson, dumping json",e);
         }
         if (patchData == null) {
             return null;
@@ -379,6 +400,33 @@ public class IrisShaderPatch {
             Logger.error("Shader has voxy patch data, but patch version is incorrect. expected " + VERSION + " got "+patchData.version);
             throw new IllegalStateException("Shader version mismatch expected " + VERSION + " got "+patchData.version);
         }
+
+
+        //TODO:FIXME, wrap in a conditional config attribute/flag to disable it
+        if (true) {
+            if (patchData.opaquePatchData != null) {
+                patchData.opaquePatchData = stupidEvilHackFixForRevZThatReallyShouldntExistOrBeDoneEverNeedsFixing(patchData.opaquePatchData);
+            }
+            if (patchData.translucentPatchData != null) {
+                patchData.translucentPatchData = stupidEvilHackFixForRevZThatReallyShouldntExistOrBeDoneEverNeedsFixing(patchData.translucentPatchData);
+            }
+        }
+
         return new IrisShaderPatch(patchData, ipack);
     }
+
+
+    private static String stupidEvilHackFixForRevZThatReallyShouldntExistOrBeDoneEverNeedsFixing(String scr) {
+        if (scr == null) return null;
+        scr = scr.replaceAll("(?<!\\w)?gl_FragDepth(?=\\W|$)", "(1.0-gl_FragDepth)");
+        var parser = new ASTParser();
+        var transform = new SingleASTTransformer<>((translationUnit, root)->{
+            root.replaceReferenceExpressions(parser, "gl_FragCoord", "(vec4(gl_FragCoord.xy,1.0-gl_FragCoord.z,gl_FragCoord.w))");
+            DepthTransformerAccessor.voxy$invertDepthReads(parser, translationUnit, root, DepthTransformerAccessor.voxy$getDepthSamplers());
+        });
+        return transform.transform(scr);
+        //scr = scr.replaceAll("(?<!\\w)?gl_FragCoord(?=\\W|$)", "(vec4(gl_FragCoord.xy,1.0-gl_FragCoord.z,gl_FragCoord.w))");
+
+    }
+
 }

@@ -314,8 +314,7 @@ public final class MetalVxResolvePass {
                             !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_XZ")) ? 16f : 48f);
                     float rdBlocks;
                     try {
-                        rdBlocks = Math.max(net.minecraft.client.Minecraft.getInstance()
-                                .gameRenderer.getRenderDistance(), 32f);
+                        rdBlocks = Math.max(me.cortex.voxy.client.core.VoxyRenderSystem.getVanillaRenderDistance(), 32f);
                     } catch (Throwable t) {
                         rdBlocks = 192f;
                     }
@@ -937,8 +936,7 @@ public final class MetalVxResolvePass {
     private static float ringCullNow() {
         float rdBlocks;
         try {
-            rdBlocks = Math.max(net.minecraft.client.Minecraft.getInstance()
-                    .gameRenderer.getRenderDistance(), 32f);
+            rdBlocks = Math.max(me.cortex.voxy.client.core.VoxyRenderSystem.getVanillaRenderDistance(), 32f);
         } catch (Throwable t) {
             rdBlocks = 192f;
         }

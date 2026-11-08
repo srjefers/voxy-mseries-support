@@ -1,7 +1,10 @@
 plugins {
-    id 'fabric-loom' version "1.14-SNAPSHOT"
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
     id 'maven-publish'
+    id "me.champeau.jmh" version "0.7.3"
 }
+
+def INCLUDE_OTHER_ARCHS = "true".equalsIgnoreCase(project.findProperty("includeOtherArchs"))
 
 def isInGHA = System.getenv("GITHUB_ACTIONS") == "true"
 
@@ -28,8 +31,8 @@ repositories {
     exclusiveContent {
         forRepository {
             maven {
-                name "caffeinemcRepository"
-                url "https://maven.caffeinemc.net/snapshots"
+                name = "caffeinemcRepository"
+                url = "https://maven.caffeinemc.net/releases"
             }
         }
         filter {
@@ -65,7 +68,7 @@ repositories {
 def gitCommitHash = { ->
     try {
         ExecOutput result = providers.exec {
-            commandLine = ['git', 'rev-parse', '--short', 'HEAD']
+            commandLine = ['git', 'rev-parse', 'HEAD']
             ignoreExitValue = true
         }
 
@@ -82,15 +85,94 @@ def gitCommitHash = { ->
 
 def buildtime = {System.currentTimeSeconds()}
 
-processResources {
-    def time = buildtime()
-    def hash = gitCommitHash()
-    def version = project.version
-
-    inputs.properties("version": version, "commit": hash, "buildtime": time)
-    filesMatching("fabric.mod.json") {
-        expand "version": version, "commit": hash, "buildtime": time
+def findSodiumVersion() {
+    var sodium_entry = (Map.Entry<String,String>)project.properties.find {it.key.contains("sodium_version")}
+    var props = sodium_entry.key.split("\\.");
+    var key = props.last();
+    props = props[0..props.size()-1];
+    String version_str;
+    boolean modrinth_version = key.endsWith("_modrinth");
+    if (modrinth_version) {
+        version_str = (sodium_entry.value=~/[^-]*-([^-]*-?[^-]*)-.*/)[0][1];
+    } else {
+        version_str = sodium_entry.value.split("\\+")[0];
     }
+    return [props, modrinth_version, sodium_entry.value, version_str];
+}
+
+processResources {
+    String sodium_versions;
+    {
+        StringBuilder sodium_versions_builder = new StringBuilder("[");
+        var vers = [*project.properties.getOrDefault("sodium_extra_allows", "").split(" ")];
+        for (String ver : vers) {
+            if (!ver.isBlank()) {
+                sodium_versions_builder.append("\"=").append(ver).append("\", ");
+            }
+        }
+
+        var (props, _, _2, sodium_version) = findSodiumVersion();
+        var expectExact = props.contains("exact");
+
+        if (expectExact) {
+            sodium_versions_builder.append("\"=").append(sodium_version).append("\"");
+        } else {
+            sodium_version = sodium_version.split("-")[0]
+            sodium_versions_builder.append("\">=").append(sodium_version).append("- <=").append(sodium_version).append("\"")
+        }
+        sodium_versions_builder.append("]");
+        sodium_versions = sodium_versions_builder.toString();
+    }
+    String allowed_mc_version;
+    {
+        allowed_mc_version = project.properties.minecraft_version.split("-")[0];
+        allowed_mc_version = "[\">=" + allowed_mc_version + "- <=" + allowed_mc_version + "\", \"~" + allowed_mc_version + "\"]";
+    }
+
+    var time = buildtime()
+    var hash = gitCommitHash()
+    var version = project.version
+
+    def props = ["version": version, "commit": hash, "buildtime": time, "allowed_sodium_versions": sodium_versions, "allowed_mc_version": allowed_mc_version]
+
+    for (var prop : props) {
+        String value = prop.value;
+        if (!(value==~/^ *((['"\[{].*)|([0-9]*$))/)) {
+            value = "\"$value\"";
+        }
+        props[prop.key] = value
+    }
+
+    inputs.properties(props);
+    filesMatching("fabric.mod.json") {
+        filter {line->line.replace("\"\${","\${").replace("}\"", "}")};
+        expand(props);
+    }
+}
+
+
+var dummySodiumProviderGenerator = tasks.register("dummySodiumProviderGenerator", Jar) {
+    destinationDirectory.set(processIncludeJars.outputDirectory);
+    archiveFileName.set("dummyprovider.jar");
+    dependsOn(processIncludeJars)
+
+    var (_, _1, _2, sodium_version) = findSodiumVersion();
+    var props = ["sodium_version":sodium_version];
+
+    inputs.properties(props);
+    from("dummyprovider.fabric.mod.json") {
+        rename("dummyprovider.", "");
+        expand(props)
+    }
+}
+/*
+jar {
+    dependsOn(dummySodiumProviderGenerator)
+    from(dummySodiumProviderGenerator)
+}*/
+
+jar {
+    dependsOn(dummySodiumProviderGenerator)
 }
 
 loom {
@@ -107,102 +189,115 @@ loom {
     }
 }
 
-def modRuntimeOnlyMsk = {arg->}
+def runtimeOnlyMsk = {arg->}
 if (!isInGHA) {
-    modRuntimeOnlyMsk = { arg ->
+    runtimeOnlyMsk = { arg ->
         dependencies {
-            modRuntimeOnly(arg)
+            runtimeOnly(arg)
         }
     }
 }
 
+def smartDependency(String property, boolean runtime = false, String maven = null, boolean compile = true) {
+    String ver;
+    if (project.hasProperty("runtime."+property)) {
+        ver = project["runtime."+property];
+        runtime = true
+    } else if (project.hasProperty("compileOnly."+property)) {
+        ver = project["compileOnly."+property];
+        runtime = false
+    }  else {
+        ver = project[property];
+    }
+
+    if (ver == null) {
+        return null;
+    }
+
+    Object dep;
+    if (ver.endsWith(".jar")) {
+        //File type
+        dep = files(ver)
+    } else {//Asume mvn
+        //Hack, default modrinth maven
+        if (maven == null) {
+            maven = "maven.modrinth:"+(property.split("_")[0])
+        }
+
+        dep = (maven!=null?(maven+":"):"")+ver;
+    }
+    dependencies {
+        if (compile && runtime) {
+            implementation(dep)
+        } else {
+            if (compile) {
+                compileOnly(dep)
+            } else {
+                runtimeOnlyMsk(dep)
+            }
+        }
+    }
+    return ver
+}
+
+
 dependencies {
     // To change the versions see the gradle.properties file
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
-    mappings loom.officialMojangMappings()
-    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    //mappings loom.officialMojangMappings()
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
 
-    modRuntimeOnlyMsk(fabricApi.module("fabric-api-base", project.fabric_version))
-    modRuntimeOnlyMsk(fabricApi.module("fabric-rendering-fluids-v1", project.fabric_version))
-    modRuntimeOnlyMsk(fabricApi.module("fabric-resource-loader-v0", project.fabric_version))
-    modRuntimeOnlyMsk(fabricApi.module("fabric-command-api-v2", project.fabric_version))
+    runtimeOnlyMsk(fabricApi.module("fabric-api-base", project.fabric_api_version))
+    runtimeOnlyMsk(fabricApi.module("fabric-rendering-fluids-v1", project.fabric_api_version))
+    runtimeOnlyMsk(fabricApi.module("fabric-resource-loader-v0", project.fabric_api_version))
+    runtimeOnlyMsk(fabricApi.module("fabric-command-api-v2", project.fabric_api_version))
 
-    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}";
 
-    if (true) {
-        modImplementation "maven.modrinth:sodium:mc1.21.11-0.8.1-fabric"
-    } else {
-        modImplementation "net.caffeinemc:sodium-fabric:0.8.1-SNAPSHOT+mc1.21.11+"
+    {
+        var (_, mr, ver, _2) = findSodiumVersion()
+        if (mr) {
+            implementation "maven.modrinth:sodium:${ver}"
+        } else {
+            implementation "net.caffeinemc:sodium-fabric:${ver}"
+        }
     }
 
-    modImplementation("maven.modrinth:lithium:mc1.21.11-0.21.0-fabric")
+    //implementation("maven.modrinth:lithium:mc26.1.2-0.24.2-fabric")
 
     //modRuntimeOnlyMsk "drouarb:nvidium:0.4.1-beta4:1.21.6@jar"
-    modCompileOnly "drouarb:nvidium:0.4.1-beta4:1.21.6@jar"
+    //compileOnly("drouarb:nvidium:0.4.1-beta4:1.21.6@jar")
 
-    modCompileOnly("maven.modrinth:modmenu:17.0.0-alpha.1")
-    modRuntimeOnlyMsk("maven.modrinth:modmenu:17.0.0-alpha.1")
-
-    modCompileOnly("maven.modrinth:iris:1.10.7+1.21.11-fabric")
-    // Iris in the dev runtime by default: this fork is being compat-tested
-    // alongside Iris + other mods. Note Voxy's Iris pipeline integration is
-    // GL-only — on Metal, LOD terrain is NOT shaded by packs; this tests
-    // coexistence (load order, mixins, GL state), not pack support.
-    modRuntimeOnlyMsk("maven.modrinth:iris:1.10.7+1.21.11-fabric")
+    smartDependency("modmenu_version", true)
+    smartDependency("lithium_version", true)
+    smartDependency("iris_version")
+    smartDependency("chunky_version")
+    smartDependency("vivecraft_version")
+    smartDependency("flashback_version")
+    smartDependency("nvidium_version")
 
     //modCompileOnly("maven.modrinth:starlight:1.1.3+1.20.4")
 
     //modCompileOnly("maven.modrinth:immersiveportals:v5.1.7-mc1.20.4")
 
-    modCompileOnly("maven.modrinth:chunky:1.4.55-fabric")
-    modRuntimeOnlyMsk("maven.modrinth:chunky:1.4.55-fabric")
+    //compileOnly("maven.modrinth:chunky:DCgX52a5")
+    //modRuntimeOnlyMsk("maven.modrinth:chunky:1.4.40-fabric")
 
-    modRuntimeOnlyMsk("maven.modrinth:spark:1.10.152-fabric")
-    modRuntimeOnlyMsk("maven.modrinth:fabric-permissions-api:0.6.1")
+    //modRuntimeOnlyMsk("maven.modrinth:spark:1.10.152-fabric")
+    //modRuntimeOnlyMsk("maven.modrinth:fabric-permissions-api:0.3.3")
     //modRuntimeOnly("maven.modrinth:nsight-loader:1.2.0")
 
     //modImplementation('io.github.douira:glsl-transformer:2.0.1')
 
-    modCompileOnly("maven.modrinth:vivecraft:1.21.9-1.3.2-fabric")
+    //compileOnly("maven.modrinth:vivecraft:26.1.1-1.3.7-b2-fabric")
 
-    modCompileOnly("maven.modrinth:flashback:rNCr1Rbs")
-}
-
-// Iris dev-runtime fix: Loom does not load the nested (jar-in-jar) libraries
-// of modRuntimeOnly dependencies, so Iris's bundled shader-preprocessor libs
-// (jcpp, glsl-transformer, antlr4-runtime) were missing in runClient and Iris
-// crashed loading any shader pack (NoClassDefFoundError:
-// org/anarres/cpp/LexerException). glsl-transformer 3.0.0-preX is not
-// published on a public maven, so extract the nested jars from the resolved
-// Iris jar itself — this stays automatically in sync when the Iris version
-// is bumped. Dev-runtime only; no effect on the built mod jar.
-if (!isInGHA) {
-    def irisJijConfig = configurations.detachedConfiguration(
-            dependencies.create("maven.modrinth:iris:1.10.7+1.21.11-fabric"))
-    irisJijConfig.transitive = false
-    def irisJijDir = layout.buildDirectory.dir("iris-jij").get().asFile
-    def extractIrisJij = tasks.register('extractIrisJij', Copy) {
-        from({ zipTree(irisJijConfig.singleFile) }) {
-            include 'META-INF/jars/*.jar'
-            // fabric-* nested jars are already provided by fabric-api on the
-            // classpath; duplicating them breaks the loader's mod dedup.
-            exclude 'META-INF/jars/fabric-*.jar'
-        }
-        eachFile { it.path = it.name }
-        includeEmptyDirs = false
-        into irisJijDir
-    }
-    dependencies {
-        runtimeOnly fileTree(irisJijDir) {
-            include '*.jar'
-            builtBy extractIrisJij
-        }
-    }
+    //compileOnly("maven.modrinth:flashback:VaqZB1DF")
+    compileOnly("io.github.douira:glsl-transformer:3.0.0-pre3")
 }
 
 
-def targetJavaVersion = 21
+def targetJavaVersion = 25
 tasks.withType(JavaCompile).configureEach {
     it.options.encoding = "UTF-8"
     it.options.release = targetJavaVersion
@@ -248,7 +343,8 @@ tasks.register('makeExcludedRocksDB', Zip) {
     exclude {
         def file = it.name
         if (file.endsWith(".jnilib")) {
-            return true
+            // Keep the Apple Silicon native: this build targets M-series Macs.
+            return !file.contains("osx-arm64")
         }
         if (!file.endsWith(".so")) {
             return false
@@ -257,15 +353,19 @@ tasks.register('makeExcludedRocksDB', Zip) {
     }
 }
 
-processIncludeJars {
-    outputs.cacheIf {true}
 
-    dependsOn makeExcludedRocksDB
-    jars = jars.filter {!it.name.startsWith('rocksdb')}
-    jars.from(makeExcludedRocksDB)
+
+
+processIncludeJars {
+    //outputs.cacheIf {true}
+    if (!INCLUDE_OTHER_ARCHS) {
+        dependsOn makeExcludedRocksDB
+        jars = jars.filter {!it.name.startsWith('rocksdb')}
+        jars.from(makeExcludedRocksDB)
+    }
 }
 
-remapJar {
+jar {
     doFirst {
         delete fileTree(getDestinationDirectory().get())
     }
@@ -273,12 +373,12 @@ remapJar {
     if (!isInGHA) {
         def hash = gitCommitHash();
         if (!hash.equals("<UnknownCommit>")) {
-            archiveClassifier.set(hash);
+            archiveClassifier.set(hash.substring(0,7));
         }
     }
 }
 
-project.ext.lwjglVersion = "3.3.3"
+project.ext.lwjglVersion = "3.4.1"
 project.ext.lwjglNatives = "natives-windows"
 
 repositories {
@@ -288,16 +388,22 @@ repositories {
 
 dependencies {
     implementation platform("org.lwjgl:lwjgl-bom:$lwjglVersion")
-
-    implementation "org.lwjgl:lwjgl"
-    include(implementation "org.lwjgl:lwjgl-lmdb")
-    include(implementation "org.lwjgl:lwjgl-zstd")
+    if (findProject("lwjgl_use_unsafe")?:false) {
+        implementation "org.lwjgl:lwjgl:unsafe"
+        include(implementation "org.lwjgl:lwjgl-lmdb:unsafe")
+        include(implementation "org.lwjgl:lwjgl-zstd:unsafe")
+    } else {
+        implementation "org.lwjgl:lwjgl"
+        include(implementation "org.lwjgl:lwjgl-lmdb")
+        include(implementation "org.lwjgl:lwjgl-zstd")
+    }
     runtimeOnly "org.lwjgl:lwjgl:$lwjglVersion:natives-windows"
     runtimeOnly "org.lwjgl:lwjgl:$lwjglVersion:natives-linux"
     include(runtimeOnly "org.lwjgl:lwjgl-lmdb:$lwjglVersion:natives-windows")
     include(runtimeOnly "org.lwjgl:lwjgl-zstd:$lwjglVersion:natives-windows")
     include(runtimeOnly "org.lwjgl:lwjgl-lmdb:$lwjglVersion:natives-linux")
     include(runtimeOnly "org.lwjgl:lwjgl-zstd:$lwjglVersion:natives-linux")
+
     // macOS arm64 natives — required for Voxy's chunk-serialization workers
     // (and Sodium's chunk render task executors that transitively trigger
     // ZSTDCompressor static init). Without these, "Failed to locate library:
@@ -325,9 +431,16 @@ dependencies {
     // its own copy, but standalone JavaExec tasks like testShaderCompiler need
     // them on the classpath. Not bundled into the mod jar.
     runtimeOnly "org.lwjgl:lwjgl:$lwjglVersion:natives-macos-arm64"
+    if (INCLUDE_OTHER_ARCHS) {
+        runtimeOnly "org.lwjgl:lwjgl:$lwjglVersion:natives-linux-arm64"
+        include(runtimeOnly "org.lwjgl:lwjgl-lmdb:$lwjglVersion:natives-linux-arm64")
+        include(runtimeOnly "org.lwjgl:lwjgl-zstd:$lwjglVersion:natives-linux-arm64")
+        include(runtimeOnly "org.lwjgl:lwjgl-lmdb:$lwjglVersion:natives-macos-arm64")
+        include(runtimeOnly "org.lwjgl:lwjgl-zstd:$lwjglVersion:natives-macos-arm64")
+    }
 
     include(implementation 'redis.clients:jedis:5.1.0')
-    include(implementation('org.rocksdb:rocksdbjni:10.2.1'))
+    include(implementation('org.rocksdb:rocksdbjni:10.2.1'))//update to 10.10 when issue 14537 is fixed
     include(implementation 'org.apache.commons:commons-pool2:2.12.0')
     include(implementation 'org.lz4:lz4-java:1.8.0')
     include(implementation('org.tukaani:xz:1.10'))
@@ -343,6 +456,14 @@ dependencies {
     //implementation 'redis.clients:jedis:5.1.0'
 }
 
+
+jmh {
+    zip64 = true
+    includes=["SaveLoadJMH"]
+    //profilers = ["xperfasm"]
+}
+
+/*
 if (!isInGHA) {
     repositories {
         maven {
@@ -351,12 +472,11 @@ if (!isInGHA) {
     }
 
     dependencies {
-        /*
-        modRuntimeOnly('me.djtheredstoner:DevAuth-fabric:1.2.1') {
+        modRuntimeOnly('me.djtheredstoner:DevAuth-fabric:1.2.2') {
             exclude group: 'net.fabricmc', module: 'fabric-loader'
-        }*/
+        }
     }
-}
+}*/
 
 // -------- Metal native library (macOS Apple Silicon only) --------
 // Builds libvoxy_metal.dylib via CMake and bundles it at

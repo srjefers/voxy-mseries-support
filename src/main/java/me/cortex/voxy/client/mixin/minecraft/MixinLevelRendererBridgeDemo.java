@@ -1,6 +1,6 @@
 package me.cortex.voxy.client.mixin.minecraft;
 
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
 import me.cortex.voxy.client.core.interop.IOSurfaceBridgeDemo;
 import net.minecraft.client.Camera;
@@ -45,8 +45,8 @@ public class MixinLevelRendererBridgeDemo {
         IOSurfaceBridgeDemo.tickAndPaint();
         if (!IOSurfaceBridgeDemo.isReady()) return;
         var mc = Minecraft.getInstance();
-        int fbw = mc.getMainRenderTarget().width;
-        int fbh = mc.getMainRenderTarget().height;
+        int fbw = mc.gameRenderer.mainRenderTarget().width;
+        int fbh = mc.gameRenderer.mainRenderTarget().height;
         // Place the 256x256 demo overlay in the bottom-right corner so it
         // doesn't obscure crosshair / UI.
         int margin = 16;

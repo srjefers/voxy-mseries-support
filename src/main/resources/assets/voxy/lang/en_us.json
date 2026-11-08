@@ -25,12 +25,17 @@
   "voxy.config.general.renderDistance": "Render distance",
   "voxy.config.general.renderDistance.tooltip": "Render distance of voxy in chunks",
 
-  "voxy.config.general.environmental_fog": "Enable environmental fog",
-  "voxy.config.general.environmental_fog.tooltip": "Enables or disables voxy rendering environmental fog",
+  "voxy.config.general.environmental_fog": "Fog and fade effect",
+  "voxy.config.general.environmental_fog.tooltip": "Configures the environmental fog and fade effects",
+  "voxy.config.general.environmental_fog.fog_and_fade": "Fog and fade",
+  "voxy.config.general.environmental_fog.fog": "Fog only",
+  "voxy.config.general.environmental_fog.fade": "Fade only",
+  "voxy.config.general.environmental_fog.off": "Off",
 
-  "voxy.config.general.render_fog": "Enable render fog",
-  "voxy.config.general.render_fog.tooltip": "Enables or disables render fog effect",
-
-  "voxy.config.general.render_statistics": "Enable render statistics",
-  "voxy.config.general.render_statistics.tooltip": "Enable render statistics in F3 menu, useful for debugging"
+  "voxy.config.general.ssao_mode": "SSAO Mode",
+  "voxy.config.general.ssao_mode.tooltip": "The mode used for screenspace ambient occlusion (Auto attempts to pick the best option while reducing performance impact)",
+  "voxy.config.general.ssao_mode.auto": "Auto",
+  "voxy.config.general.ssao_mode.basic": "Basic",
+  "voxy.config.general.ssao_mode.better": "Better",
+  "voxy.config.general.ssao_mode.best": "Best"
 }

@@ -1,4 +1,4 @@
-
+#import <voxy:lod/pos_util.glsl>
 layout(binding = NODE_DATA_BINDING, std430) restrict buffer NodeData {
 //Needs to be read and writeable for marking data,
 //(could do an evil violation, make this readonly, then have a writeonly varient, which means that writing might not be visible but will show up by the next frame)
@@ -32,16 +32,9 @@ struct UnpackedNode {
 uvec4 unpackNode(out UnpackedNode node, uint nodeId) {
     uvec4 compactedNode = nodes[nodeId];
     node.nodeId = nodeId;
-    node.lodLevel = compactedNode.x >> 28;
+    node.lodLevel = getLoDLevel(compactedNode.xy);
     node.rawPos = compactedNode.xy;
-    {
-        //Metal fix: (v<<L)>>R sign-extension shifts miscompile via SPIR-V->MSL (see screenspace.glsl); bitfieldExtract is well-defined
-        //Packed layout (NodeStore.writeNode, hi word in .x): x=[31:28 lvl][27:20 y][19:0 z>>4], y=[31:28 z&15][27:4 x]
-        int y = bitfieldExtract(int(compactedNode.x), 20, 8);
-        int x = bitfieldExtract(int(compactedNode.y), 4, 24);
-        int z = bitfieldExtract(int(((compactedNode.x&((1u<<20)-1))<<4)|(compactedNode.y>>28)), 0, 24);
-        node.pos = ivec3(x, y, z);
-    }
+    node.pos = getLoDPosition(compactedNode.xy);
 
     node.meshPtr = compactedNode.z&0xFFFFFFu;
     node.childPtr = compactedNode.w&0xFFFFFFu;

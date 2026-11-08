@@ -1,6 +1,7 @@
 package me.cortex.voxy.client.core.rendering.section.backend.mdic;
 
 
+import net.minecraft.core.Direction;
 import me.cortex.voxy.client.RenderStatistics;
 import me.cortex.voxy.client.VoxyClient;
 import me.cortex.voxy.client.core.AbstractRenderPipeline;
@@ -20,10 +21,10 @@ import me.cortex.voxy.client.core.rendering.util.LightMapHelper;
 import me.cortex.voxy.client.core.rendering.util.MetalMvpUtil;
 import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
 import me.cortex.voxy.client.core.rendering.util.UploadStream;
+import me.cortex.voxy.client.core.util.GPUTiming;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.world.WorldEngine;
 import net.minecraft.client.Minecraft;
-import net.minecraft.core.Direction;
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryUtil;
 
@@ -53,8 +54,11 @@ import static org.lwjgl.opengl.NVRepresentativeFragmentTest.GL_REPRESENTATIVE_FR
 public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, BasicSectionGeometryData> {
     public static final Factory<MDICViewport, BasicSectionGeometryData> FACTORY = AbstractSectionRenderer.Factory.create(MDICSectionRenderer.class);
 
-    private static final int TRANSLUCENT_OFFSET = 400_000;//in draw calls
-    private static final int TEMPORAL_OFFSET = 500_000;//in draw calls
+    public static final int OPAQUE_DRAW_COUNT = 400_000;//in draw calls
+    public static final int TRANSLUCENT_DRAW_COUNT = 100_000;//in draw calls
+    public static final int TEMPORAL_DRAW_COUNT = 100_000;//in draw calls
+    private static final int TRANSLUCENT_OFFSET = OPAQUE_DRAW_COUNT;//in draw calls
+    private static final int TEMPORAL_OFFSET = TRANSLUCENT_OFFSET+TRANSLUCENT_DRAW_COUNT;//in draw calls
     private static final int STATISTICS_BUFFER_BINDING = 8;
     /**
      * Terrain shaders. Two paths:
@@ -276,14 +280,14 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
     }
 
     //TODO: needs to be in the viewport, since it contains the compute indirect call/values
-    private final IGpuBuffer distanceCountBuffer = RenderBackendFactory.get().createBuffer(1024*4+100_000*4).zero();//TODO move to viewport?
+    private final IGpuBuffer distanceCountBuffer = RenderBackendFactory.get().createBuffer(1024*4+TRANSLUCENT_DRAW_COUNT*4).zero();//TODO move to viewport?
 
     //Statistics
     private final IGpuBuffer statisticsBuffer = RenderBackendFactory.get().createBuffer(1024).zero();
 
     private final AbstractRenderPipeline pipeline;
     public MDICSectionRenderer(AbstractRenderPipeline pipeline, ModelStore modelStore, BasicSectionGeometryData geometryData) {
-        super(modelStore, geometryData);
+        super(pipeline.properties, modelStore, geometryData);
         this.pipeline = pipeline;
         //The pipeline can be used to transform the renderer in abstract ways
 
@@ -307,8 +311,11 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             vertex += "\n"+taa;//inject it at the end
         }
         var builder = Shader.make()
+                .apply(this.properties::apply)
                 .defineIf("TAA_PATCH", taa != null)
                 .defineIf("DEBUG_RENDER", false)
+
+                //.defineIf("USE_NV_JANK", Capabilities.INSTANCE.isNvidia)//TODO: fix use capability to try compile the jank thing to see if it can be and use that
 
                 //.defineIf("USE_NV_BARRY", Capabilities.INSTANCE.nvBarryCoords)
 
@@ -346,6 +353,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             this.terrainShader = null;
             this.translucentTerrainShader = null;
             java.util.Map<String, String> commonDefines = buildTerrainDefines(taa);
+            commonDefines.putAll(this.properties.defineMap());
             java.util.Map<String, String> opaqueDefines = new java.util.LinkedHashMap<>(commonDefines);
             java.util.Map<String, String> translucentDefines = new java.util.LinkedHashMap<>(commonDefines);
             translucentDefines.put("TRANSLUCENT", "");
@@ -862,11 +870,11 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         var m = new java.util.LinkedHashMap<String, String>();
         net.minecraft.client.multiplayer.ClientLevel level = Minecraft.getInstance().level;
         if (level != null) {
-            m.put("NO_SHADE_FACE_TINT", Float.toString(level.getShade(Direction.UP, false)) + "f");
-            m.put("UP_FACE_TINT",       Float.toString(level.getShade(Direction.UP, true))  + "f");
-            m.put("DOWN_FACE_TINT",     Float.toString(level.getShade(Direction.DOWN, true))+ "f");
-            m.put("Z_AXIS_FACE_TINT",   Float.toString(level.getShade(Direction.NORTH, true))+ "f");
-            m.put("X_AXIS_FACE_TINT",   Float.toString(level.getShade(Direction.EAST, true)) + "f");
+            m.put("NO_SHADE_FACE_TINT", Float.toString(1.0f) + "f");
+            m.put("UP_FACE_TINT",       Float.toString(level.cardinalLighting().byFace(Direction.UP))  + "f");
+            m.put("DOWN_FACE_TINT",     Float.toString(level.cardinalLighting().byFace(Direction.DOWN))+ "f");
+            m.put("Z_AXIS_FACE_TINT",   Float.toString(level.cardinalLighting().byFace(Direction.NORTH))+ "f");
+            m.put("X_AXIS_FACE_TINT",   Float.toString(level.cardinalLighting().byFace(Direction.EAST)) + "f");
         }
         if (taa != null) m.put("TAA_PATCH", "");
         return m;
@@ -914,7 +922,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             if (Math.abs(end - start) > 1) {
                 float invEndFogDelta = 1f / (end - start);
                 float endDistance = Math.max(
-                        Minecraft.getInstance().gameRenderer.getRenderDistance(),
+                        me.cortex.voxy.client.core.VoxyRenderSystem.getVanillaRenderDistance(),
                         20 * 16);
                 endDistance *= (float) Math.sqrt(3);
                 float startDelta = -start * invEndFogDelta;
@@ -954,7 +962,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             }
             // Ramp window: start past the LOD<->MC seam (seam parity keeps MC's
             // exact 0.706), reach the target alpha a few render distances out.
-            float rdBlocks = Math.max(Minecraft.getInstance().gameRenderer.getRenderDistance(), 32f);
+            float rdBlocks = Math.max(me.cortex.voxy.client.core.VoxyRenderSystem.getVanillaRenderDistance(), 32f);
             float rampStart = WATER_FAR_ALPHA_START > 0f
                     ? WATER_FAR_ALPHA_START
                     : Math.max(rdBlocks * 1.5f, 384f);
@@ -1018,7 +1026,9 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
 
 
         glDisable(GL_CULL_FACE);
+        glDisable(GL_BLEND);
         glEnable(GL_DEPTH_TEST);
+        glDepthFunc(this.properties.closerEqualDepthCompare());
         if (this.terrainShader != null) {
             this.terrainShader.bind();
         } else if (this.terrainProgram != 0) {
@@ -1060,7 +1070,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
 
         this.uploadUniformBuffer(viewport);
 
-        this.renderTerrain(viewport, 0, 4*3, Math.min((int)(this.geometryManager.getSectionCount()*4.4+128), 400_000));
+        this.renderTerrain(viewport, 0, 4*3, Math.min((int)(this.geometryManager.getSectionCount()*4.4+128), OPAQUE_DRAW_COUNT));
     }
 
     /**
@@ -1237,6 +1247,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
 
         glDisable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
+        glDepthFunc(this.properties.closerEqualDepthCompare());
         if (this.translucentTerrainShader != null) {
             this.translucentTerrainShader.bind();
         } else if (this.translucentTerrainProgram != 0) {
@@ -1248,7 +1259,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
 
         glMemoryBarrier(GL_COMMAND_BARRIER_BIT|GL_SHADER_STORAGE_BARRIER_BIT);//Barrier everything is needed
         glProvokingVertex(GL_FIRST_VERTEX_CONVENTION);
-        int translucentMax = Math.min(this.geometryManager.getSectionCount(), 100_000);
+        int translucentMax = Math.min(this.geometryManager.getSectionCount(), TRANSLUCENT_DRAW_COUNT);
         if (Capabilities.INSTANCE.indirectCount) {
             glMultiDrawElementsIndirectCountARB(GL_TRIANGLES, GL_UNSIGNED_SHORT, TRANSLUCENT_OFFSET*5*4, 4*4, translucentMax, 0);
         } else {
@@ -1325,6 +1336,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         }
         if (computeSerialize) this.backend.submit(); // serialize: prep complete
 
+        GPUTiming.INSTANCE.marker("OT");
         {//Test occlusion
             if (this.backend.getType() == BackendType.OPENGL) {
                 // GL path — depth-test-based occlusion cull. Rasterizes each
@@ -1345,6 +1357,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                 glBindBuffer(GL_DRAW_INDIRECT_BUFFER, viewport.drawCountCallBuffer.id());
                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, SharedIndexBuffer.INSTANCE.id());
                 glEnable(GL_DEPTH_TEST);
+                glDepthFunc(this.properties.closerEqualDepthCompare());
                 glColorMask(false, false, false, false);
                 glDepthMask(false);
                 glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT|GL_COMMAND_BARRIER_BIT);
@@ -1379,6 +1392,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         }
         if (computeSerialize) this.backend.submit(); // serialize: cull/visibility complete before commandGen
 
+        GPUTiming.INSTANCE.marker("CG");
 
         {//Generate the commands
             this.distanceCountBuffer.zeroRange(0, 1024*4);
@@ -1423,6 +1437,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         }
         if (computeSerialize) this.backend.submit(); // serialize: commandGen (draw commands) complete
 
+        GPUTiming.INSTANCE.marker("TS");
         {//Do translucency sorting
             // M12 chunk 1: prefixSum migrated to ComputeEncoder. Runs on every
             // backend (GL lowers to glUseProgram + glBindBufferBase +
@@ -1465,7 +1480,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
     public void renderTemporal(MDICViewport viewport) {
         if (this.geometryManager.getSectionCount() == 0) return;
         //Render temporal
-        this.renderTerrain(viewport, TEMPORAL_OFFSET*5*4, 4*5, Math.min(this.geometryManager.getSectionCount(), 100_000));
+        this.renderTerrain(viewport, TEMPORAL_OFFSET*5*4, 4*5, Math.min(this.geometryManager.getSectionCount(), TEMPORAL_DRAW_COUNT));
     }
 
     private int readDrawCount(int bufferId, long offsetBytes) {
@@ -1486,7 +1501,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
 
     @Override
     public MDICViewport createViewport() {
-        return new MDICViewport(this.geometryManager.getMaxSectionCount());
+        return new MDICViewport(this.properties, this.geometryManager.getMaxSectionCount());
     }
 
     @Override

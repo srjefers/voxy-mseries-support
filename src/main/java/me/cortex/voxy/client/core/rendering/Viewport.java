@@ -3,6 +3,8 @@ package me.cortex.voxy.client.core.rendering;
 import me.cortex.voxy.client.core.gpu.BackendType;
 import me.cortex.voxy.client.core.gpu.IGpuBuffer;
 import me.cortex.voxy.client.core.gpu.RenderBackendFactory;
+import me.cortex.voxy.client.core.RenderProperties;
+import me.cortex.voxy.client.core.gl.GlBuffer;
 import me.cortex.voxy.client.core.rendering.util.DepthFramebuffer;
 import me.cortex.voxy.client.core.rendering.util.HiZBuffer;
 import net.caffeinemc.mods.sodium.client.util.FogParameters;
@@ -13,15 +15,7 @@ import java.lang.reflect.Field;
 
 public abstract class Viewport <A extends Viewport<A>> {
     //public final HiZBuffer2 hiZBuffer = new HiZBuffer2();
-    // The HiZ stencil aspect is never used (depth-only FBO attach + depth
-    // sampling). On Metal D24S8 maps to the PACKED Depth32Float_Stencil8,
-    // which Metal requires on BOTH depth and stencil attachments — the
-    // zero-fill/mip passes attach depth only, so use a pure depth format
-    // there. GL keeps the upstream D24S8.
-    public final HiZBuffer hiZBuffer = new HiZBuffer(
-            RenderBackendFactory.get().getType() != BackendType.OPENGL
-                    ? org.lwjgl.opengl.GL30C.GL_DEPTH_COMPONENT32F
-                    : org.lwjgl.opengl.GL30C.GL_DEPTH24_STENCIL8);
+    public final HiZBuffer hiZBuffer;
     public final DepthFramebuffer depthBoundingBuffer = new DepthFramebuffer();
     /**
      * Metal only (round 20): {@link #depthBoundingBuffer}'s depth blitted to
@@ -71,7 +65,11 @@ public abstract class Viewport <A extends Viewport<A>> {
     public final Vector3i section = new Vector3i();
     public final Vector3f innerTranslation = new Vector3f();
 
-    protected Viewport() {
+    public final RenderProperties properties;
+    public float nearPlane;
+    public float farPlane;
+
+    protected Viewport(RenderProperties properties) {
         Vector4f[] planes = null;
         try {
              planes = (Vector4f[]) planesField.get(this.frustum);
@@ -79,6 +77,14 @@ public abstract class Viewport <A extends Viewport<A>> {
             throw new RuntimeException(e);
         }
         this.frustumPlanes = planes;
+
+        this.properties = properties;
+        // Metal maps D24S8 to packed Depth32Float_Stencil8, which needs both
+        // attachments; HiZ is depth-only, so use a pure depth format there.
+        this.hiZBuffer = new HiZBuffer(properties,
+                RenderBackendFactory.get().getType() != BackendType.OPENGL
+                        ? org.lwjgl.opengl.GL30C.GL_DEPTH_COMPONENT32F
+                        : org.lwjgl.opengl.GL30C.GL_DEPTH24_STENCIL8);
     }
 
     public final void delete() {
@@ -99,13 +105,15 @@ public abstract class Viewport <A extends Viewport<A>> {
         return (A) this;
     }
 
-    public A setProjection(Matrix4f projection) {
+    public A setProjection(Matrix4f projection, float nearPlane, float farPlane) {
         this.projection = projection;
+        this.nearPlane = nearPlane;
+        this.farPlane = farPlane;
         return (A) this;
     }
 
-    public A setModelView(Matrix4f modelView) {
-        this.modelView = modelView;
+    public A setModelView(Matrix4fc modelView) {
+        this.modelView.set(modelView);
         return (A) this;
     }
 
@@ -189,7 +197,7 @@ public abstract class Viewport <A extends Viewport<A>> {
                 (float) (this.cameraZ-(sz<<5)));
 
         if (this.depthBoundingBuffer.resize(this.width, this.height)) {
-            this.depthBoundingBuffer.clear(0.0f);
+            this.depthBoundingBuffer.clear(this.properties.inverseClearDepth());
         }
 
         return (A) this;

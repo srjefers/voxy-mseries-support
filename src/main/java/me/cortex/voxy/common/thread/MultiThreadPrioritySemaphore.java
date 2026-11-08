@@ -2,7 +2,7 @@ package me.cortex.voxy.common.thread;
 
 import me.cortex.voxy.common.util.TrackedObject;
 
-import java.util.*;
+import java.util.Arrays;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.function.IntSupplier;
@@ -26,25 +26,26 @@ public class MultiThreadPrioritySemaphore {
             this.blockSemaphore.release(permits);
         }
 
+        /*
         public void acquire() {
             this.acquire(true);
         }
         public void acquire(boolean runJob) {//Block until a permit for this block is availbe, other jobs maybe executed while we wait
-            /*
-            while (true) {
-                this.blockSemaphore.acquireUninterruptibly();//Block on all
-                if (this.localSemaphore.tryAcquire()) {//We prioritize locals first
-                    return;
-                }
-                if (runJob) {
-                    //It wasnt a local job so run
-                    this.man.tryRun(this);
-                } else {
-                    this.blockSemaphore.release(1);
-                    Thread.onSpinWait();
-                    Thread.yield();
-                }
-            }*/
+
+            //while (true) {
+            //    this.blockSemaphore.acquireUninterruptibly();//Block on all
+            //    if (this.localSemaphore.tryAcquire()) {//We prioritize locals first
+            //        return;
+            //    }
+            //    if (runJob) {
+            //        //It wasnt a local job so run
+            //        this.man.tryRun(this);
+            //    } else {
+            //        this.blockSemaphore.release(1);
+            //        Thread.onSpinWait();
+            //        Thread.yield();
+            //    }
+            //}
 
             //Absolutly no idea if this shitty thing functions correctly... at all, it very much probably doesnt
             while (true) {
@@ -64,7 +65,29 @@ public class MultiThreadPrioritySemaphore {
                     break;
                 }
             }
+        }*/
+
+
+        public void acquire() {
+            this.acquire(true);
         }
+        public void acquire(boolean contributeToPool) {
+            if (contributeToPool) {
+                while (true) {
+                    this.blockSemaphore.acquireUninterruptibly();//Block on all
+                    if (this.localSemaphore.tryAcquire()) {//We prioritize locals first
+                        return;
+                    }
+                    if (this.man.tryRun(this)) {//Returns true if it captured a local job
+                        break;
+                    }
+                }
+            } else {
+                this.localSemaphore.acquireUninterruptibly();//We acquire local first
+                this.blockSemaphore.tryAcquire();//Try acquire a block, if not its... "fine"
+            }
+        }
+
 
 
         public void free() {

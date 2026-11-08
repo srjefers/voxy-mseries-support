@@ -5,6 +5,9 @@ import me.cortex.voxy.client.core.gpu.IGpuFramebuffer;
 import me.cortex.voxy.client.core.gpu.IGpuTexture;
 import me.cortex.voxy.client.core.gpu.RenderBackendFactory;
 
+import static org.lwjgl.opengl.ARBDirectStateAccess.nglClearNamedFramebufferfv;
+import static org.lwjgl.opengl.ARBDirectStateAccess.nglClearNamedFramebufferiv;
+import static org.lwjgl.opengl.GL11C.GL_DEPTH;
 import static org.lwjgl.opengl.GL14.GL_DEPTH_COMPONENT24;
 import static org.lwjgl.opengl.GL30C.GL_DEPTH24_STENCIL8;
 import static org.lwjgl.opengl.GL30C.GL_DEPTH_ATTACHMENT;
@@ -41,12 +44,14 @@ public class DepthFramebuffer {
         return this.depthType == GL_DEPTH24_STENCIL8?GL_DEPTH_STENCIL_ATTACHMENT: GL_DEPTH_ATTACHMENT;
     }
 
-    public void clear() {
-        this.clear(1.0f);
-    }
-
     public void clear(float depth) {
         GLCompat.clearDepthFramebuffer(this.framebuffer.id(), depth);
+    }
+
+    public void clearStencil(int to) {
+        try (var stack = org.lwjgl.system.MemoryStack.stackPush()) {
+            nglClearNamedFramebufferiv(this.framebuffer.id(), org.lwjgl.opengl.GL11C.GL_STENCIL, 0, stack.nint(to));
+        }
     }
 
     public IGpuTexture getDepthTex() {

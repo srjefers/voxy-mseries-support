@@ -3,6 +3,7 @@ package me.cortex.voxy.common.world;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import me.cortex.voxy.common.Logger;
+import me.cortex.voxy.common.world.other.Mapper;
 import org.jetbrains.annotations.Nullable;
 
 import java.lang.invoke.MethodHandles;
@@ -11,7 +12,7 @@ import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.StampedLock;
 
-public class ActiveSectionTracker {
+public final class ActiveSectionTracker {
 
     //Deserialize into the supplied section, returns true on success, false on failure
     public interface SectionLoader {int load(WorldSection section);}
@@ -155,7 +156,9 @@ public class ActiveSectionTracker {
                 //TODO: REWRITE THE section tracker _again_ to not be so shit and jank, and so that Arrays.fill is not 10% of the execution time
                 if (status == 1) {
                     //We need to set the data to air as it is undefined state
-                    Arrays.fill(section.data, 0);
+                    int sky = 15;
+                    int block = 0;
+                    Arrays.fill(section.data, Mapper.composeMappingId((byte) (sky|(block<<4)),0,0));
                 }
                 section.acquire(1);
             }
@@ -201,15 +204,33 @@ public class ActiveSectionTracker {
         }
     }
 
-    void tryUnload(WorldSection section) {
+    void tryUnload(WorldSection section, int hints) {
         if (this.engine != null) this.engine.lastActiveTime = System.currentTimeMillis();
-        if (section.isDirty&&this.engine!=null) {
+        if (section.shouldSave()&&this.engine!=null) {
             if (section.tryAcquire()) {
-                if (section.setNotDirty()) {//If the section is dirty we must enqueue for saving
-                    this.engine.saveSection(section);
+                VarHandle.loadLoadFence();
+                if (section.shouldSave()) {//If we should try enqueue
+                    if (!this.engine.saveSection(section, false, true)) {
+                        //we didnt enqueue the section in the save queue so we must unload it manually
+                        Logger.info("section raced to into save queue, we lost");
+                        section.release(true, hints);//We need to try unload cause else we may loose state
+                    } else {
+                        //section is queued, and we gave it the acquired section, so we can just return
+                        return;//We just return
+                    }
+                } else {
+                    Logger.warn("section raced to save queue, we lost");
+                    section.release(true, hints);//Unload cause we need to retry the whole thing again
                 }
-                section.release(false);//Special
+            } else {
+                if (section.shouldSave()) {
+                    //This is bad
+                    Logger.error("failed to acquire section, but we need to save, this is really bad");
+                } else {
+                    Logger.info("raced section");
+                }
             }
+            return;//If we reach here, we need to just return, unload pipeline will be taken care of elsewhere
         }
 
         if (section.getRefCount() != 0) {
@@ -220,19 +241,50 @@ public class ActiveSectionTracker {
         WorldSection sec = null;
         final var lock = this.locks[index];
         long stamp = lock.writeLock();
+        if (section.getRefCount() != 0) {
+            lock.unlockWrite(stamp);
+            return;
+        }
+        boolean shouldRetryExit = false;
         {
             VarHandle.loadLoadFence();
-            if (section.isDirty) {
+            if (this.engine != null && section.shouldSave()) {//Last call for saving
                 if (section.tryAcquire()) {
-                    if (section.setNotDirty()) {//If the section is dirty we must enqueue for saving
-                        if (this.engine != null)
-                            this.engine.saveSection(section);
+                    if (!this.engine.saveSection(section, true, true)) {//not allowed to block as we are in a lock
+                        //We didnt enqueue the save here, so we must unload
+                        // but unload in a recursive
+                        //VarHandle.fullFence();
+                        //shouldRetryExit |= section.getRefCount()!=1;//if we arnt the only ref
+                        //VarHandle.fullFence();
+                        //shouldRetryExit |= section.isDirty;//or if the section is now dirty, note this must go AFTER the ref check, since you can only mark live sections as dirty
+
+                        shouldRetryExit |= true;//Always force retry when/if we hit this case
+                        section.release(false, hints);//Special, we cannot unload here else we deadlock
+                        //we can do a no-unload since we are guarenteed to retry
                     }
-                    section.release(false);//Special
+
+
+                    //NOTE: think have since fixed this issue
+                    //In theory there can be a race condition here, where if this thread is paused
+                    // the save queue fully finishes, the state is dirty == false inSaveQueue == false
+                    // but the acquire count is at least 1
+                    //if another thread marks this chunk as dirty (it would have acquired it after the inital `section.getRefCount() != 0`
+                    // return check) and releases it, since the acquire count is still 1 (acquired here)
+                    // then it doesnt trigger a save attempt but the dirty flag is set
+                    //then this code continues and it causes badness cause its now in an invalid state
                 } else {
                     throw new IllegalStateException("Section was dirty but is also unloaded, this is very bad");
                 }
             }
+
+            //This is a painful case, we need to abort here if there was a funky thing that happened
+            if (shouldRetryExit) {
+                lock.unlockWrite(stamp);
+                //retry
+                this.tryUnload(section, hints);
+                return;
+            }
+
             if (section.getRefCount() == 0 && section.trySetFreed()) {
                 var cached = cache.remove(section.key);
                 var obj = cached.obj;

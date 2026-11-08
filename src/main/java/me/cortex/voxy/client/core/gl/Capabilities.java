@@ -3,20 +3,20 @@ package me.cortex.voxy.client.core.gl;
 import me.cortex.voxy.client.core.gl.shader.ShaderType;
 import me.cortex.voxy.common.Logger;
 import org.lwjgl.opengl.GL;
-import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL15C;
 import org.lwjgl.opengl.GL30C;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.system.MemoryUtil;
 
-import java.util.Random;
+import java.util.Locale;
 
 import static org.lwjgl.opengl.GL11.GL_NEAREST;
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_2D;
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER;
 import static org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE;
 import static org.lwjgl.opengl.GL15C.*;
+import static org.lwjgl.opengl.GL15.glDeleteBuffers;
 import static org.lwjgl.opengl.GL30.GL_DEPTH_STENCIL;
 import static org.lwjgl.opengl.GL30C.*;
 import static org.lwjgl.opengl.GL32.glGetInteger64;
@@ -27,6 +27,17 @@ import static org.lwjgl.opengl.GL44.GL_DYNAMIC_STORAGE_BIT;
 import static org.lwjgl.opengl.GL44.GL_MAP_COHERENT_BIT;
 import static org.lwjgl.opengl.GL44C.GL_MAP_PERSISTENT_BIT;
 import static org.lwjgl.opengl.GL45C.*;
+import static org.lwjgl.opengl.GL45.glClearNamedFramebufferfi;
+import static org.lwjgl.opengl.GL45C.*;
+import static org.lwjgl.opengl.GL45C.GL_FLOAT;
+import static org.lwjgl.opengl.GL45C.GL_RED;
+import static org.lwjgl.opengl.GL45C.GL_TEXTURE_MIN_FILTER;
+import static org.lwjgl.opengl.GL45C.GL_VENDOR;
+import static org.lwjgl.opengl.GL45C.GL_VERSION;
+import static org.lwjgl.opengl.GL45C.glDeleteTextures;
+import static org.lwjgl.opengl.GL45C.glFinish;
+import static org.lwjgl.opengl.GL45C.glGetInteger;
+import static org.lwjgl.opengl.GL45C.glGetString;
 import static org.lwjgl.opengl.NVXGPUMemoryInfo.*;
 import static me.cortex.voxy.client.core.gl.GLCompat.*;
 
@@ -38,6 +49,7 @@ public class Capabilities {
     public final boolean meshShaders;
     public final boolean INT64_t;
     public final long ssboMaxSize;
+    public final int ssboBindingAlignment;
     public final boolean isMesa;
     public final boolean canQueryGpuMemory;
     public final long totalDedicatedMemory;//Bytes, dedicated memory
@@ -87,9 +99,10 @@ public class Capabilities {
         }
 
         this.ssboMaxSize = glGetInteger64(GL_MAX_SHADER_STORAGE_BLOCK_SIZE);
+        this.ssboBindingAlignment = glGetInteger(GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT);
 
-        this.isMesa = glGetString(GL_VERSION).toLowerCase().contains("mesa");
-        var vendor = glGetString(GL_VENDOR).toLowerCase();
+        this.isMesa = glGetString(GL_VERSION).toLowerCase(Locale.ROOT).contains("mesa");
+        var vendor = glGetString(GL_VENDOR).toLowerCase(Locale.ROOT);
         this.isIntel = vendor.contains("intel");
         this.isNvidia = vendor.contains("nvidia");
         this.isAmd = vendor.contains("amd")||vendor.contains("radeon");
@@ -107,7 +120,7 @@ public class Capabilities {
         if (this.compute&&this.isAmd) {
             this.hasBrokenDepthSampler = testDepthSampler();
             if (this.hasBrokenDepthSampler) {
-                //throw new IllegalStateException("it bork, amd is bork");
+                throw new IllegalStateException("it bork, amd is bork");
             }
         } else {
             this.hasBrokenDepthSampler = false;

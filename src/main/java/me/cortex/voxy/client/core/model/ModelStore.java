@@ -7,7 +7,10 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.resources.Identifier;
 
-import static org.lwjgl.opengl.GL11.*;
+import java.lang.ref.Cleaner;
+
+import static org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER;
+import static org.lwjgl.opengl.GL11.GL_TEXTURE_MIN_FILTER;
 import static org.lwjgl.opengl.GL11C.GL_NEAREST;
 import static org.lwjgl.opengl.GL11C.GL_NEAREST_MIPMAP_LINEAR;
 import static org.lwjgl.opengl.GL12C.GL_TEXTURE_MAX_LOD;

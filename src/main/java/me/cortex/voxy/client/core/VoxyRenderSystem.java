@@ -1,17 +1,21 @@
 package me.cortex.voxy.client.core;
 
-import com.mojang.blaze3d.opengl.GlConst;
-import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlConst;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import me.cortex.voxy.client.TimingStatistics;
 import me.cortex.voxy.client.VoxyClient;
 import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.client.core.gl.Capabilities;
+import me.cortex.voxy.client.core.gl.GlBuffer;
+import me.cortex.voxy.client.core.gl.GlTexture;
 import me.cortex.voxy.client.core.model.ModelBakerySubsystem;
-import me.cortex.voxy.client.core.model.ModelStore;
-import me.cortex.voxy.client.core.rendering.ChunkBoundRenderer;
 import me.cortex.voxy.client.core.rendering.RenderDistanceTracker;
 import me.cortex.voxy.client.core.rendering.Viewport;
 import me.cortex.voxy.client.core.rendering.ViewportSelector;
+import me.cortex.voxy.client.core.rendering.ChunkBoundRenderer;
+import me.cortex.voxy.client.core.rendering.bounding.BoundRenderer;
+import me.cortex.voxy.client.core.rendering.bounding.ColumnStreamedBoundStore;
+import me.cortex.voxy.client.core.rendering.bounding.StreamedBoundStore;
 import me.cortex.voxy.client.core.rendering.building.RenderGenerationService;
 import me.cortex.voxy.client.core.rendering.hierachical.AsyncNodeManager;
 import me.cortex.voxy.client.core.rendering.hierachical.HierarchicalOcclusionTraverser;
@@ -28,19 +32,22 @@ import me.cortex.voxy.client.core.util.GPUTiming;
 import me.cortex.voxy.client.core.util.IrisUtil;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.thread.ServiceManager;
+import me.cortex.voxy.common.util.GlobalCleaner;
 import me.cortex.voxy.common.world.WorldEngine;
 import me.cortex.voxy.commonImpl.VoxyCommon;
-import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
 import net.caffeinemc.mods.sodium.client.util.FogParameters;
 import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
+import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.lwjgl.opengl.GL11;
 
+import java.lang.ref.Cleaner;
 import java.util.Arrays;
 import java.util.List;
 
-import static org.lwjgl.opengl.GL11.GL_VIEWPORT;
+import static org.lwjgl.opengl.ARBDirectStateAccess.glGetTextureLevelParameteri;
 import static org.lwjgl.opengl.GL11.glGetIntegerv;
 import static org.lwjgl.opengl.GL11C.*;
 import static org.lwjgl.opengl.GL30C.*;
@@ -51,7 +58,6 @@ import static org.lwjgl.opengl.GL43C.GL_SHADER_STORAGE_BUFFER_BINDING;
 public class VoxyRenderSystem {
     private final WorldEngine worldIn;
 
-
     private final ModelBakerySubsystem modelService;
     private final RenderGenerationService renderGen;
     private final IGeometryData geometryData;
@@ -59,13 +65,20 @@ public class VoxyRenderSystem {
     private final NodeCleaner nodeCleaner;
     private final HierarchicalOcclusionTraverser traversal;
 
+    private final Cleaner.Cleanable geoRef;
+
 
     private final RenderDistanceTracker renderDistanceTracker;
+    private final BoundRenderer boundOutlineRenderer;
+    // Fork: loaded-chunk depth mask used by the Metal path (fed by MixinRenderSectionManager).
     public final ChunkBoundRenderer chunkBoundRenderer;
+    public final StreamedBoundStore visbleSectionStream;
+    private @Nullable ColumnStreamedBoundStore columnStreamedBoundStore;//Only used when FREX is enabled
 
     private final ViewportSelector<?> viewportSelector;
 
     private final AbstractRenderPipeline pipeline;
+    private final RenderProperties properties;
 
     /** Diagnostic frame counter for the Metal LOD-ring log in {@link #renderOpaque}. */
     private int metalRingDiagFrame;
@@ -157,10 +170,14 @@ public class VoxyRenderSystem {
         //Keep the world loaded, NOTE: this is done FIRST, to keep and ensure that even if the rest of loading takes more
         // than timeout, we keep the world acquired
         world.acquireRef();
+        Logger.info("Creating Voxy render system");
+
         System.gc();
 
-        if (Minecraft.getInstance().options.getEffectiveRenderDistance()<3) {
-            Logger.warn("Having a vanilla render distance of 2 can cause rare culling near the edge of your screen issues, please use 3 or more");
+        if (Minecraft.getInstance().options.renderDistance().get()<3) {
+            String msg = "Voxy: Having a vanilla render distance of 2 can cause rare culling near the edge of your screen issues, please use 3 or more";
+            Logger.warn(msg);
+            Minecraft.getInstance().gui.chatListener().handleSystemMessage(Component.literal(msg), false);
         }
 
         this.constructedIrisGbufferInject = IrisUtil.irisGbufferInjectMode();
@@ -197,14 +214,29 @@ public class VoxyRenderSystem {
 
             this.worldIn = world;
 
-            long geometryCapacity = getGeometryBufferSize();
+            this.properties = RenderProperties.getRenderProperties();
+            // GL-only bound stores; the Metal path uses ChunkBoundRenderer instead.
+            this.visbleSectionStream = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType() != me.cortex.voxy.client.core.gpu.BackendType.OPENGL ? null : new StreamedBoundStore();
             var backendFactory = getRenderBackendFactory();
-
             {
                 this.modelService = new ModelBakerySubsystem(world.getMapper());
                 this.renderGen = new RenderGenerationService(world, this.modelService, sm, IUsesMeshlets.class.isAssignableFrom(backendFactory.clz()));
 
-                this.geometryData = new BasicSectionGeometryData(1 << 20, geometryCapacity);
+
+                // Metal needs the geometry in a backend buffer; the reusable pool is GL-only.
+                if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                        != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+                    this.geometryData = new BasicSectionGeometryData(1<<20, RenderResourceReuse.getGeometryBufferSize());
+                } else {
+                    this.geometryData = new BasicSectionGeometryData(1<<20, RenderResourceReuse.getOrCreateGeometryBuffer());
+                }
+
+                if (((BasicSectionGeometryData)this.geometryData).isExternalGeometryBuffer) {
+                    var buffer = ((BasicSectionGeometryData)this.geometryData).getGeometryBuffer();
+                    this.geoRef = GlobalCleaner.CLEANER.register(this.geometryData,() -> RenderResourceReuse.giveBackGeometryBuffer((GlBuffer) buffer));
+                } else {
+                    this.geoRef = null;
+                }
 
                 this.nodeManager = new AsyncNodeManager(1 << 21, this.geometryData, this.renderGen);
                 this.nodeCleaner = new NodeCleaner(this.nodeManager);
@@ -218,8 +250,13 @@ public class VoxyRenderSystem {
                 this.nodeManager.start();
             }
 
-            this.pipeline = RenderPipelineFactory.createPipeline(this.nodeManager, this.nodeCleaner, this.traversal, this::frexStillHasWork);
+            this.pipeline = RenderPipelineFactory.createPipeline(this.properties, this.nodeManager, this.nodeCleaner, this.traversal, this::frexStillHasWork);
             this.pipeline.setupExtraModelBakeryData(this.modelService);//Configure the model service
+
+            //Late stage traversal compile for shaders with taa
+            this.traversal.lateStageCompile(this.pipeline);
+
+
             var sectionRenderer = backendFactory.create(this.pipeline, this.modelService.getStore(), this.geometryData);
             this.pipeline.setSectionRenderer(sectionRenderer);
             this.viewportSelector = new ViewportSelector<>(sectionRenderer::createViewport);
@@ -234,7 +271,7 @@ public class VoxyRenderSystem {
                     maxSec = 7;
                 }
 
-                this.renderDistanceTracker = new RenderDistanceTracker(20,
+                this.renderDistanceTracker = new RenderDistanceTracker(40,
                         minSec,
                         maxSec,
                         this.nodeManager::addTopLevel,
@@ -243,9 +280,10 @@ public class VoxyRenderSystem {
                 this.setRenderDistance(VoxyConfig.CONFIG.sectionRenderDistance);
             }
 
+            this.boundOutlineRenderer = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType() != me.cortex.voxy.client.core.gpu.BackendType.OPENGL ? null : new BoundRenderer(this.pipeline);
             this.chunkBoundRenderer = new ChunkBoundRenderer(this.pipeline);
 
-            Logger.info("Voxy render system created with " + geometryCapacity + " geometry capacity, using pipeline '" + this.pipeline.getClass().getSimpleName() + "' with renderer '" + sectionRenderer.getClass().getSimpleName() + "'");
+            Logger.info("Voxy render system created with " + this.geometryData.getMaxCapacity() + " geometry capacity, using pipeline '" + this.pipeline.getClass().getSimpleName() + "' with renderer '" + sectionRenderer.getClass().getSimpleName() + "'");
         } catch (RuntimeException e) {
             world.releaseRef();//If something goes wrong, we must release the world first
             throw e;
@@ -412,7 +450,7 @@ public class VoxyRenderSystem {
         return this.smoothedFog;
     }
 
-    public Viewport<?> setupViewport(ChunkRenderMatrices matrices, FogParameters fogParameters, double cameraX, double cameraY, double cameraZ) {
+    public Viewport<?> setupViewport(Matrix4fc vanillaProjection, Matrix4fc modelView, FogParameters fogParameters, int width, int height, double cameraX, double cameraY, double cameraZ) {
         var viewport = this.getViewport();
         if (viewport == null) {
             return null;
@@ -427,15 +465,26 @@ public class VoxyRenderSystem {
         }
 
         //cameraY += 100;
-        var projection = computeProjectionMat(matrices.projection());//RenderSystem.getProjectionMatrix();
-        //var projection = ShadowMatrices.createOrthoMatrix(160, -16*300, 16*300);
-        //var projection = new Matrix4f(matrices.projection());
+        float far = 3000 * 16;
+        //dont like this hacky instanceof thing and how this is wired
+        //TODO: fixme
+        if (this.pipeline instanceof IrisVoxyRenderPipeline ivrp) {
+            if (ivrp._getData().useDynamicFarPlane) {
+                far  = (VoxyConfig.CONFIG.sectionRenderDistance * 32 + 2) * ((float) Math.sqrt(3)) * 16;
+            }
+        }
 
+        float near = getVanillaRenderDistance()<=32.0f?8f:16f;
+        near = VoxyClient.disableSodiumChunkRender()?0.1f:near;
+        var voxyProjection = computeProjectionMat(this.properties, vanillaProjection, near, far);
+
+        /*
         int[] dims = new int[4];
         glGetIntegerv(GL_VIEWPORT, dims);
 
         int width = dims[2];
         int height = dims[3];
+        */
         if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
                 != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
             // GL_VIEWPORT is NOT trustworthy here: MC re-renders the 16x16
@@ -448,7 +497,7 @@ public class VoxyRenderSystem {
             // reallocated the IOSurface bridge to 16x16 (broken blit) — the
             // underwater strobe. MC's main RT is the authoritative frame size
             // (same source the compositor uses).
-            var rt = Minecraft.getInstance().getMainRenderTarget();
+            var rt = Minecraft.getInstance().gameRenderer.mainRenderTarget();
             if (rt != null && rt.width > 0 && rt.height > 0) {
                 if ((width != rt.width || height != rt.height) && !loggedViewportLeak) {
                     loggedViewportLeak = true;
@@ -468,6 +517,10 @@ public class VoxyRenderSystem {
                 height = (int) (height*factor[1]);
             }
         }
+        if (width == 0 || height == 0) {
+            Logger.error("Viewport width or height was zero, this is bad bad bad");
+            return null;
+        }
 
         viewport.zoomCompensation = 1.0f;
         if (!ZOOM_REFINE_ENABLED
@@ -480,8 +533,8 @@ public class VoxyRenderSystem {
             // request→build→upload round trip (~3s of pop-in). Scale minSSS by
             // the projected-AREA zoom factor instead so the already-built level
             // stays selected. The REQUEST/cull frustum keeps the zoomed planes.
-            float m00 = projection.m00();
-            float m11 = projection.m11();
+            float m00 = vanillaProjection.m00();
+            float m11 = vanillaProjection.m11();
             float baseFov = Minecraft.getInstance().options.fov().get();
             float baseM11 = 1.0f / (float) Math.tan(Math.toRadians(baseFov) * 0.5);
             float aspect = m00 != 0.0f ? Math.abs(m11 / m00) : 0.0f;
@@ -537,7 +590,7 @@ public class VoxyRenderSystem {
         // VxContractInjector, the HOT request boost) pause for those frames —
         // fail-open, render MVP untouched (the scope still draws zoomed).
         {
-            float m00Now = projection.m00();
+            float m00Now = vanillaProjection.m00();
             boolean unstable = false;
             if (lastFrameM00 != 0.0f && m00Now != 0.0f) {
                 float rel = Math.abs(m00Now - lastFrameM00) / Math.abs(lastFrameM00);
@@ -557,9 +610,9 @@ public class VoxyRenderSystem {
         }
 
         viewport
-                .setVanillaProjection(matrices.projection())
-                .setProjection(projection)
-                .setModelView(new Matrix4f(matrices.modelView()))
+                .setVanillaProjection(vanillaProjection)
+                .setProjection(voxyProjection, near, far)
+                .setModelView(new Matrix4f(modelView))
                 .setCamera(cameraX, cameraY, cameraZ)
                 .setScreenSize(width, height)
                 .setFogParameters(fogParameters)
@@ -572,7 +625,8 @@ public class VoxyRenderSystem {
         return viewport;
     }
 
-    public void renderOpaque(Viewport<?> viewport) {
+
+    public void renderOpaque(Viewport<?> viewport, int sourceDepthTexture, int sourceColourTexture) {
         if (viewport == null) {
             return;
         }
@@ -594,10 +648,10 @@ public class VoxyRenderSystem {
                         + IrisUtil.irisGbufferInjectMode()
                         + ") — scheduling Voxy renderer reload to rebake fog/inject mode");
                 Minecraft.getInstance().execute(() -> {
-                    if (Minecraft.getInstance().levelRenderer instanceof IGetVoxyRenderSystem holder
-                            && holder.getVoxyRenderSystem() == this) {
-                        holder.shutdownRenderer();
-                        holder.createRenderer();
+                    if (Minecraft.getInstance().levelRenderer instanceof IVoxyRenderSystemHolder holder
+                            && holder.voxy$getRenderSystem() == this) {
+                        holder.voxy$shutdownRenderer();
+                        holder.voxy$createRenderer();
                     }
                 });
             }
@@ -613,6 +667,7 @@ public class VoxyRenderSystem {
             // X-ray). Must run BEFORE runPipeline so the LOD pass samples
             // this frame's mask.
             if ((!VoxyClient.disableSodiumChunkRender()) && !IrisUtil.irisShadowActive()) {
+                this.chunkBoundRenderer.drainReady();
                 this.chunkBoundRenderer.renderMetal(viewport,
                         me.cortex.voxy.client.core.gpu.RenderBackendFactory.get());
             } else {
@@ -655,7 +710,7 @@ public class VoxyRenderSystem {
             this.metalRingDiagFrame++;
             if (this.metalRingDiagFrame % 600 == 1) {
                 me.cortex.voxy.common.Logger.info(String.format(
-                        "[Metal-RING f=%d] processedThisFrame=%s  cam=(%.0f, %.0f)  cfgRD=%d",
+                        "[Metal-RING f=%d] processedThisFrame=%s  cam=(%.0f, %.0f)  cfgRD=%s",
                         this.metalRingDiagFrame, processedThisFrame,
                         viewport.cameraX, viewport.cameraZ,
                         me.cortex.voxy.client.config.VoxyConfig.CONFIG.sectionRenderDistance));
@@ -663,9 +718,17 @@ public class VoxyRenderSystem {
             return;
         }
 
+        if (viewport.width <= 0 || viewport.height <= 0) {
+            Logger.error("Viewport width or height was zero, this is bad bad bad, exiting frame");
+            return;//Only render on valid viewport
+        }
+
+        if (sourceDepthTexture == 0) {
+            throw new IllegalStateException("Source depth texture cannot be 0");
+        }
+
         TimingStatistics.resetSamplers();
 
-        long startTime = System.nanoTime();
         TimingStatistics.all.start();
         GPUTiming.INSTANCE.marker();//Start marker
         TimingStatistics.main.start();
@@ -676,36 +739,49 @@ public class VoxyRenderSystem {
             oldBufferBindings[i] = glGetIntegeri(GL_SHADER_STORAGE_BUFFER_BINDING, i);
         }
 
+        GlStateManager._enableDepthTest();
+        GlStateManager._depthFunc(this.properties.closerEqualDepthCompare());
+        GlStateManager._depthMask(true);
+        GlStateManager._disablePolygonOffset();
 
         int oldFB = GL11.glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
-        int boundFB = oldFB;
 
         int[] dims = new int[4];
         glGetIntegerv(GL_VIEWPORT, dims);
 
-        glViewport(0,0, viewport.width, viewport.height);
-
-        //var target = DefaultTerrainRenderPasses.CUTOUT.getTarget();
-        //boundFB = ((net.minecraft.client.texture.GlTexture) target.getColorAttachment()).getOrCreateFramebuffer(((GlBackend) RenderSystem.getDevice()).getFramebufferManager(), target.getDepthAttachment());
-        if (boundFB == 0) {
-            throw new IllegalStateException("Cannot use the default framebuffer as cannot source from it");
-        }
-
         //this.autoBalanceSubDivSize();
+
+
+        glViewport(0, 0, viewport.width, viewport.height);
+
+        int scrWidth  = glGetTextureLevelParameteri(sourceDepthTexture, 0, GL_TEXTURE_WIDTH);
+        int scrHeight = glGetTextureLevelParameteri(sourceDepthTexture, 0, GL_TEXTURE_HEIGHT);
 
         this.pipeline.preSetup(viewport);
 
         TimingStatistics.E.start();
-        if ((!VoxyClient.disableSodiumChunkRender())&&!IrisUtil.irisShadowActive()) {
-            this.chunkBoundRenderer.render(viewport);
+        if (this.visbleSectionStream != null && (!VoxyClient.disableSodiumChunkRender()) && !IrisUtil.irisShadowActive()) {
+            if (VoxyClient.isFrexActive()!=(this.columnStreamedBoundStore!=null)) {
+                if (this.columnStreamedBoundStore == null) {
+                    this.columnStreamedBoundStore = new ColumnStreamedBoundStore();
+                } else {
+                    this.columnStreamedBoundStore.free();
+                    this.columnStreamedBoundStore = null;
+                }
+            }
+            //viewport.depthBoundingBuffer.framebuffer.bind(GL_COLOR_ATTACHMENT0, sourceColourTexture).verify();
+            //If the bound renderer exists, it means we must be in FREX mode
+            this.boundOutlineRenderer.render(viewport, this.columnStreamedBoundStore==null?this.visbleSectionStream:this.columnStreamedBoundStore);
         } else {
-            viewport.depthBoundingBuffer.clear(0);
+            viewport.depthBoundingBuffer.clear(this.properties.inverseClearDepth());
         }
         TimingStatistics.E.stop();
 
 
+        GPUTiming.INSTANCE.marker();
         //The entire rendering pipeline (excluding the chunkbound thing)
-        this.pipeline.runPipeline(viewport, boundFB, dims[2], dims[3]);
+        this.pipeline.runPipeline(viewport, sourceDepthTexture, sourceColourTexture, scrWidth, scrHeight);
+        GPUTiming.INSTANCE.marker();
 
 
         TimingStatistics.main.stop();
@@ -724,6 +800,11 @@ public class VoxyRenderSystem {
             do { this.modelService.tick(900_000); } while (VoxyClient.isFrexActive() && !this.modelService.areQueuesEmpty());
             TimingStatistics.H.stop();
         }
+
+
+
+
+
         GPUTiming.INSTANCE.marker();
         TimingStatistics.postDynamic.stop();
 
@@ -733,10 +814,14 @@ public class VoxyRenderSystem {
         glViewport(dims[0], dims[1], dims[2], dims[3]);
 
         {//Reset state manager stuffs
+            GlStateManager._glUseProgram(0);
             glUseProgram(0);
+            GlStateManager._enableDepthTest();
             glEnable(GL_DEPTH_TEST);
+            glDisable(GL_STENCIL_TEST);
 
             GlStateManager._glBindVertexArray(0);//Clear binding
+            glBindVertexArray(0);
 
             GlStateManager._activeTexture(GlConst.GL_TEXTURE1);
             for (int i = 0; i < 12; i++) {
@@ -752,6 +837,14 @@ public class VoxyRenderSystem {
             for (int i = 0; i < oldBufferBindings.length; i++) {
                 glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, oldBufferBindings[i]);
             }
+            GlStateManager._blendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+            glBlendEquation(GL_FUNC_ADD);
+            GlStateManager._blendFuncSeparate(0,0, 0, 0);
+            glBlendFunc(0, 0);
+            GlStateManager._disableBlend(0);
+            glDisable(GL_BLEND);
+            GlStateManager._depthFunc(GL_LESS);
+            glDepthFunc(GL_LESS);
 
             //((SodiumShader) Iris.getPipelineManager().getPipelineNullable().getSodiumPrograms().getProgram(DefaultTerrainRenderPasses.CUTOUT).getInterface()).setupState(DefaultTerrainRenderPasses.CUTOUT, fogParameters);
         }
@@ -807,16 +900,23 @@ public class VoxyRenderSystem {
         }
     }
 
+    public static float getVanillaRenderDistance() {
+        return Minecraft.getInstance().options.getEffectiveRenderDistance()*16;
+    }
+
+    /*
+    private static float getGameFoV() {
+        var client = Minecraft.getInstance();
+        var gameRenderer = client.gameRenderer;
+        return gameRenderer.mainCamera().getFov();
+    }
+
     private static Matrix4f makeProjectionMatrix(float near, float far) {
         //TODO: use the existing projection matrix use mulLocal by the inverse of the projection and then mulLocal our projection
 
         var projection = new Matrix4f();
         var client = Minecraft.getInstance();
-        var gameRenderer = client.gameRenderer;//tickCounter.getTickDelta(true);
-
-        float fov = gameRenderer.getFov(gameRenderer.getMainCamera(), client.getDeltaTracker().getGameTimeDeltaPartialTick(true), true);
-
-        projection.setPerspective(fov * 0.01745329238474369f,
+        projection.setPerspective(getGameFoV() * 0.01745329238474369f,
                 (float) client.getWindow().getWidth() / (float)client.getWindow().getHeight(),
                 near, far);
         return projection;
@@ -828,13 +928,44 @@ public class VoxyRenderSystem {
         // at short render distances the vanilla terrain doesnt end up covering the 16f near plane voxy uses
         // meaning that it explodes (due to near plane clipping).. _badly_ with the rastered culling being wrong in rare cases for the immediate
         // sections rendered after the vanilla render distance
-        float nearVoxy = Minecraft.getInstance().gameRenderer.getRenderDistance()<=32.0f?8f:16f;
+        float nearVoxy = getVanillaRenderDistance()<=32.0f?8f:16f;
         nearVoxy = VoxyClient.disableSodiumChunkRender()?0.1f:nearVoxy;
 
         return base.mulLocal(
-                makeProjectionMatrix(0.05f, Minecraft.getInstance().gameRenderer.getDepthFar()).invert(),
+                Minecraft.getInstance().gameRenderer.getGameRenderState().levelRenderState.cameraRenderState.projectionMatrix.invert(new Matrix4f()),
                 new Matrix4f()
         ).mulLocal(makeProjectionMatrix(nearVoxy, 16*3000));
+    }*/
+
+    private static Matrix4f computeProjectionMat(RenderProperties properties, Matrix4fc base, float nearPlane, float farPlane) {
+
+        //this jank is to capture the extra crap they inject like viewbobbing
+        var rawMCProj = Minecraft.getInstance().gameRenderer.gameRenderState().levelRenderState.cameraRenderState.projectionMatrix;
+        var extraProjection = rawMCProj.invert(new Matrix4f()).mul(base);
+
+
+        float far = farPlane;
+        float near = nearPlane;
+
+        /* jank way of just modifying the base raw
+        if (true) {
+            return new Matrix4f(base)
+                    .m22((far + near) / (near - far))
+                    .m32((far+far) * near / (near - far));
+        }*/
+
+        //Flip near and far on reverse depth
+        if (properties.isReverseZ()) {
+            float tmp = nearPlane;
+            near = far;
+            far = tmp;
+        }
+
+        return extraProjection.mulLocal(
+                new Matrix4f(rawMCProj)
+                .m22((properties.isZero2One()?far:(far+near)) / (near - far))
+                .m32((properties.isZero2One()?far:(far+far)) * near / (near - far))
+        );
     }
 
     private boolean frexStillHasWork() {
@@ -849,8 +980,8 @@ public class VoxyRenderSystem {
         return this.nodeManager.hasWork() || this.renderGen.getTaskCount()!=0 || !this.modelService.areQueuesEmpty();
     }
 
-    public void setRenderDistance(int renderDistance) {
-        this.renderDistanceTracker.setRenderDistance(renderDistance);
+    public void setRenderDistance(float renderDistance) {
+        this.renderDistanceTracker.setRenderDistance((int) Math.ceil(renderDistance+1));//the +1 is to cover the outer ring of chunks when rendering a circle
     }
 
     public Viewport<?> getViewport() {
@@ -859,10 +990,6 @@ public class VoxyRenderSystem {
         }
         return this.viewportSelector.getViewport();
     }
-
-
-
-
 
     public void addDebugInfo(List<String> debug) {
         var backend = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get();
@@ -879,6 +1006,7 @@ public class VoxyRenderSystem {
             debug.add("Extra time: " + TimingStatistics.A.pVal() + ", " + TimingStatistics.B.pVal() + ", " + TimingStatistics.C.pVal() + ", " + TimingStatistics.D.pVal());
             debug.add("Extra 2 time: " + TimingStatistics.E.pVal() + ", " + TimingStatistics.F.pVal() + ", " + TimingStatistics.G.pVal() + ", " + TimingStatistics.H.pVal() + ", " + TimingStatistics.I.pVal());
         }
+        debug.add(GPUTiming.INSTANCE.getDebug());
         PrintfDebugUtil.addToOut(debug);
     }
 
@@ -912,9 +1040,20 @@ public class VoxyRenderSystem {
             this.renderGen.shutdown();
             this.traversal.free();
             this.nodeCleaner.free();
-
             this.geometryData.free();
-            this.chunkBoundRenderer.free();
+            if (this.geoRef != null) {
+                this.geoRef.clean();
+            }
+
+            if (this.boundOutlineRenderer != null) this.boundOutlineRenderer.free();
+            if (this.chunkBoundRenderer != null) this.chunkBoundRenderer.free();
+            if (this.visbleSectionStream != null) {
+                this.visbleSectionStream.free();
+            }
+            if (this.columnStreamedBoundStore != null) {
+                this.columnStreamedBoundStore.free();
+                this.columnStreamedBoundStore = null;
+            }
 
             this.viewportSelector.free();
         } catch (Exception e) {Logger.error("Error shutting down renderer components", e);}
@@ -955,44 +1094,6 @@ public class VoxyRenderSystem {
         //Release hold on the world
         this.worldIn.releaseRef();
         Logger.info("Render shutdown completed");
-    }
-
-    private static long getGeometryBufferSize() {
-        // M9 transitional: on Mac with Metal/Vulkan backend, Apple's frozen GL 4.1
-        // doesn't expose GL_MAX_SHADER_STORAGE_BLOCK_SIZE, so Capabilities.INSTANCE.ssboMaxSize
-        // is 0 — the bit-magic computation below produces -1024, which is invalid
-        // and BasicSectionGeometryData rejects it (must be %8==0). Use the
-        // backend-agnostic getter when GL capabilities aren't available.
-        long ssboMaxSize = Capabilities.INSTANCE.ssboMaxSize;
-        if (ssboMaxSize <= 0) {
-            ssboMaxSize = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getMaxSSBOSize();
-        }
-        if (ssboMaxSize <= 0) {
-            // Final fallback: a sane 1GB default. Caller may further clamp by
-            // available GPU memory below.
-            ssboMaxSize = 1L << 30;
-        }
-        long geometryCapacity = Math.min((1L<<(64-Long.numberOfLeadingZeros(ssboMaxSize-1)))<<1, 1L<<32)-1024/*(1L<<32)-1024*/;
-        if (Capabilities.INSTANCE.isIntel) {
-            geometryCapacity = Math.max(geometryCapacity, 1L<<30);//intel moment, force min 1gb
-        }
-
-        //Limit to available dedicated memory if possible
-        if (Capabilities.INSTANCE.canQueryGpuMemory) {
-            //512mb less than avalible,
-            long limit = Capabilities.INSTANCE.getFreeDedicatedGpuMemory() - (long)(1.5*1024*1024*1024);//1.5gb vram buffer
-            // Give a minimum of 512 mb requirement
-            limit = Math.max(512*1024*1024, limit);
-
-            geometryCapacity = Math.min(geometryCapacity, limit);
-        }
-        //geometryCapacity = 1<<28;
-        //geometryCapacity = 1<<30;//1GB test
-        var override = System.getProperty("voxy.geometryBufferSizeOverrideMB", "");
-        if (!override.isEmpty()) {
-            geometryCapacity = Long.parseLong(override)*1024L*1024L;
-        }
-        return geometryCapacity;
     }
 
     public WorldEngine getEngine() {

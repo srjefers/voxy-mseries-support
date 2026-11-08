@@ -5,10 +5,12 @@
 // only exposes these built-ins at 4.6.
 #version 460
 
+#import <voxy:util/depthutils.glsl>
+
 layout(binding = 0, std140) uniform SceneUniform {
     mat4 MVP;
-    ivec4 section;
-    vec4 negInnerSec;
+    ivec4 cameraBlockPos;
+    vec4 negInnerBlock;
 };
 
 layout(binding = 1, std430) restrict readonly buffer ChunkPosBuffer {
@@ -20,9 +22,9 @@ ivec3 unpackPos(ivec2 pos) {
 }
 
 bool shouldRender(ivec3 icorner) {
-    vec3 corner = vec3(mix(mix(ivec3(0), icorner-1, greaterThan(icorner-1, ivec3(0))), icorner+17, lessThan(icorner+17, ivec3(0))))-negInnerSec.xyz;
-    bool visible = (corner.x*corner.x + corner.z*corner.z) < (negInnerSec.w*negInnerSec.w);
-    visible = visible && abs(corner.y) < negInnerSec.w;
+    vec3 corner = vec3(mix(mix(ivec3(0), icorner-1, greaterThan(icorner-1, ivec3(0))), icorner+17, lessThan(icorner+17, ivec3(0))))-negInnerBlock.xyz;
+    bool visible = (corner.x*corner.x + corner.z*corner.z) < (negInnerBlock.w*negInnerBlock.w);
+    visible = visible && abs(corner.y) < negInnerBlock.w;
     return visible;
 }
 
@@ -33,19 +35,17 @@ vec2 getTAA();
 void main() {
     uint id = (gl_InstanceID<<5)+gl_BaseInstance+(gl_VertexID>>3);
 
-    // section.w carries the live chunk count (ChunkBoundRenderer's uniform
-    // upload). The Metal path issues ONE instanced draw of ceil(count/32)
-    // batches — over-draw slots in the last batch collapse to a degenerate
-    // position here instead of a separate baseInstance tail draw (Metal's
-    // base_instance propagation is unreliable, see VOXY_METAL_BI_FIX). On GL
-    // the split draws never produce id >= count, so this guard is a no-op.
-    if (id >= uint(section.w)) {
+    #ifdef VOXY_VULKAN
+    // Metal: ChunkBoundRenderer puts the live chunk count in .w and issues one
+    // instanced draw of ceil(count/32) batches; collapse the over-draw slots.
+    if (id >= uint(cameraBlockPos.w)) {
         gl_Position = vec4(-100.0f, -100.0f, -100.0f, 0.0f);
         return;
     }
+    #endif
 
     ivec3 origin = unpackPos(chunkPos[id])*16;
-    origin -= section.xyz;
+    origin -= cameraBlockPos.xyz;
 
     if (!shouldRender(origin)) {
         gl_Position = vec4(-100.0f, -100.0f, -100.0f, 0.0f);
@@ -57,9 +57,16 @@ void main() {
     //TODO: make it W.R.T world height and offsets
     //cubeCornerI.y = cubeCornerI.y*1024-512;
     gl_Position = MVP * vec4(vec3(cubeCornerI+origin), 1);
-    gl_Position.z -= 0.0005f;
+
+    //TODO: FIXME with reverse z need tobe + not -
+    gl_Position.z += CLOSER_SIGN*0.0005f;//Bring closer to camera
 
     #ifdef TAA
     gl_Position.xy += getTAA()*gl_Position.w;//Apply TAA if we have it
     #endif
 }
+
+
+
+//Undefine depth stuff
+#import <voxy:util/depthutils.glsl>

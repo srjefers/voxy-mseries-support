@@ -1,6 +1,7 @@
 package me.cortex.voxy.commonImpl.importers;
 
 import com.mojang.serialization.Codec;
+import com.mojang.serialization.Dynamic;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.thread.Service;
 import me.cortex.voxy.common.thread.ServiceManager;
@@ -9,23 +10,23 @@ import me.cortex.voxy.common.util.Pair;
 import me.cortex.voxy.common.util.UnsafeUtil;
 import me.cortex.voxy.common.voxelization.VoxelizedSection;
 import me.cortex.voxy.common.voxelization.WorldConversionFactory;
+import me.cortex.voxy.common.voxelization.WorldVoxilizedSectionMipper;
 import me.cortex.voxy.common.world.WorldEngine;
 import me.cortex.voxy.common.world.WorldUpdater;
+import net.minecraft.SharedConstants;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.util.datafix.DataFixers;
+import net.minecraft.util.datafix.fixes.References;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.chunk.DataLayer;
-import net.minecraft.world.level.chunk.PalettedContainer;
-import net.minecraft.world.level.chunk.PalettedContainerFactory;
-import net.minecraft.world.level.chunk.PalettedContainerRO;
-import net.minecraft.world.level.chunk.Strategy;
+import net.minecraft.world.level.chunk.*;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.chunk.storage.RegionFileVersion;
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
@@ -76,7 +77,7 @@ public class WorldImporter implements IDataImporter {
 
             @Override
             public void getAll(Consumer<Holder<Biome>> action) {
-
+                action.accept(defaultBiome);
             }
 
             @Override
@@ -96,12 +97,17 @@ public class WorldImporter implements IDataImporter {
 
             @Override
             public boolean maybeHas(Predicate<Holder<Biome>> predicate) {
-                return false;
+                return predicate.test(defaultBiome);
+            }
+
+            @Override
+            public void forEachInPalette(Consumer<Holder<Biome>> consumer) {
+                consumer.accept(defaultBiome);
             }
 
             @Override
             public void count(PalettedContainer.CountConsumer<Holder<Biome>> counter) {
-
+                counter.accept(defaultBiome, 1);
             }
 
             @Override
@@ -439,6 +445,20 @@ public class WorldImporter implements IDataImporter {
     }
 
     private void importChunkNBT(CompoundTag chunk, int regionX, int regionZ) {
+        var ver = chunk.getInt("DataVersion");
+        if (ver.isEmpty()) {
+            return;
+        }
+        var curVer = SharedConstants.getCurrentVersion().dataVersion().version();
+        if (ver.get() != curVer) {
+            var upChunk = DataFixers.getDataFixer().update(References.CHUNK, new Dynamic<>(NbtOps.INSTANCE, chunk), ver.get(), curVer).getValue().asCompound();
+            if (upChunk.isEmpty()) {
+                return;
+            }
+            chunk = upChunk.get();
+        }
+
+
         if (!chunk.contains("Status")) {
             //Its not real so decrement the chunk
             this.totalChunks.decrementAndGet();
@@ -524,7 +544,7 @@ public class WorldImporter implements IDataImporter {
                 }
         );
 
-        WorldConversionFactory.mipSection(csec, this.world.getMapper());
+        WorldVoxilizedSectionMipper.mipSection(csec, this.world.getMapper());
         WorldUpdater.insertUpdate(this.world, csec);
     }
 }

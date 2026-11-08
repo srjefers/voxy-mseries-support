@@ -6,6 +6,8 @@ import me.cortex.voxy.client.core.gpu.IGpuTexture;
 import me.cortex.voxy.common.util.TrackedObject;
 import org.lwjgl.opengl.GL30C;
 
+import static org.lwjgl.opengl.GL45C.*;
+
 public class GlFramebuffer extends TrackedObject implements IGpuFramebuffer {
     public final int id;
     public GlFramebuffer() {
@@ -17,6 +19,15 @@ public class GlFramebuffer extends TrackedObject implements IGpuFramebuffer {
 
     public GlFramebuffer bind(int attachment, GlTexture texture) {
         return this.bind(attachment, texture, 0);
+    }
+
+    public GlFramebuffer bind(int attachment, int texture) {
+        return this.bind(attachment, texture, 0);
+    }
+
+    public GlFramebuffer bind(int attachment, int texture, int lvl) {
+        glNamedFramebufferTexture(this.id, attachment, texture, lvl);
+        return this;
     }
 
     public GlFramebuffer bind(int attachment, GlTexture texture, int lvl) {

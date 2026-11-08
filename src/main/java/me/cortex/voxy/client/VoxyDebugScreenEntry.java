@@ -1,10 +1,8 @@
 package me.cortex.voxy.client;
 
-import me.cortex.voxy.client.core.IGetVoxyRenderSystem;
+import me.cortex.voxy.client.core.IVoxyRenderSystemHolder;
 import me.cortex.voxy.client.core.VoxyRenderSystem;
 import me.cortex.voxy.commonImpl.VoxyCommon;
-import net.minecraft.ChatFormatting;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.debug.DebugScreenDisplayer;
 import net.minecraft.client.gui.components.debug.DebugScreenEntry;
 import net.minecraft.resources.Identifier;
@@ -27,9 +25,7 @@ public class VoxyDebugScreenEntry implements DebugScreenEntry {
             return;
         }
 
-        VoxyRenderSystem vrs = null;
-        var wr = Minecraft.getInstance().levelRenderer;
-        if (wr != null) vrs = ((IGetVoxyRenderSystem) wr).getVoxyRenderSystem();
+        VoxyRenderSystem vrs = IVoxyRenderSystemHolder.getNullable();
 
         //lines.addLineToSection();
         List<String> instanceLines = new ArrayList<>();
