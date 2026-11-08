@@ -101,7 +101,7 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
                                 new IntOption(
                                         "voxy:render_distance",
                                         Component.translatable("voxy.config.general.renderDistance"),
-                                        ()->CFG.sectionRenderDistance, v->CFG.sectionRenderDistance=v,
+                                        ()->Math.round(CFG.sectionRenderDistance), v->CFG.sectionRenderDistance=v,
                                         new Range(2, 64, 1))
                                         .setFormatter(v->Component.literal(Integer.toString(v*32)))//Top level rd == 32 chunks
                                         .setPostChangeRunner(c->{

@@ -786,10 +786,14 @@ public final class IOSurfaceBridgeCompositor {
             cachedMcMainColorTex = colorTex;
             if (firstFboIdField == null
                     || !firstFboIdField.getDeclaringClass().isInstance(colorTex)) {
+                // "firstFboId" only exists under dev (Mojang) names; production runs
+                // on intermediary names, so map GlTexture.firstFboId (field_64516).
+                String fboFieldName = net.fabricmc.loader.api.FabricLoader.getInstance().getMappingResolver()
+                        .mapFieldName("intermediary", "net.minecraft.class_10868", "field_64516", "I");
                 Class<?> c = colorTex.getClass();
                 while (c != null && c != Object.class) {
                     try {
-                        firstFboIdField = c.getDeclaredField("firstFboId");
+                        firstFboIdField = c.getDeclaredField(fboFieldName);
                         firstFboIdField.setAccessible(true);
                         break;
                     } catch (NoSuchFieldException ignored) {
