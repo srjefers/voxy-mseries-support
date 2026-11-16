@@ -138,9 +138,9 @@ public final class VxIrisSideChannel {
                     } else empty++;
                 }
             }
-            Logger.info(String.format("[VX-OUT] %s depth grid: covered(<1)=%d empty(==1)=%d /%d  coveredDepth mean=%.5f min=%.5f max=%.5f",
+            Logger.info(String.format(java.util.Locale.ROOT, "[VX-OUT] %s depth grid: covered(<1)=%d empty(==1)=%d /%d  coveredDepth mean=%.5f min=%.5f max=%.5f",
                     label, covered, empty, total, covered > 0 ? sum / covered : -1, covered > 0 ? mn : -1, covered > 0 ? mx : -1));
-            Logger.info(String.format("[VX-OUT] %s coverage density: avg covered neighbours=%.2f/8 (samples=%d)  localRoughness(meanAbsDevWindowZ)=%.6f (n=%d)",
+            Logger.info(String.format(java.util.Locale.ROOT, "[VX-OUT] %s coverage density: avg covered neighbours=%.2f/8 (samples=%d)  localRoughness(meanAbsDevWindowZ)=%.6f (n=%d)",
                     label, nbrSampleN > 0 ? (double) nbrCoveredSum / nbrSampleN : -1, nbrSampleN,
                     roughN > 0 ? roughSum / roughN : -1, roughN));
         } catch (Throwable t) {
@@ -172,7 +172,7 @@ public final class VxIrisSideChannel {
             this.broken = true;
             return false;
         }
-        return this.resolveInto(this.fboOpaque, colourRectTex, depthRectTex, fbw, fbh, depthIsWindow);
+        return this.resolveInto(this.fboOpaque, colourRectTex, depthRectTex, fbw, fbh, depthIsWindow, false);
     }
 
     /**
@@ -186,10 +186,17 @@ public final class VxIrisSideChannel {
         if (!this.ensureTransResources(fbw, fbh)) {
             return false;
         }
-        return this.resolveInto(this.fboTrans, transColourRectTex, transDepthRectTex, fbw, fbh, depthIsWindow);
+        return this.resolveInto(this.fboTrans, transColourRectTex, transDepthRectTex, fbw, fbh, depthIsWindow,
+                this.fboOpaque != 0);
     }
 
-    private boolean resolveInto(int targetFbo, int colourRectTex, int depthRectTex, int fbw, int fbh, boolean depthIsWindow) {
+    /**
+     * @param overOpaque start from the opaque LOD depth and keep the nearer one, so vxDepthTexTrans
+     *        holds opaque and translucent like on GL. With water-only depth Complementary based
+     *        packs (Nova) saw every land LOD pixel as sky: no fog or outline, clouds drawn on top.
+     */
+    private boolean resolveInto(int targetFbo, int colourRectTex, int depthRectTex, int fbw, int fbh, boolean depthIsWindow,
+                                boolean overOpaque) {
 
         int prevDrawFb = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
         int prevReadFb = glGetInteger(GL_READ_FRAMEBUFFER_BINDING);
@@ -213,11 +220,18 @@ public final class VxIrisSideChannel {
             glBindFramebuffer(GL_FRAMEBUFFER, targetFbo);
             glDisable(GL_SCISSOR_TEST);
             glViewport(0, 0, fbw, fbh);
-            glClearDepth(1.0);
             glEnable(GL_DEPTH_TEST);
-            glDepthFunc(GL_ALWAYS);
             glDepthMask(true);
-            glClear(GL_DEPTH_BUFFER_BIT);
+            if (overOpaque) {
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, this.fboOpaque);
+                glBlitFramebuffer(0, 0, fbw, fbh, 0, 0, fbw, fbh, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+                glBindFramebuffer(GL_FRAMEBUFFER, targetFbo);
+                glDepthFunc(GL_LESS);
+            } else {
+                glClearDepth(1.0);
+                glDepthFunc(GL_ALWAYS);
+                glClear(GL_DEPTH_BUFFER_BIT);
+            }
 
             org.lwjgl.opengl.GL33C.glBindSampler(0, 0);
             org.lwjgl.opengl.GL33C.glBindSampler(1, 0);

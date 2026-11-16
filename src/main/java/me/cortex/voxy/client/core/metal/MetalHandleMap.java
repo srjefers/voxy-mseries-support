@@ -48,6 +48,10 @@ public final class MetalHandleMap {
         return handle;
     }
 
+    public static boolean isRegistered(int id) {
+        return ID_TO_HANDLE.containsKey(id);
+    }
+
     /**
      * Gets the int ID for a given native handle.
      * @return the ID, or -1 if the handle is not registered
