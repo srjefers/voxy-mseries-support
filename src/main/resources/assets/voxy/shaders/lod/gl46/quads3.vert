@@ -42,6 +42,14 @@ layout(binding = 6, std140) uniform VoxyMetalPerDrawUBO {
 layout(location = 7) out flat uint quadDebug;
 #endif
 
+// Metal chunked single-draw: one instance per fixed-size quad chunk
+// {firstQuad, drawId | count<<24}, written by the encoder from the draw commands.
+#ifdef VOXY_CHUNKED_DRAW
+layout(binding = VOXY_CHUNK_BINDING, std430) readonly restrict buffer VoxyChunkTable {
+    uvec2 voxyChunks[];
+};
+#endif
+
 // M13 chunk 5: Per-vertex world-space distance from the camera, interpolated
 // linearly across the quad. Used by quads.frag's USE_ENV_FOG path to mix in
 // the environmental fog colour at far LOD distances. The vertex's basePoint
@@ -91,7 +99,20 @@ void main() {
 #else
     uint baseInstanceFix = uint(gl_BaseInstance);
 #endif
-    setupQuad(quad, quadData[uint(gl_VertexID)>>2], positionBuffer[baseInstanceFix], (gl_VertexID&3) == 1);
+#ifdef VOXY_CHUNKED_DRAW
+    uvec2 voxyChunk = voxyChunks[uint(gl_InstanceID)];
+    uint voxyLocalQuad = uint(gl_VertexID)>>2;
+    if (voxyLocalQuad >= (voxyChunk.y>>24)) {
+        // Past this chunk's quad count: collapse to a point outside the clip volume.
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        return;
+    }
+    baseInstanceFix = voxyChunk.y & 0xFFFFFFu;
+    uint voxyQuadIndex = voxyChunk.x + voxyLocalQuad;
+#else
+    uint voxyQuadIndex = uint(gl_VertexID)>>2;
+#endif
+    setupQuad(quad, quadData[voxyQuadIndex], positionBuffer[baseInstanceFix], (gl_VertexID&3) == 1);
 
     uint cornerId = gl_VertexID&3;
     gl_Position = getQuadCornerPos(quad, cornerId);

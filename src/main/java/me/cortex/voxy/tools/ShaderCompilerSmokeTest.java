@@ -92,6 +92,16 @@ public final class ShaderCompilerSmokeTest {
                                 "Z_AXIS_FACE_TINT", "0.8",
                                 "X_AXIS_FACE_TINT", "0.6"),
                         "lod/gl46/quads3.vert (MDIC terrain — non-Iris baseline)"),
+                new ShaderCase("lod/gl46/quads3.vert", RuntimeShaderCompiler.Stage.VERTEX,
+                        Map.of(
+                                "NO_SHADE_FACE_TINT", "1.0",
+                                "UP_FACE_TINT", "1.0",
+                                "DOWN_FACE_TINT", "0.5",
+                                "Z_AXIS_FACE_TINT", "0.8",
+                                "X_AXIS_FACE_TINT", "0.6",
+                                "VOXY_CHUNKED_DRAW", "",
+                                "VOXY_CHUNK_BINDING", "12"),
+                        "lod/gl46/quads3.vert (Metal — chunked single draw)"),
                 new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT, empty,
                         "lod/gl46/quads.frag (MDIC terrain — non-Iris baseline; PATCHED_SHADER undef)"),
                 // M12 chunk 6 follow-up: non-GL backends define VOXY_NO_ATLAS so

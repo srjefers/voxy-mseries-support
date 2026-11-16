@@ -412,6 +412,15 @@ public class RenderDataFactory {
 
     private static final long LM = (0xFFL<<55);
 
+    // Fluid faces take the brighter of the fluid's own light and the neighbour's, per
+    // nibble, like vanilla's LiquidBlockRenderer. Neighbour-only lighting turns coarse-LOD
+    // water black wherever the air above it was stored unlit: Voxy SeedGen never writes
+    // the all-air chunk section above sea level, so mips of y>=64 come out at light 0.
+    private static long fluidFaceLight(long fluid, long neighbor) {
+        final long SKY = 0xFL<<55, BLOCK = 0xF0L<<55;
+        return Math.max(fluid&SKY, neighbor&SKY) | Math.max(fluid&BLOCK, neighbor&BLOCK);
+    }
+
     private static boolean shouldMeshNonOpaqueBlockFace(int face, long quad, long meta, long neighborQuad, long neighborMeta) {
         if (((quad^neighborQuad)&(0xFFFFL<<26))==0 && (DISABLE_CULL_SAME_OCCLUDES || (ModelQueries.cullsSame(meta)||ModelQueries.faceOccludes(meta, face)))) return false;//This is a hack, if the neigbor and this are the same, dont mesh the face// TODO: FIXME
         if (!ModelQueries.faceExists(meta, face)) return false;//Dont mesh if no face
@@ -641,7 +650,7 @@ public class RenderDataFactory {
 
                         this.blockMesher.putNext(((long) facingForward) |//Facing
                                 (A&~LM) |
-                                (lighter&LM)//Apply lighting
+                                fluidFaceLight(A, lighter)//Apply lighting
                         );
                     }
                 }
@@ -723,7 +732,7 @@ public class RenderDataFactory {
 
                         this.blockMesher.putNext((side == 0 ? 0L : 1L) |
                                 (A&~LM) |
-                                ((neighborId&(0xFFL<<56))>>>1)
+                                fluidFaceLight(A, (neighborId&(0xFFL<<56))>>>1)
                         );
                     }
                 }
@@ -1242,7 +1251,7 @@ public class RenderDataFactory {
                         //Example thing thats just wrong but as example
                         mesher.putNext(((long) facingForward) |//Facing
                                 (A&~LM) |
-                                (lighter&LM)//Lighting
+                                fluidFaceLight(A, lighter)//Lighting
                         );
                     }
                 }
@@ -1338,7 +1347,7 @@ public class RenderDataFactory {
                         ma.skip(skipA); skipA = 0;
 
                         //TODO: LIGHTING
-                        long lightData = ((neighborId&(0xFFL<<56))>>>1);//A;
+                        long lightData = fluidFaceLight(A, (neighborId&(0xFFL<<56))>>>1);
                         //if (!ModelQueries.faceUsesSelfLighting(Am, facingForward|(axis*2))) {//TODO: check this is right
                         //    lighter = this.sectionData[bi];
                         //}
@@ -1403,7 +1412,7 @@ public class RenderDataFactory {
                         mb.skip(skipB); skipB = 0;
 
                         //TODO: LIGHTING
-                        long lightData = ((neighborId&(0xFFL<<56))>>>1);//A;
+                        long lightData = fluidFaceLight(A, (neighborId&(0xFFL<<56))>>>1);
                         //if (!ModelQueries.faceUsesSelfLighting(Am, facingForward|(axis*2))) {//TODO: check this is right
                         //    lighter = this.sectionData[bi];
                         //}

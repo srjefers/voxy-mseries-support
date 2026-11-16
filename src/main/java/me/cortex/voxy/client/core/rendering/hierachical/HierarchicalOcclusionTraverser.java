@@ -299,7 +299,7 @@ public class HierarchicalOcclusionTraverser {
             var win = net.minecraft.client.Minecraft.getInstance().getWindow();
             var L = viewport.frustumPlanes[0];
             var R = viewport.frustumPlanes[1];
-            me.cortex.voxy.common.Logger.info(String.format(
+            me.cortex.voxy.common.Logger.info(String.format(java.util.Locale.ROOT, 
                     "[Metal-FRUSTUM f=%d] projNaN=%s nanFrames=%d | m00=%.4f m11=%.4f impliedAspect=%.3f | viewport=%dx%d(%.3f) window=%dx%d(%.3f) | L=(%.3f,%.3f,%.3f,%.1f) R=(%.3f,%.3f,%.3f,%.1f)",
                     frustumFrameCount, projNaN, frustumNanCount,
                     m00, m11, java.lang.Math.abs(m11 / m00),
@@ -337,10 +337,10 @@ public class HierarchicalOcclusionTraverser {
     private void uploadUniform(Viewport<?> viewport) {
         long ptr = UploadStream.INSTANCE.upload(this.uniformBuffer, 0, 1024);
 
-        viewport.MVP.getToAddress(ptr); ptr += 4 * 4 * 4;
-        viewport.section.getToAddress(ptr); ptr += 4 * 3;
+        me.cortex.voxy.common.util.JomlMem.put(viewport.MVP, ptr); ptr += 4 * 4 * 4;
+        me.cortex.voxy.common.util.JomlMem.put(viewport.section, ptr); ptr += 4 * 3;
         MemoryUtil.memPutInt(ptr, viewport.hiZBuffer.getPackedLevels()); ptr += 4;
-        viewport.innerTranslation.getToAddress(ptr); ptr += 4 * 3;
+        me.cortex.voxy.common.util.JomlMem.put(viewport.innerTranslation, ptr); ptr += 4 * 3;
 
         float screenspaceAreaDecreasingSize = VoxyConfig.CONFIG.subDivisionSize * VoxyConfig.CONFIG.subDivisionSize;
         if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
@@ -404,6 +404,10 @@ public class HierarchicalOcclusionTraverser {
         if (RenderStatistics.enabled) {
             this.statisticsBuffer.zero();
         }
+
+        // A deferred Metal request read that nobody consumed (caller skipped
+        // finishDeferredRequestRead) must land before this traversal reuses the queue.
+        this.finishDeferredRequestRead();
 
         //Clear the render output counter
         viewport.getRenderList().zeroRange(0, 4);
@@ -562,9 +566,36 @@ public class HierarchicalOcclusionTraverser {
     private static final boolean HOT_SERIALIZE = "1".equals(System.getenv("VOXY_HOT_SERIALIZE"));
 
 
+    /** Metal: request queue awaits a CPU read after the caller's next submit(). */
+    private boolean deferredRequestRead;
+    private static final boolean DEFER_REQUEST_READ = !"0".equals(System.getenv("VOXY_DEFER_REQUEST_READ"));
+
+    /**
+     * Metal: reads the request queue written by the last traversal. The caller must have
+     * submitted and waited since {@link #doTraversal}, which saves the extra GPU drain
+     * downloadResetRequestQueue would do.
+     */
+    public void finishDeferredRequestRead() {
+        if (!this.deferredRequestRead) return;
+        this.deferredRequestRead = false;
+        if (this.requestBuffer instanceof me.cortex.voxy.client.core.metal.MetalBuffer metalBuffer) {
+            DIAG_REQUEST_DIRECT_READ_COUNT.incrementAndGet();
+            this.forwardDownloadResult(metalBuffer.getContentsPtr(), this.requestBuffer.size());
+            this.requestBuffer.zeroRange(0, 4);
+        }
+    }
+
+    public void deferRequestReadOnce() { this.deferNext = DEFER_REQUEST_READ; }
+    private boolean deferNext;
+
     private void downloadResetRequestQueue() {
         if (this.backend.getType() == me.cortex.voxy.client.core.gpu.BackendType.METAL
                 && this.requestBuffer instanceof me.cortex.voxy.client.core.metal.MetalBuffer metalBuffer) {
+            if (this.deferNext) {
+                this.deferNext = false;
+                this.deferredRequestRead = true;
+                return;
+            }
             // Metal encodes traversal into the backend's active command buffer,
             // while DownloadStream uses a separate blit command buffer. If we
             // schedule a DownloadStream read before submitting traversal, the

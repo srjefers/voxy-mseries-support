@@ -32,16 +32,22 @@
     "minecraft.MixinWindow",
     "nvidium.MixinRenderPipeline",
     "sodium.AccessorChunkTracker",
+    "sodium.AccessorQuadViewWrapper",
     "sodium.AccessorSharedQuadIndexBuffer",
     "sodium.AccessorSodiumWorldRenderer",
     "sodium.MixinBuiltSectionInfo",
     "sodium.MixinChunkJobQueue",
     "sodium.MixinDefaultChunkRenderer",
+    "sodium.MixinMutableQuadViewWrapper",
     "sodium.MixinRenderRegionManager",
     "sodium.MixinRenderSectionManager",
     "sodium.MixinSodiumWorldRenderer",
     "sodium.MixinVideoSettingsScreen",
-    "minecraft.MixinLayerLightSectionStorage"
+    "minecraft.MixinLayerLightSectionStorage",
+    "minecraft.AccessorGlCommandEncoder",
+    "minecraft.MixinMouseHandlerGrab",
+    "flywheel.MixinFlwMaterialRenderState",
+    "flywheel.MixinFlwOitFramebuffer"
   ],
   "injectors": {
     "defaultRequire": 1

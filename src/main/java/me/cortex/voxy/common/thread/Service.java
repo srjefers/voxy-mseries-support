@@ -17,6 +17,7 @@ public class Service {
     private final Semaphore tasks = new Semaphore(0);
     private volatile boolean isLive = true;
     private volatile boolean isStopping = false;
+    private volatile boolean warnedDead = false;
 
     Service(Supplier<Pair<Runnable, Runnable>> ctxSupplier, ServiceManager sm, long weight, String name, BooleanSupplier limiter) {
         this.sm = sm;
@@ -29,7 +30,11 @@ public class Service {
 
     public void execute() {
         if (this.isStopping) {
-            Logger.error("Tried executing on a dead service");
+            // Late submissions during shutdown are expected from addons; log once, not per task.
+            if (!this.warnedDead) {
+                this.warnedDead = true;
+                Logger.warn("Tried executing on a dead service (further attempts ignored silently)");
+            }
             return;
         }
         this.tasks.release();

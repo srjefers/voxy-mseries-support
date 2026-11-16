@@ -1,5 +1,6 @@
 package me.cortex.voxy.client.core.rendering;
 
+import it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import me.cortex.voxy.client.core.AbstractRenderPipeline;
@@ -104,6 +105,15 @@ public class ChunkBoundRenderer {
      * set carries sections WITH opaque geometry (every section on GL / with
      * the split off); the epsilon set carries translucent-only sections.
      */
+    /**
+     * Mask only the sections Sodium draws this frame instead of every built one. While chunks
+     * stream in, Sodium's graph can't pass through unbuilt sections, so built ones behind them
+     * aren't drawn for a few frames. Masking those hid the LOD with nothing in its place and the
+     * chunk blinked. VOXY_BOUND_DRAWN_ONLY=0 masks every built section again.
+     */
+    public static final boolean DRAWN_ONLY =
+            !"0".equals(System.getenv("VOXY_BOUND_DRAWN_ONLY"));
+
     private static final class InstanceSet {
         final Long2IntOpenHashMap chunk2idx = new Long2IntOpenHashMap(INIT_MAX_CHUNK_COUNT);
         long[] idx2chunk = new long[INIT_MAX_CHUNK_COUNT];
@@ -264,12 +274,39 @@ public class ChunkBoundRenderer {
         }
     }
 
+    /**
+     * Built sections without geometry (air above terrain, tree tops) are never drawn by Sodium,
+     * so the drawn-only mask left them out, and coarse LODs, which sit higher than the blocks
+     * they cover, stuck up into that air as dark planes. Hiding LODs in air is always right,
+     * so these are always masked. VOXY_BOUND_MASK_EMPTY=0 turns this off.
+     */
+    public static final boolean MASK_EMPTY = !"0".equals(System.getenv("VOXY_BOUND_MASK_EMPTY"));
+    private static final LongOpenHashSet MIRROR_EMPTY = new LongOpenHashSet();
+
+    /** Records a section's built-empty state; returns true when it changed. */
+    public static synchronized boolean mirrorSetEmpty(long pos, boolean empty) {
+        return empty ? MIRROR_EMPTY.add(pos) : MIRROR_EMPTY.remove(pos);
+    }
+
+    /** Routes a built-empty transition into the live mask (render thread). */
+    public void setEmptySection(long pos, boolean empty) {
+        synchronized (ChunkBoundRenderer.class) {
+            if (this.masked.containsKey(pos)) return; // syncDrawn owns it this frame
+            if (empty) {
+                this.primary.add(pos);
+            } else {
+                this.primary.remove(pos);
+            }
+        }
+    }
+
     public static synchronized void mirrorRemove(long pos) {
         MIRROR_OPAQUE.remove(pos);
         MIRROR_TRANS_ONLY.remove(pos);
     }
 
     public static synchronized void mirrorReset() {
+        MIRROR_EMPTY.clear();
         MIRROR_OPAQUE.clear();
         MIRROR_TRANS_ONLY.clear();
     }
@@ -293,6 +330,74 @@ public class ChunkBoundRenderer {
         return true;
     }
 
+    /** Drawn-only mode: sections currently routed to the instance sets, with their opaque class. */
+    private final Long2BooleanOpenHashMap masked = new Long2BooleanOpenHashMap();
+
+    /**
+     * Drawn-only mode: diffs this frame's drawn sections against the mask. A section stays
+     * masked while it is drawn and built, and follows opaque/translucent-only changes.
+     */
+    /**
+     * Built sections this close stay masked even if Sodium skips them this frame (occluded cave
+     * walls, a section you just dug into). An LOD is never right there, and unmasked it shows
+     * stale dark blocks inside real terrain.
+     */
+    public static final int NEAR_MASK_RADIUS = Integer.getInteger("voxy.boundNearRadius",
+            System.getenv("VOXY_BOUND_NEAR_RADIUS") != null ? Integer.parseInt(System.getenv("VOXY_BOUND_NEAR_RADIUS")) : 2);
+
+    public void syncDrawn(LongOpenHashSet drawn, double camX, double camY, double camZ) {
+        int r = NEAR_MASK_RADIUS;
+        if (r > 0) {
+            int cx = (int) Math.floor(camX) >> 4, cy = (int) Math.floor(camY) >> 4, cz = (int) Math.floor(camZ) >> 4;
+            for (int dx = -r; dx <= r; dx++)
+                for (int dy = -r; dy <= r; dy++)
+                    for (int dz = -r; dz <= r; dz++)
+                        drawn.add(boundPos(cx + dx, cy + dy, cz + dz)); // non-built ones are filtered below
+        }
+        this.syncDrawn(drawn);
+    }
+
+    public void syncDrawn(LongOpenHashSet drawn) {
+        synchronized (ChunkBoundRenderer.class) {
+            for (var it = this.masked.long2BooleanEntrySet().fastIterator(); it.hasNext(); ) {
+                var entry = it.next();
+                long pos = entry.getLongKey();
+                boolean opaque = MIRROR_OPAQUE.contains(pos);
+                if (!drawn.contains(pos) || !(opaque || MIRROR_TRANS_ONLY.contains(pos))) {
+                    this.removeSection(pos);
+                    it.remove();
+                    // now built and empty, keep it masked through the primary set
+                    if (MASK_EMPTY && MIRROR_EMPTY.contains(pos)) this.primary.add(pos);
+                } else if (opaque != entry.getBooleanValue()) {
+                    this.removeSection(pos);
+                    this.addSection(pos, opaque);
+                    entry.setValue(opaque);
+                }
+            }
+            for (var it = drawn.iterator(); it.hasNext(); ) {
+                long pos = it.nextLong();
+                if (this.masked.containsKey(pos)) continue;
+                boolean opaque = MIRROR_OPAQUE.contains(pos);
+                if (opaque || MIRROR_TRANS_ONLY.contains(pos)) {
+                    if (MIRROR_EMPTY.contains(pos)) this.primary.remove(pos);
+                    this.addSection(pos, opaque);
+                    this.masked.put(pos, opaque);
+                }
+            }
+        }
+    }
+
+    /** Bound-mask key for a Sodium section (shared by the built mirror and the drawn sync). */
+    public static long boundPos(int x, int y, int z) {
+        //Do some very cheeky stuff for MiB
+        if (me.cortex.voxy.commonImpl.VoxyCommon.IS_MINE_IN_ABYSS) {
+            int sector = (x+512)>>10;
+            x-=sector<<10;
+            y+=16+(256-32-sector*30);
+        }
+        return net.minecraft.core.SectionPos.asLong(x,y,z);
+    }
+
     private void seedFromMirror() {
         synchronized (ChunkBoundRenderer.class) {
             this.primary.addQueue.addAll(MIRROR_OPAQUE);
@@ -312,7 +417,12 @@ public class ChunkBoundRenderer {
     public ChunkBoundRenderer(AbstractRenderPipeline pipeline) {
         this.pipeline = pipeline;
         this.epsSet = splitActive() ? new InstanceSet() : null;
-        this.seedFromMirror();
+        if (!DRAWN_ONLY) this.seedFromMirror();
+        else if (MASK_EMPTY) {
+            synchronized (ChunkBoundRenderer.class) {
+                this.primary.addQueue.addAll(MIRROR_EMPTY);
+            }
+        }
 
         String vert = ShaderLoader.parse("voxy:chunkoutline/outline.vsh");
         String taa = pipeline.taaFunction("getTAA");
@@ -473,15 +583,17 @@ public class ChunkBoundRenderer {
                 (float) (viewport.cameraX - sx),
                 (float) (viewport.cameraY - sy),
                 (float) (viewport.cameraZ - sz));
-        negInnerSec.getToAddress(ptr + 80);
-        float renderDistance = Math.max(Minecraft.getInstance().gameRenderer.getRenderDistance(), 20 * 16);
+        me.cortex.voxy.common.util.JomlMem.put(negInnerSec, ptr + 80);
+        // Same radius Sodium draws in. Anything larger masks LODs over loaded but undrawn sections
+        // past the render distance, which shows flickering sky coloured holes.
+        float renderDistance = Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
         MemoryUtil.memPutFloat(ptr + 92, renderDistance);
 
         var mvp = viewport.MVP.translate(negInnerSec.negate(), new Matrix4f());
         if (metalNdcRemap && MetalMvpUtil.METAL_NDC_REMAP) {
             MetalMvpUtil.applyNdcRemap(mvp);
         }
-        mvp.getToAddress(ptr);
+        me.cortex.voxy.common.util.JomlMem.put(mvp, ptr);
 
         UploadStream.INSTANCE.commit();
     }
@@ -616,6 +728,15 @@ public class ChunkBoundRenderer {
     public void reset() {
         this.primary.chunk2idx.clear();
         if (this.epsSet != null) this.epsSet.chunk2idx.clear();
+        if (DRAWN_ONLY) {
+            this.masked.clear();
+            this.primary.addQueue.clear();
+            this.primary.remQueue.clear();
+            if (this.epsSet != null) {
+                this.epsSet.addQueue.clear();
+                this.epsSet.remQueue.clear();
+            }
+        }
     }
 
     public void free() {

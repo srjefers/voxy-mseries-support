@@ -32,8 +32,10 @@ public class MetalFramebuffer extends TrackedObject implements IGpuFramebuffer {
     private static int NEXT_ID_COUNTER = 1;
 
     public MetalFramebuffer() {
-        this.id = NEXT_ID_COUNTER++;
-        MetalHandleMap.register(this.id); // register with a sentinel handle
+        // Has to be the id MetalHandleMap gives out, free() unregisters it. A separate counter collided
+        // with other handles: freeing framebuffer 51 removed texture 51 (the LOD lightmap) and the next
+        // frame crashed with "Unknown Metal handle ID".
+        this.id = MetalHandleMap.register(Long.MIN_VALUE + NEXT_ID_COUNTER++); // sentinel handle
     }
 
     @Override

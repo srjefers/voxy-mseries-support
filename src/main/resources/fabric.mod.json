@@ -35,7 +35,8 @@
       "config": "client.voxy.mixins.json",
       "environment": "client"
     },
-    "common.voxy.mixins.json"
+    "common.voxy.mixins.json",
+    "seedgen.voxy.mixins.json"
   ],
   "depends": {
     "minecraft": ["1.21.11"],

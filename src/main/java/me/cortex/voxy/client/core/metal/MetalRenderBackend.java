@@ -854,6 +854,10 @@ public class MetalRenderBackend implements RenderBackend {
         // Sync mode for M3: wait for completion so the smoke test can check status
         // before the buffer is released. M5+ will move to async + per-frame fences.
         MetalNative.mtlCommandBufferWaitUntilCompleted(this.activeCommandBuffer);
+        if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
+            me.cortex.voxy.client.core.util.FrameTiming.gpuNs += MetalNative.mtlCommandBufferGpuTimeNs(this.activeCommandBuffer);
+            me.cortex.voxy.client.core.util.FrameTiming.submits++;
+        }
         int status = MetalNative.mtlCommandBufferGetStatus(this.activeCommandBuffer);
         MetalNative.mtlRelease(this.activeCommandBuffer);
         this.activeCommandBuffer = 0;

@@ -62,9 +62,9 @@ public class VoxyClient implements ClientModInitializer {
         // separately from regular env vars so opting in is intentional —
         // until the full MDIC encoder migration lands, this path produces
         // a clear color via the IOSurfaceBridge, not actual LOD chunks.
-        boolean forceMetal = "1".equals(System.getenv("VOXY_FORCE_METAL"))
-                || "true".equals(System.getenv("VOXY_FORCE_METAL"))
-                || "true".equals(System.getProperty("voxy.forceMetal", "false"));
+        // On by default now that MDIC draws real LODs. VOXY_FORCE_METAL=0 or -Dvoxy.forceMetal=false turns it off.
+        boolean forceMetal = !"0".equals(System.getenv("VOXY_FORCE_METAL"))
+                && !"false".equals(System.getProperty("voxy.forceMetal", "true"));
 
         if (systemSupported && backend.getType() != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
             if (forceMetal) {
@@ -75,7 +75,7 @@ public class VoxyClient implements ClientModInitializer {
                         + "Set VOXY_BAKERY_OFF=1 for the hash-colour fallback.");
             } else {
                 Logger.warn("[M9 TRANSITIONAL] Voxy disabled on " + backend.getType()
-                        + " backend. Set VOXY_FORCE_METAL=1 to enable the Metal render path.");
+                        + " backend (turned off with VOXY_FORCE_METAL=0 or -Dvoxy.forceMetal=false).");
                 systemSupported = false;
             }
         }

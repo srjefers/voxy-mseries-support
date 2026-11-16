@@ -60,6 +60,27 @@ public class IrisUtil {
         return Iris.isPackInUseQuick();
     }
 
+    /**
+     * GL name of the active Iris pipeline's main depth texture (depthtex0), or 0.
+     * Used by the Metal MC-coverage HiZ when Iris's bound terrain FBO exposes no
+     * texture depth attachment.
+     */
+    public static int irisMainDepthTexId() {
+        return IRIS_INSTALLED ? irisMainDepthTexId0() : 0;
+    }
+
+    private static int irisMainDepthTexId0() {
+        try {
+            var pipe = net.irisshaders.iris.Iris.getPipelineManager().getPipelineNullable();
+            if (!(pipe instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline irp)) return 0;
+            var rt = ((me.cortex.voxy.client.mixin.iris.IrisRenderingPipelineAccessor) irp).getRenderTargets();
+            var tex = rt == null ? null : rt.getDepthTexture();
+            return tex instanceof com.mojang.blaze3d.opengl.GlTexture gt ? gt.glId() : 0;
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
     public static boolean irisShaderPackEnabled() {
         return IRIS_INSTALLED && irisShaderPackEnabled0();
     }

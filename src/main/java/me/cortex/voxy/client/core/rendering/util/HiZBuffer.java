@@ -281,6 +281,11 @@ public class HiZBuffer {
 
     public void free() {
         freeSelfViews();
+        if (this.mcCoverage != null) {
+            this.mcCoverage.free();
+            this.mcCoverage = null;
+            this.mcCoverageActive = false;
+        }
         this.fb.free();
         if (this.texture != null) {
             this.texture.free();
@@ -290,16 +295,46 @@ public class HiZBuffer {
         this.blitPipeline.close();
     }
 
+    // Metal: occlusion from MC's depth coverage instead of Voxy's own depth, see McCoverageHiz
+    private static final boolean MC_COVERAGE_HIZ = !"0".equals(System.getenv("VOXY_METAL_HIZ"));
+    private McCoverageHiz mcCoverage;
+    private boolean mcCoverageActive;
+
+    /** Call after MC's opaque terrain (translucent pass head); next frame's pyramid is built from it. */
+    public void captureMcCoverage(me.cortex.voxy.client.core.rendering.Viewport<?> viewport) {
+        if (!MC_COVERAGE_HIZ) return;
+        if (this.mcCoverage == null) this.mcCoverage = new McCoverageHiz();
+        this.mcCoverage.capture(viewport);
+    }
+
+    public void beginMcCoverage(me.cortex.voxy.client.core.rendering.Viewport<?> viewport) {
+        this.mcCoverageActive = false;
+        if (this.mcCoverage != null) this.mcCoverage.begin(viewport);
+    }
+
+    /** HOT samples the coverage pyramid this frame only if this succeeded. */
+    public void finishMcCoverage() {
+        this.mcCoverageActive = this.mcCoverage != null && this.mcCoverage.finish();
+    }
+
+    public String mcCoverageState() {
+        if (!MC_COVERAGE_HIZ) return "disabled";
+        String state = this.mcCoverageActive ? "on" : "off";
+        return this.mcCoverage == null ? state : state + "(" + this.mcCoverage.diag() + ")";
+    }
+
     public int getHizTextureId() {
         return this.texture.id();
     }
 
     /** Backend-agnostic accessor used by callers migrated onto the encoder API. */
     public IGpuTexture getHizTexture() {
+        if (this.mcCoverageActive) return this.mcCoverage.texture();
         return this.texture;
     }
 
     public int getPackedLevels() {
+        if (this.mcCoverageActive) return this.mcCoverage.packedSize();
         return (this.width << 16) | this.height;
     }
 

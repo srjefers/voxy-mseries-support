@@ -202,6 +202,8 @@ public class NodeManager {
     public static final java.util.concurrent.atomic.AtomicLong DIAG_UPLOAD_REAL = new java.util.concurrent.atomic.AtomicLong();
     /** Top-level cells with no loaded section data are kept pending instead of becoming renderable empty LOD nodes. */
     public static final java.util.concurrent.atomic.AtomicLong DIAG_TOP_LEVEL_NO_DATA_DEFER = new java.util.concurrent.atomic.AtomicLong();
+    // this can fire ~800 times a second, so it is only logged at powers of two
+    private static final java.util.concurrent.atomic.AtomicLong ZERO_EXISTENCE_LEAF_REQUESTS = new java.util.concurrent.atomic.AtomicLong();
 
     public void processGeometryResult(BuiltSection sectionResult) {
         long pos = sectionResult.position;
@@ -1207,7 +1209,10 @@ public class NodeManager {
 
         if (childExistence == 0) {
             if (!this.topLevelNodes.contains(pos)) {//Top level nodes are special, as they can have a request with child existence of 0 for performance reasons
-                Logger.warn("Not creating a leaf request with existence mask of 0 at pos", WorldEngine.pprintPos(pos));
+                long seen = ZERO_EXISTENCE_LEAF_REQUESTS.incrementAndGet();
+                if (Long.bitCount(seen) == 1) {
+                    Logger.warn("Not creating a leaf request with existence mask of 0 at pos", WorldEngine.pprintPos(pos), "(seen", seen, "times)");
+                }
                 this.nodeData.unmarkRequestInFlight(nodeId);
                 this.invalidateNode(nodeId);
                 return;

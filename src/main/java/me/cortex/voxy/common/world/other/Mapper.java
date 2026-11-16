@@ -143,7 +143,8 @@ public class Mapper {
             for (var error : sentryErrors) {
                 while (true) {
                     var state = new StateEntry(error.right(), Block.BLOCK_STATE_REGISTRY.byId(rand.nextInt(Block.BLOCK_STATE_REGISTRY.size() - 1)));
-                    if (this.block2stateEntry.put(state.state, state) == null) {
+                    // putIfAbsent: put() would overwrite a live state's entry on a collision and leave an orphan
+                    if (!state.state.isAir() && this.block2stateEntry.putIfAbsent(state.state, state) == null) {
                         sentries.add(state);
                         break;
                     }

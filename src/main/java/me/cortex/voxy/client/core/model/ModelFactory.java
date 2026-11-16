@@ -296,7 +296,12 @@ public class ModelFactory {
         var biomeEntry = this.biomeQueue.poll();
         while (biomeEntry != null) {
             var biomeRegistry = Minecraft.getInstance().level.registryAccess().lookupOrThrow(Registries.BIOME);
-            var res = this.addBiome0(biomeEntry.id, biomeRegistry.getValue(Identifier.parse(biomeEntry.biome)));
+            var biome = biomeRegistry.getValue(Identifier.parse(biomeEntry.biome));
+            if (biome == null) {// biome of a removed mod still in the world's mappings; a null biome kills this thread later
+                Logger.warn("Unknown biome " + biomeEntry.biome + " in Voxy mappings, tinting it as plains");
+                biome = DEFAULT_BIOME;
+            }
+            var res = this.addBiome0(biomeEntry.id, biome);
             if (res != null) {
                 this.uploadResults.add(res);
             }

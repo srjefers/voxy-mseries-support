@@ -240,7 +240,7 @@ public class VoxyRenderSystem {
                         this.nodeManager::addTopLevel,
                         this.nodeManager::removeTopLevel);
 
-                this.setRenderDistance(VoxyConfig.CONFIG.sectionRenderDistance);
+                this.setRenderDistance(Math.round(VoxyConfig.CONFIG.sectionRenderDistance));
             }
 
             this.chunkBoundRenderer = new ChunkBoundRenderer(this.pipeline);
@@ -654,11 +654,11 @@ public class VoxyRenderSystem {
             // moves >128 blocks.
             this.metalRingDiagFrame++;
             if (this.metalRingDiagFrame % 600 == 1) {
-                me.cortex.voxy.common.Logger.info(String.format(
+                me.cortex.voxy.common.Logger.info(String.format(java.util.Locale.ROOT, 
                         "[Metal-RING f=%d] processedThisFrame=%s  cam=(%.0f, %.0f)  cfgRD=%d",
                         this.metalRingDiagFrame, processedThisFrame,
                         viewport.cameraX, viewport.cameraZ,
-                        me.cortex.voxy.client.config.VoxyConfig.CONFIG.sectionRenderDistance));
+                        Math.round(me.cortex.voxy.client.config.VoxyConfig.CONFIG.sectionRenderDistance)));
             }
             return;
         }

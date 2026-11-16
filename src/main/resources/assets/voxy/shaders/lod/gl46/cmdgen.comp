@@ -18,6 +18,9 @@ layout(local_size_x = 128) in;
 // (opaque region size, temporal region size). Fail open if absent so the shader
 // still compiles standalone — a missing cap restores the pre-fix behaviour
 // rather than breaking the build.
+#ifndef CMD_MERGE_GAP
+#define CMD_MERGE_GAP 0
+#endif
 #ifndef MAX_OPAQUE_DRAWS
 #define MAX_OPAQUE_DRAWS 0x7fffffff
 #endif
@@ -101,14 +104,40 @@ void main() {
         msk |= uint(((counts.x>>16)&0xFFFFu)!=0)<<6;
 
 
-        uint cmdCnt = bitCount(msk);
+        // The 7 opaque ranges (double sided, D, U, N, S, W, E) are contiguous, so enabled ranges with only
+        // empty or small (<= CMD_MERGE_GAP quads) culled ranges between them are merged into one draw.
+        // The extra quads are back faces of closed solids and lose the depth test; Metal draws LODs
+        // without culling anyway.
+        uint rngCnt[7];
+        rngCnt[0] = (counts.x>>16)&0xFFFFu;
+        rngCnt[1] = counts.y&0xFFFFu; rngCnt[2] = (counts.y>>16)&0xFFFFu;
+        rngCnt[3] = counts.z&0xFFFFu; rngCnt[4] = (counts.z>>16)&0xFFFFu;
+        rngCnt[5] = counts.w&0xFFFFu; rngCnt[6] = (counts.w>>16)&0xFFFFu;
+        uint enMask = ((msk>>6)&1u) | ((msk&0x3Fu)<<1);
+
+        uint runStart[7];
+        uint runLen[7];
+        uint cmdCnt = 0;
+        uint gap = 0xFFFFFFFFu;
+        uint p = ptr + (counts.x&0xFFFFu);
+        for (uint i = 0; i < 7u; i++) {
+            uint c = rngCnt[i];
+            if ((enMask & (1u<<i)) != 0u && c != 0u) {
+                if (cmdCnt != 0u && gap <= uint(CMD_MERGE_GAP)) {
+                    runLen[cmdCnt-1u] = (p + c) - runStart[cmdCnt-1u];
+                } else {
+                    runStart[cmdCnt] = p;
+                    runLen[cmdCnt] = c;
+                    cmdCnt++;
+                }
+                gap = 0u;
+            } else if (gap != 0xFFFFFFFFu) {
+                gap += c;
+            }
+            p += c;
+        }
+
         uint cmdPtr = atomicAdd(opaqueDrawCount, cmdCnt);
-        // Clamp the opaque write cursor to the opaque region [0, MAX_OPAQUE_DRAWS).
-        // The atomic is unbounded; a large render list can request more commands
-        // than the slice holds. Writing past it is undefined on Metal (device
-        // fault) and corrupts the translucent/temporal slices on GL. The whole
-        // section's opaque draws are dropped together (graceful — the CPU read
-        // count saturates at the same cap), so cmdPtr stays consistent.
         bool opaqueInBounds = (cmdPtr + cmdCnt) <= uint(MAX_OPAQUE_DRAWS);
 
         uint tCmdPtr = 0;
@@ -119,118 +148,31 @@ void main() {
             temporalInBounds = (tBase + cmdCnt) <= uint(MAX_TEMPORAL_DRAWS);
         }
 
-        //TODO: make totalQuads also have temporal amount
         #ifdef HAS_STATISTICS
         uint totalQuads = 0;
         #endif
 
-        uint count = 0;
         //Translucency
-        count = counts.x&0xFFFFu;
+        uint count = counts.x&0xFFFFu;
         if (count != 0) {
             uint tp = atomicAdd(translucentDrawCount, 1)+TRANSLUCENT_WRITE_BASE;
             translucentCommandData[tp] = drawId;
             uvec3 absRel = abs(relative);
             uint distToCamera = (absRel.x+absRel.y+absRel.z)<<detail;
-            //The -1 is because we want 0 to TRANSLUCENT_WRITE_BASE, exclusive of ending, not inclusive (0->1023)
             distToCamera = (TRANSLUCENT_WRITE_BASE-1)-min(distToCamera, (TRANSLUCENT_WRITE_BASE-1));
             atomicAdd(translucentCommandData[distToCamera], 1);
             #ifdef HAS_STATISTICS
             totalQuads += count;
             #endif
         }
-        ptr += count;
 
-        //Double sided quads
-        count = (counts.x>>16)&0xFFFFu;
-        if (count != 0) {
-            if (opaqueInBounds) writeCmd(cmdPtr++, drawId, ptr, count);
-            if (renderTemporally) {
-                if (temporalInBounds) writeCmd(tCmdPtr++, drawId, ptr, count);
-            }
+        for (uint r = 0; r < cmdCnt; r++) {
+            if (opaqueInBounds) writeCmd(cmdPtr + r, drawId, runStart[r], runLen[r]);
+            if (renderTemporally && temporalInBounds) writeCmd(tCmdPtr + r, drawId, runStart[r], runLen[r]);
             #ifdef HAS_STATISTICS
-            totalQuads += count;
+            totalQuads += runLen[r];
             #endif
         }
-        ptr += count;
-
-        //Down
-        count = (counts.y)&0xFFFFu;
-        if (((msk&(1u<<0))!=0)) {
-            if (opaqueInBounds) writeCmd(cmdPtr++, drawId, ptr, count);
-            if (renderTemporally) {
-                if (temporalInBounds) writeCmd(tCmdPtr++, drawId, ptr, count);
-            }
-            #ifdef HAS_STATISTICS
-            totalQuads += count;
-            #endif
-        }
-        ptr += count;
-
-        //Up
-        count = (counts.y>>16)&0xFFFFu;
-        if ((msk&(1u<<1))!=0) {
-            if (opaqueInBounds) writeCmd(cmdPtr++, drawId, ptr, count);
-            if (renderTemporally) {
-                if (temporalInBounds) writeCmd(tCmdPtr++, drawId, ptr, count);
-            }
-            #ifdef HAS_STATISTICS
-            totalQuads += count;
-            #endif
-        }
-        ptr += count;
-
-        //North
-        count = (counts.z)&0xFFFFu;
-        if ((msk&(1u<<2))!=0) {
-            if (opaqueInBounds) writeCmd(cmdPtr++, drawId, ptr, count);
-            if (renderTemporally) {
-                if (temporalInBounds) writeCmd(tCmdPtr++, drawId, ptr, count);
-            }
-            #ifdef HAS_STATISTICS
-            totalQuads += count;
-            #endif
-        }
-        ptr += count;
-
-        //South
-        count = (counts.z>>16)&0xFFFFu;
-        if ((msk&(1u<<3))!=0) {
-            if (opaqueInBounds) writeCmd(cmdPtr++, drawId, ptr, count);
-            if (renderTemporally) {
-                if (temporalInBounds) writeCmd(tCmdPtr++, drawId, ptr, count);
-            }
-            #ifdef HAS_STATISTICS
-            totalQuads += count;
-            #endif
-        }
-        ptr += count;
-
-        //West
-        count = (counts.w)&0xFFFFu;
-        if ((msk&(1u<<4))!=0) {
-            if (opaqueInBounds) writeCmd(cmdPtr++, drawId, ptr, count);
-            if (renderTemporally) {
-                if (temporalInBounds) writeCmd(tCmdPtr++, drawId, ptr, count);
-            }
-            #ifdef HAS_STATISTICS
-            totalQuads += count;
-            #endif
-        }
-        ptr += count;
-
-        //East
-        count = (counts.w>>16)&0xFFFFu;
-        if ((msk&(1u<<5))!=0) {
-            if (opaqueInBounds) writeCmd(cmdPtr++, drawId, ptr, count);
-            if (renderTemporally) {
-                if (temporalInBounds) writeCmd(tCmdPtr++, drawId, ptr, count);
-            }
-            #ifdef HAS_STATISTICS
-            totalQuads += count;
-            #endif
-        }
-        ptr += count;
 
         #ifdef HAS_STATISTICS
         atomicAdd(quadCounts[detail], totalQuads);

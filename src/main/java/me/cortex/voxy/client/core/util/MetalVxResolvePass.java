@@ -151,7 +151,7 @@ public final class MetalVxResolvePass {
             catch (NumberFormatException ignored) {}
         }
         String skyFloorLine = skyFloor > 0.0f
-                ? String.format("vxLight.y = max(vxLight.y, %.5f);\n", skyFloor)
+                ? String.format(java.util.Locale.ROOT, "vxLight.y = max(vxLight.y, %.5f);\n", skyFloor)
                 : "";
         if (skyFloor > 0.0f) {
             Logger.info("MetalVxResolvePass: VOXY_VX_SKY_FLOOR active, sky light floored to " + skyFloor
@@ -831,6 +831,16 @@ public final class MetalVxResolvePass {
     private static final boolean SAMPLER_FIX = !"0".equals(System.getenv("VOXY_VX_SAMPLER_FIX"));
     private static final float[] TRANS_CLEAR_ZERO = new float[4];
 
+    // TRANS_CLEAR only for a dedicated voxy target (BSL: colortex16). Complementary based packs (CR, Nova)
+    // use colortex0 for both stages, and clearing it turned the sky and all opaque LODs black.
+    private static boolean clearsOwnChannel(int[] transTargets, int[] opaqueTargets) {
+        if (!TRANS_CLEAR || transTargets == null || transTargets.length == 0) return false;
+        if (opaqueTargets != null) {
+            for (int t : opaqueTargets) if (t == transTargets[0]) return false;
+        }
+        return true;
+    }
+
     // Sky-mirror dim factor for LOD water kept as near fallback inside the
     // masked near-cull ring — see the anchor patch in assembleFragment.
     // 1 (or >=1) disables the dim entirely. With V2 (default) the value is
@@ -1232,12 +1242,13 @@ public final class MetalVxResolvePass {
             if (!sc.resolve(oP0, opaqueDepthRect, fbw, fbh, ndc)) return;
             if (DUMP_OUT && dumpFrame % 300 == 100) { sc.dumpDepthStats(fbw, fbh); dumpAoStats(ipipe, sc, fbw, fbh); }
             int[] opaqueTargets = data.resolveOpaqueTargetsNow(ipipe);
-            runOne(data, opaque, oP0, oP1, oP2, opaqueDepthRect, opaqueTargets, fbw, fbh, false, 0);
+            runOne(data, opaque, oP0, oP1, oP2, opaqueDepthRect, opaqueTargets, fbw, fbh, false, false, 0);
 
             if (trans != null && tP0 != 0 && transDepthRect != 0) {
                 sc.resolveTrans(tP0, transDepthRect, fbw, fbh, ndc);
                 int[] transTargets = data.resolveTranslucentTargetsNow(ipipe);
                 runOne(data, trans, tP0, tP1, tP2, transDepthRect, transTargets, fbw, fbh, true,
+                        clearsOwnChannel(transTargets, data.resolveOpaqueTargetsNow(ipipe)),
                         ct5AltTexture(ipipe));
             }
         } catch (Throwable t) {
@@ -1308,6 +1319,7 @@ public final class MetalVxResolvePass {
                 Logger.info("[VX-BOUND] trans targets=" + java.util.Arrays.toString(transTargets) + ids);
             }
             runOne(data, trans, tP0, tP1, tP2, transDepthRect, transTargets, fbw, fbh, true,
+                        clearsOwnChannel(transTargets, data.resolveOpaqueTargetsNow(ipipe)),
                     ct5AltTexture(ipipe));
             // Adjudicates the SSR mirror question empirically: which colortex5 side
             // actually carries deferred1's reflection data (and what the undefined
@@ -1374,7 +1386,7 @@ public final class MetalVxResolvePass {
                             else { emptyN++; emptySum += a; }
                         }
                     }
-                    Logger.info(String.format("[VX-OUT] colortex4 AO (%s): LODpx=%d aoMean=%.3f aoMin=%.3f aoMax=%.3f darkFrac(<0.1)=%.0f%% | emptyAoMean=%.3f",
+                    Logger.info(String.format(java.util.Locale.ROOT, "[VX-OUT] colortex4 AO (%s): LODpx=%d aoMean=%.3f aoMin=%.3f aoMax=%.3f darkFrac(<0.1)=%.0f%% | emptyAoMean=%.3f",
                             side == 0 ? "main" : "alt", lodN, lodN > 0 ? lodSum / lodN : -1, lodN > 0 ? lodMin : -1,
                             lodN > 0 ? lodMax : -1, 100.0 * lodDark / Math.max(1, lodN), emptyN > 0 ? emptySum / emptyN : -1));
                 }
@@ -1435,7 +1447,7 @@ public final class MetalVxResolvePass {
 
     private static void runOne(IrisVoxyRenderPipelineData data, Prog p,
                                int plane0, int plane1, int plane2, int depthRect,
-                               int[] targets, int fbw, int fbh, boolean blend, int ssrMirrorTex) {
+                               int[] targets, int fbw, int fbh, boolean blend, boolean clearTarget, int ssrMirrorTex) {
         if (p == null || targets == null || targets.length == 0) return;
         if (plane0 == 0 || depthRect == 0) return;
         boolean dirty = p.attached.length != targets.length;
@@ -1458,7 +1470,7 @@ public final class MetalVxResolvePass {
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
         glDisable(GL_SCISSOR_TEST);
-        if (blend && TRANS_CLEAR) {
+        if (clearTarget) {
             // See TRANS_CLEAR: Iris does not clear colortex16; without this the
             // blended alpha accumulates to 1.0 -> opaque LOD water.
             glClearBufferfv(GL_COLOR, 0, TRANS_CLEAR_ZERO);
@@ -1578,7 +1590,7 @@ public final class MetalVxResolvePass {
         if (dumpFrame % 300 != 100) return;
         if (p.uboScratch != 0 && p.uboSize >= 192) {
             StringBuilder fl = new StringBuilder();
-            for (int i = 0; i < 48; i++) fl.append(String.format(" %.3f", org.lwjgl.system.MemoryUtil.memGetFloat(p.uboScratch + (long) i * 4)));
+            for (int i = 0; i < 48; i++) fl.append(String.format(java.util.Locale.ROOT, " %.3f", org.lwjgl.system.MemoryUtil.memGetFloat(p.uboScratch + (long) i * 4)));
             Logger.info("[VX-OUT] " + label + " uboScratch[0..47]:" + fl);
         }
         java.nio.ByteBuffer buf = org.lwjgl.system.MemoryUtil.memAlloc(fbw * fbh * 4);
@@ -1595,7 +1607,7 @@ public final class MetalVxResolvePass {
                 sb += buf.get(i * 4 + 2) & 0xFF; sa += a;
             }
             int c = Math.max(1, covered);
-            Logger.info(String.format("[VX-OUT] %s resolve out meanRGBA=(%d,%d,%d,%d) over %d covered px (%.2f%% of %dx%d)",
+            Logger.info(String.format(java.util.Locale.ROOT, "[VX-OUT] %s resolve out meanRGBA=(%d,%d,%d,%d) over %d covered px (%.2f%% of %dx%d)",
                     label, sr / c, sg / c, sb / c, sa / c, covered, 100.0 * covered / n, fbw, fbh));
         } catch (Throwable t) {
             Logger.warn("[VX-OUT] " + label + " readback failed: " + t.getMessage());
@@ -1634,7 +1646,7 @@ public final class MetalVxResolvePass {
             int aw = org.lwjgl.opengl.GL11C.glGetTexLevelParameteri(GL_TEXTURE_RECTANGLE, 0, org.lwjgl.opengl.GL11C.GL_TEXTURE_WIDTH);
             int ah = org.lwjgl.opengl.GL11C.glGetTexLevelParameteri(GL_TEXTURE_RECTANGLE, 0, org.lwjgl.opengl.GL11C.GL_TEXTURE_HEIGHT);
             glBindTexture(GL_TEXTURE_RECTANGLE, prevRect);
-            Logger.info(String.format("[VX-BOUND] viewport=%dx%d depthTex=%d %dx%d albedoTex=%d %dx%d",
+            Logger.info(String.format(java.util.Locale.ROOT, "[VX-BOUND] viewport=%dx%d depthTex=%d %dx%d albedoTex=%d %dx%d",
                     fbw, fbh, depthTex, tw, th, albedoTex, aw, ah));
             int rw = Math.min(fbw, Math.max(1, aw)), rh = Math.min(fbh, Math.max(1, ah));
             int n = rw * rh;
@@ -1646,7 +1658,7 @@ public final class MetalVxResolvePass {
                 org.lwjgl.opengl.GL11C.glReadPixels(0, 0, rw, rh, GL_RGBA, org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE, buf);
                 int cov = 0;
                 for (int i = 0; i < n; i++) if ((buf.get(i * 4 + 3) & 0xFF) > 0) cov++;
-                Logger.info(String.format("[VX-BOUND] uVxAlbedo tex=%d alphaCoverage=%.2f%% of %dx%d", albedoTex, 100.0 * cov / n, rw, rh));
+                Logger.info(String.format(java.util.Locale.ROOT, "[VX-BOUND] uVxAlbedo tex=%d alphaCoverage=%.2f%% of %dx%d", albedoTex, 100.0 * cov / n, rw, rh));
             } else Logger.info("[VX-BOUND] uVxAlbedo tex=" + albedoTex + " FBO incomplete");
             // uVxMisc (unit 2): water-id fraction over nonzero pixels
             glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_RECTANGLE, miscTex, 0);
@@ -1666,8 +1678,8 @@ public final class MetalVxResolvePass {
                 }
                 StringBuilder top = new StringBuilder();
                 hist.entrySet().stream().sorted((p, q) -> q.getValue() - p.getValue()).limit(5)
-                        .forEach(e -> top.append(String.format(" id=%d(blk=%d)x%d", e.getKey(), e.getKey() / 100, e.getValue())));
-                Logger.info(String.format("[VX-BOUND] uVxMisc tex=%d nonzero=%.2f%% waterId=%.2f%% topOtherIds:%s",
+                        .forEach(e -> top.append(String.format(java.util.Locale.ROOT, " id=%d(blk=%d)x%d", e.getKey(), e.getKey() / 100, e.getValue())));
+                Logger.info(String.format(java.util.Locale.ROOT, "[VX-BOUND] uVxMisc tex=%d nonzero=%.2f%% waterId=%.2f%% topOtherIds:%s",
                         miscTex, 100.0 * nz / n, 100.0 * water / Math.max(1, nz), top.length() == 0 ? " none" : top.toString()));
             } else Logger.info("[VX-BOUND] uVxMisc tex=" + miscTex + " FBO incomplete");
             // uVxDepth (unit 3): valid packed-depth fraction (resolve coverage gate)
@@ -1682,7 +1694,7 @@ public final class MetalVxResolvePass {
                              + (buf.get(i * 4 + 2) & 0xFF) / (255.0 * 65025.0);
                     if (d > 0.0 && d < 0.9999999) valid++;
                 }
-                Logger.info(String.format("[VX-BOUND] uVxDepth tex=%d validDepth=%.2f%% of %dx%d", depthTex, 100.0 * valid / n, rw, rh));
+                Logger.info(String.format(java.util.Locale.ROOT, "[VX-BOUND] uVxDepth tex=%d validDepth=%.2f%% of %dx%d", depthTex, 100.0 * valid / n, rw, rh));
             } else Logger.info("[VX-BOUND] uVxDepth tex=" + depthTex + " FBO incomplete");
         } catch (Throwable t) {
             Logger.warn("[VX-BOUND] readback failed: " + t.getMessage());
@@ -1724,7 +1736,7 @@ public final class MetalVxResolvePass {
                         int a = buf.get(i * 4 + 3) & 0xFF;
                         sa += a; if (a > 128) aHigh++;
                     }
-                    Logger.info(String.format("[VX-OUT] colortex5 (%s) tex=%d meanRGBA=(%d,%d,%d,%d) aOver0.5=%.1f%%",
+                    Logger.info(String.format(java.util.Locale.ROOT, "[VX-OUT] colortex5 (%s) tex=%d meanRGBA=(%d,%d,%d,%d) aOver0.5=%.1f%%",
                             side == 0 ? "main" : "alt", tex, sr / n, sg / n, sb / n, sa / n, 100.0 * aHigh / n));
                 }
             } finally {

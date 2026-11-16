@@ -96,6 +96,17 @@ Java_me_cortex_voxy_client_core_metal_MetalNative_mtlCommandBufferWaitUntilCompl
     }
 }
 
+extern "C" JNIEXPORT jlong JNICALL
+Java_me_cortex_voxy_client_core_metal_MetalNative_mtlCommandBufferGpuTimeNs(
+        JNIEnv *, jclass, jlong cmdBufHandle) {
+    @autoreleasepool {
+        if (cmdBufHandle == 0) return 0;
+        id<MTLCommandBuffer> cmdBuf = voxy_handle_cast<id<MTLCommandBuffer>>(cmdBufHandle);
+        CFTimeInterval s = [cmdBuf GPUStartTime], e = [cmdBuf GPUEndTime];
+        return (e > s) ? (jlong)((e - s) * 1e9) : 0;
+    }
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_me_cortex_voxy_client_core_metal_MetalNative_mtlCommandBufferGetStatus(
         JNIEnv *, jclass, jlong cmdBufHandle) {

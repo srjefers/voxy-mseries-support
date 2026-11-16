@@ -1,0 +1,13 @@
+{
+  "required": false,
+  "package": "me.cortex.voxy.commonImpl.mixin.seedgen",
+  "compatibilityLevel": "JAVA_17",
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "mixins": [
+    "AccessorModStructuresSet",
+    "AccessorModStructuresWorld",
+    "MixinModStructuresWorld"
+  ]
+}

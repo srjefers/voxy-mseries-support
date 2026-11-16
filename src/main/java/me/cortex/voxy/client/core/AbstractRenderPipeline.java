@@ -167,7 +167,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             StringBuilder px = new StringBuilder();
             for (int i = 0; i < 8; i++) {
                 int x = fbw / 4 + i * (fbw / 16);
-                px.append(String.format(" %08X", MemoryUtil.memGetInt(rowAddr + (long) x * 4)));
+                px.append(String.format(java.util.Locale.ROOT, " %08X", MemoryUtil.memGetInt(rowAddr + (long) x * 4)));
             }
             Logger.info("[Metal-VXPLANES] " + label + " (0xAARRGGBB):" + px);
         } finally {
@@ -233,8 +233,8 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             }
             StringBuilder samp = new StringBuilder();
             idHist.entrySet().stream().sorted((p,q)->q.getValue()-p.getValue()).limit(6)
-                    .forEach(e -> samp.append(String.format(" id=%d(blk=%d)x%d", e.getKey(), e.getKey()/100, e.getValue())));
-            Logger.info(String.format("[Metal-VXTRANS] covered=%d waterDetected=%d notWater=%d  topNonWaterIds:%s",
+                    .forEach(e -> samp.append(String.format(java.util.Locale.ROOT, " id=%d(blk=%d)x%d", e.getKey(), e.getKey()/100, e.getValue())));
+            Logger.info(String.format(java.util.Locale.ROOT, "[Metal-VXTRANS] covered=%d waterDetected=%d notWater=%d  topNonWaterIds:%s",
                     covered, water, notWater, samp.length()==0?" none":samp.toString()));
             // face 0=DOWN 1=UP 2=NORTH 3=SOUTH 4=WEST 5=EAST (axis=face>>1, dir=face&1).
             // Flat water surface should be ~all UP(1); a spread => per-quad normals differ -> Fresnel squares.
@@ -290,7 +290,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                     if (tr >= 250 && tg >= 250 && tb >= 250) tintWhite++;
                     else {
                         tintBiome++;
-                        if (tintSampleN < 6) { tintSamples.append(String.format(" %02X%02X%02X", tr, tg, tb)); tintSampleN++; }
+                        if (tintSampleN < 6) { tintSamples.append(String.format(java.util.Locale.ROOT, " %02X%02X%02X", tr, tg, tb)); tintSampleN++; }
                     }
                     int mv = MemoryUtil.memGetInt(raM + (long) x * 4);
                     int mr = (mv >> 16) & 0xFF, mg = (mv >> 8) & 0xFF; // misc.r, misc.g
@@ -298,11 +298,11 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                     blockHist[block]++; skyHist[sky]++;
                 }
             }
-            Logger.info(String.format("[Metal-VXSTATS] covered=%d/%d (%.0f%%) meanRGB=(%d,%d,%d) grayFrac=%.0f%%",
+            Logger.info(String.format(java.util.Locale.ROOT, "[Metal-VXSTATS] covered=%d/%d (%.0f%%) meanRGB=(%d,%d,%d) grayFrac=%.0f%%",
                     covered, total, 100.0 * covered / Math.max(1, total),
                     covered > 0 ? (int)(sumR / covered) : 0, covered > 0 ? (int)(sumG / covered) : 0,
                     covered > 0 ? (int)(sumB / covered) : 0, 100.0 * gray / Math.max(1, covered)));
-            Logger.info(String.format("[Metal-VXSTATS] tint white=%d biome=%d  biomeSamples(RRGGBB):%s",
+            Logger.info(String.format(java.util.Locale.ROOT, "[Metal-VXSTATS] tint white=%d biome=%d  biomeSamples(RRGGBB):%s",
                     tintWhite, tintBiome, tintSamples.length() == 0 ? " none" : tintSamples.toString()));
             Logger.info("[Metal-VXSTATS] blockLight hist[0..15]=" + java.util.Arrays.toString(blockHist));
             Logger.info("[Metal-VXSTATS] skyLight   hist[0..15]=" + java.util.Arrays.toString(skyHist));
@@ -381,7 +381,16 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             // real LOD draws. Subsequent steps migrate renderTerrain /
             // renderTranslucent and replace the clear with encoder draws so
             // Voxy's actual LOD content reaches the IOSurface bridge.
-            this.runPipelineMetal(viewport, sourceFrameBuffer);
+            if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
+                long t0 = System.nanoTime();
+                if (me.cortex.voxy.client.core.util.FrameTiming.lastFrameStartNs != 0)
+                    me.cortex.voxy.client.core.util.FrameTiming.wallNs += t0 - me.cortex.voxy.client.core.util.FrameTiming.lastFrameStartNs;
+                me.cortex.voxy.client.core.util.FrameTiming.lastFrameStartNs = t0;
+                this.runPipelineMetal(viewport, sourceFrameBuffer);
+                me.cortex.voxy.client.core.util.FrameTiming.voxyTotalNs += System.nanoTime() - t0;
+            } else {
+                this.runPipelineMetal(viewport, sourceFrameBuffer);
+            }
             return;
         }
         int depthTexture = this.setup(viewport, sourceFrameBuffer, srcWidth, srcHeight);
@@ -479,8 +488,8 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         // Push PushMats { mat4 invProjMat; mat4 projMat; } into the UBO at BLIT_DEPTH_MATS_PUSH_BINDING.
         try (var stack = org.lwjgl.system.MemoryStack.stackPush()) {
             long addr = stack.nmalloc(BLIT_DEPTH_MATS_PUSH_SIZE);
-            new Matrix4f(viewport.MVP).invert().getToAddress(addr);                 // invProjMat
-            targetTransform.getToAddress(addr + 4 * 4 * 4);                          // projMat
+            me.cortex.voxy.common.util.JomlMem.put(new Matrix4f(viewport.MVP).invert(), addr);                 // invProjMat
+            me.cortex.voxy.common.util.JomlMem.put(targetTransform, addr + 4 * 4 * 4);                          // projMat
             blitShader.setBytes(BLIT_DEPTH_MATS_PUSH_BINDING, addr, BLIT_DEPTH_MATS_PUSH_SIZE);
         }
 
@@ -617,6 +626,9 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         //    UNDEFINED and the screenspace.glsl "pointSample <= 0.0" guard
         //    needs real zeros, not luck.
         viewport.hiZBuffer.ensureAllocated(viewport.width, viewport.height);
+        // Occlusion from last frame's MC depth (McCoverageHiz). Finished right before
+        // traversal so the readback overlaps the node manager ticks.
+        viewport.hiZBuffer.beginMcCoverage(viewport);
 
         // 2b) Lazy-allocate the Metal-side depth texture for our render pass.
         //     PURE depth format (not D24S8): the packed Depth32Float_Stencil8
@@ -643,6 +655,8 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         me.cortex.voxy.client.core.rendering.util.DownloadStream.INSTANCE.tick();
         this.nodeManager.tick(this.traversal.getNodeBuffer(), this.nodeCleaner);
         this.nodeCleaner.tick(this.traversal.getNodeBuffer());
+        viewport.hiZBuffer.finishMcCoverage();
+        this.traversal.deferRequestReadOnce();
         this.traversal.doTraversal(viewport);
 
         // 4) Per-frame draw-command generation — all 5 MDIC compute prepasses
@@ -668,6 +682,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         } else {
             backend.submit();
         }
+        this.traversal.finishDeferredRequestRead();
 
         // M13 2026-05-15 Layer B diagnostic — read back the renderList and
         // drawCountCallBuffer values so we can see exactly how many sections
@@ -702,33 +717,38 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             }
             int topNodeCount = this.traversal.getTopNodeCount();
             int firstDispatchSize = (topNodeCount + 127) >> 7;
-            // fps over the 600-frame window between these logs — the perf A/B
-            // matrix reads it straight from the log (paused-time windows show
-            // up as implausibly low fps and are skipped by the reader).
+            // fps over the 600 frames since the last log line (wrong if the game was paused in between)
             long nowNs = System.nanoTime();
             double windowFps = this.fpsWindowStartNs != 0
                     ? 600.0 / ((nowNs - this.fpsWindowStartNs) / 1e9) : -1;
             this.fpsWindowStartNs = nowNs;
-            Logger.info(String.format(
-                    "[Metal-LayerB f=%d] fps=%.1f topNodeCount=%d firstDispatchSize=%d renderList.sectionCount=%d cmdGenDispatch=(%d,%d,%d) draws opaque=%d translucent=%d temporal=%d",
+            Logger.info(String.format(java.util.Locale.ROOT, 
+                    "[Metal-LayerB f=%d] fps=%.1f topNodeCount=%d firstDispatchSize=%d renderList.sectionCount=%d cmdGenDispatch=(%d,%d,%d) draws opaque=%d translucent=%d temporal=%d hiz=%s",
                     this.metalFrame, windowFps, topNodeCount, firstDispatchSize,
                     renderListSectionCount,
                     cmdGenDispatchX, cmdGenDispatchY, cmdGenDispatchZ,
-                    opaqueDrawCount, translucentDrawCount, temporalOpaqueDrawCount));
-            // VOXY_FRAME_TIMING=1 companion line: per-frame averages of the
-            // three synchronous waits + the per-draw JNI loop over the same
-            // 600-frame window, so the 120fps work can rank batching vs ICB
-            // vs async against measured stall time instead of guesses.
+                    opaqueDrawCount, translucentDrawCount, temporalOpaqueDrawCount,
+                    viewport.hiZBuffer.mcCoverageState()));
+            // VOXY_FRAME_TIMING=1: per-frame averages of the synchronous waits and draw encoding over the same window
             if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
+                long chunkQuads600 = me.cortex.voxy.client.core.metal.MetalNative.mtlChunkedQuadsAndReset();
                 Logger.info(String.format(java.util.Locale.ROOT,
                         "[Metal-TIMING f=%d] per-frame avg over 600: hotWait=%.2fms"
-                        + " drawFlushWait=%.2fms bridgeWait=%.2fms jniDrawLoop=%.2fms draws=%d",
+                        + " drawFlushWait=%.2fms bridgeWait=%.2fms jniDrawLoop=%.2fms draws=%d voxyTotal=%.2fms frame=%.2fms gpu=%.2fms submits=%.1f quads=%.2fM chunkFill=%.1f%%",
                         this.metalFrame,
                         me.cortex.voxy.client.core.util.FrameTiming.hotReadbackNs / 600.0 / 1e6,
                         me.cortex.voxy.client.core.util.FrameTiming.drawCallFlushNs / 600.0 / 1e6,
                         me.cortex.voxy.client.core.util.FrameTiming.bridgeFlushNs / 600.0 / 1e6,
                         me.cortex.voxy.client.core.util.FrameTiming.jniDrawLoopNs / 600.0 / 1e6,
-                        me.cortex.voxy.client.core.util.FrameTiming.jniDrawCount / 600));
+                        me.cortex.voxy.client.core.util.FrameTiming.jniDrawCount / 600,
+                        me.cortex.voxy.client.core.util.FrameTiming.voxyTotalNs / 600.0 / 1e6,
+                        me.cortex.voxy.client.core.util.FrameTiming.wallNs / 600.0 / 1e6,
+                        me.cortex.voxy.client.core.util.FrameTiming.gpuNs / 600.0 / 1e6,
+                        me.cortex.voxy.client.core.util.FrameTiming.submits / 600.0,
+                        chunkQuads600 / 600.0 / 1e6,
+                        me.cortex.voxy.client.core.util.FrameTiming.chunkInstances == 0 ? 0.0
+                                : 100.0 * chunkQuads600 / ((double) me.cortex.voxy.client.core.util.FrameTiming.chunkInstances
+                                        * me.cortex.voxy.client.core.rendering.section.backend.mdic.MDICSectionRenderer.CHUNK_QUADS)));
                 me.cortex.voxy.client.core.util.FrameTiming.reset();
             }
         }
@@ -1030,7 +1050,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                 if (v > max) max = v;
                 samples++;
             }
-            Logger.info(String.format(
+            Logger.info(String.format(java.util.Locale.ROOT, 
                     "[Metal-DEPTHDIAG] frame=%d blitBuf %dx%d samples=%d zeros=%d ones=%d mid=%d min=%.6f max=%.6f",
                     this.metalFrame, fbw, fbh, samples, zeros, ones, mid, min, max));
 
@@ -1047,7 +1067,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                     long rowAddr = sbase + (long) (fbh / 2) * bpr;
                     for (int i = 0; i < 6; i++) {
                         int x = fbw / 2 + i * 37;
-                        px.append(String.format(" %08X", MemoryUtil.memGetInt(rowAddr + (long) x * 4)));
+                        px.append(String.format(java.util.Locale.ROOT, " %08X", MemoryUtil.memGetInt(rowAddr + (long) x * 4)));
                     }
                     Logger.info("[Metal-DEPTHDIAG] surface centerRow bpr=" + bpr + " px:" + px);
                 } finally {
@@ -1084,17 +1104,17 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             long usedMb = this.nodeManager.getUsedGeometryCapacity() / (1L << 20);
             long capMb  = this.nodeManager.getGeometryCapacity()    / (1L << 20);
             boolean hasWork = this.nodeManager.hasWork();
-            Logger.info(String.format(
+            Logger.info(String.format(java.util.Locale.ROOT, 
                     "[Metal-FLICKER f=%d] renderList count over last ~600 frames: min=%d max=%d changes=%d  (STATIC camera: changes>0 / min!=max => NON-DETERMINISTIC section selection = GPU traversal race; stable => flicker is frustum-edge view-jitter)",
                     this.metalFrame,
                     this.rlCountMin == Integer.MAX_VALUE ? -1 : this.rlCountMin,
                     this.rlCountMax, this.rlChanges));
             this.rlCountMin = Integer.MAX_VALUE; this.rlCountMax = 0; this.rlChanges = 0;
-            Logger.info(String.format(
+            Logger.info(String.format(java.util.Locale.ROOT, 
                     "[Metal-DIAG f=%d] sections=%d  geom=%d/%d MB  nodeMgr.hasWork=%s  cam=(%.0f, %.0f, %.0f)",
                     this.metalFrame, sectionCount, usedMb, capMb, hasWork,
                     viewport.cameraX, viewport.cameraY, viewport.cameraZ));
-            Logger.info(String.format(
+            Logger.info(String.format(java.util.Locale.ROOT, 
                     "[Metal-CHAIN f=%d] ingestCall=%d  ingestNoLight=%d  ingestQ=%d  ingestProc=%d  rawIngest=%d  worldEvt=%d  topLvlAdd=%d  geomResult=%d",
                     this.metalFrame,
                     me.cortex.voxy.common.world.service.VoxelIngestService.DIAG_ENQUEUE_CALL_COUNT.get(),
@@ -1105,14 +1125,14 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                     me.cortex.voxy.client.core.rendering.hierachical.AsyncNodeManager.DIAG_WORLD_EVENT_COUNT.get(),
                     me.cortex.voxy.client.core.rendering.hierachical.AsyncNodeManager.DIAG_TOP_LEVEL_ADD_COUNT.get(),
                     me.cortex.voxy.client.core.rendering.hierachical.AsyncNodeManager.DIAG_GEOMETRY_RESULT_COUNT.get()));
-            Logger.info(String.format(
+            Logger.info(String.format(java.util.Locale.ROOT, 
                     "[Metal-TICK  f=%d] tickWithResults=%d  tickWithUploads=%d  lastResultSectionCount=%d  basicSectionCount=%d",
                     this.metalFrame,
                     me.cortex.voxy.client.core.rendering.hierachical.AsyncNodeManager.DIAG_TICK_WITH_RESULTS_COUNT.get(),
                     me.cortex.voxy.client.core.rendering.hierachical.AsyncNodeManager.DIAG_TICK_WITH_UPLOADS_COUNT.get(),
                     me.cortex.voxy.client.core.rendering.hierachical.AsyncNodeManager.DIAG_LAST_TICK_SECTION_COUNT.get(),
                     sectionCount));
-            Logger.info(String.format(
+            Logger.info(String.format(java.util.Locale.ROOT, 
                     "[Metal-PGR   f=%d] notInMap=%d  reqSingle=%d  reqChild=%d  innerLeaf=%d  notWatched=%d  uploadEmpty=%d  emptyKids=%d  emptyNoKids=%d  uploadReal=%d  topNoDataDeferred=%d",
                     this.metalFrame,
                     me.cortex.voxy.client.core.rendering.hierachical.NodeManager.DIAG_PGR_NOT_IN_MAP.get(),
@@ -1125,7 +1145,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                     me.cortex.voxy.client.core.rendering.hierachical.NodeManager.DIAG_UPLOAD_EMPTY_NO_CHILDREN.get(),
                     me.cortex.voxy.client.core.rendering.hierachical.NodeManager.DIAG_UPLOAD_REAL.get(),
                     me.cortex.voxy.client.core.rendering.hierachical.NodeManager.DIAG_TOP_LEVEL_NO_DATA_DEFER.get()));
-            Logger.info(String.format(
+            Logger.info(String.format(java.util.Locale.ROOT, 
                     "[Metal-GEN   f=%d] called=%d  prepThrow=%d  faceThrow=%d  zeroQ=%d  realQ=%d  lastQ=%d",
                     this.metalFrame,
                     me.cortex.voxy.client.core.rendering.building.RenderDataFactory.DIAG_GEN_CALLED.get(),
@@ -1134,7 +1154,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                     me.cortex.voxy.client.core.rendering.building.RenderDataFactory.DIAG_GEN_ZERO_QUADS.get(),
                     me.cortex.voxy.client.core.rendering.building.RenderDataFactory.DIAG_GEN_REAL_QUADS.get(),
                     me.cortex.voxy.client.core.rendering.building.RenderDataFactory.DIAG_GEN_LAST_QUADCOUNT.get()));
-            Logger.info(String.format(
+            Logger.info(String.format(java.util.Locale.ROOT, 
                     "[Metal-BAKE  f=%d] invocations=%d  nonzeroPixels=%d  fullAlpha=%d  zeroAlpha=%d  dilateRuns=%d  dilateFilled=%d",
                     this.metalFrame,
                     me.cortex.voxy.client.core.model.bakery.GlViewCapture.DIAG_BAKE_INVOCATIONS.get(),
@@ -1143,14 +1163,14 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                     me.cortex.voxy.client.core.model.bakery.GlViewCapture.DIAG_BAKE_ZERO_ALPHA_INVOCATIONS.get(),
                     me.cortex.voxy.client.core.model.bakery.GlViewCapture.DIAG_BAKE_DILATE_RUNS.get(),
                     me.cortex.voxy.client.core.model.bakery.GlViewCapture.DIAG_BAKE_DILATE_PIXELS_FILLED.get()));
-            Logger.info(String.format(
+            Logger.info(String.format(java.util.Locale.ROOT, 
                     "[Metal-PIPE  f=%d] addEntry=%d  cpyBuf=%d  procModel=%d  atlasUpload=%d",
                     this.metalFrame,
                     me.cortex.voxy.client.core.model.ModelFactory.DIAG_ADDENTRY_CALLS.get(),
                     me.cortex.voxy.client.core.model.ModelFactory.DIAG_CPYBUF_CALLBACKS.get(),
                     me.cortex.voxy.client.core.model.ModelFactory.DIAG_PROCESS_MODEL_RESULTS.get(),
                     me.cortex.voxy.client.core.model.ModelFactory.DIAG_ATLAS_UPLOADS.get()));
-            Logger.info(String.format(
+            Logger.info(String.format(java.util.Locale.ROOT, 
                     "[Metal-REQ   f=%d] last=%d  total=%d  directRead=%d  downloadRead=%d",
                     this.metalFrame,
                     me.cortex.voxy.client.core.rendering.hierachical.HierarchicalOcclusionTraverser.DIAG_LAST_REQUEST_COUNT.get(),
@@ -1235,11 +1255,16 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
      * terrain (BSL deferred shading of grazing LOD); kept behind VOXY_VX_MATERIAL_OPAQUE=1
      * for A/B only. Trans-only is the mergeable shape: water BSL-shaded, opaque untouched.
      */
-    public static final boolean VX_MATERIAL_OPAQUE = "1".equals(System.getenv("VOXY_VX_MATERIAL_OPAQUE"));
+    private static final String VX_MATERIAL_OPAQUE_ENV = System.getenv("VOXY_VX_MATERIAL_OPAQUE");
 
-    /** Opaque LOD uses the material g-buffer + resolve only when explicitly opted in. */
+    // Opaque LODs go through the material g-buffer and resolve for every pack except BSL, whose deferred
+    // shading darkens LODs at grazing angles. Complementary based packs (Nova) light LODs forward in
+    // voxy_opaque, so pre-lit injected LODs don't match real chunks there. VOXY_VX_MATERIAL_OPAQUE=1/0 overrides.
     public boolean vxOpaqueMaterialMode() {
-        return vxMaterialMode() && VX_MATERIAL_OPAQUE;
+        if (!vxMaterialMode()) return false;
+        if (VX_MATERIAL_OPAQUE_ENV != null) return "1".equals(VX_MATERIAL_OPAQUE_ENV);
+        String pack = net.irisshaders.iris.Iris.getCurrentPackName();
+        return pack == null || !pack.toLowerCase(java.util.Locale.ROOT).startsWith("bsl");
     }
 
     //null means dont transform the shader
