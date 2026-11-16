@@ -126,7 +126,11 @@ void traverse(in UnpackedNode node) {
                 enqueueChildren(node);
             } else {
                 //printf("B");
-                addRequest(node);
+                // A leaf without child existence can't be expanded, the CPU would reject and
+                // re-upload it every frame. Only top level nodes may request with existence 0.
+                if (hasKnownChildren(node) || node.lodLevel == 4u) {
+                    addRequest(node);
+                }
                 //TODO: use self mesh (is error state if it doesnt have one since all leaf nodes should have a mesh)
                 // Basicly guarenteed to have a mesh, if it doesnt it is very very bad and incorect since its a violation of the graph properties
                 // that all leaf nodes must contain a mesh

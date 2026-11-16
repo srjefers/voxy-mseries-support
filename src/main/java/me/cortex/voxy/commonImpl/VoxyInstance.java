@@ -234,6 +234,18 @@ public abstract class VoxyInstance {
             this.activeWorldLock.unlockRead(stamp);
         }
 
+        // Addons can still hold world refs here (Voxy SeedGen workers). Give them a moment to finish while
+        // the ingest and saving services are still up, so their tiles aren't dropped on a dead service.
+        // SeedGen's continuous fill only lets go when told to stop, and disabling Voxy in the config menu
+        // (unlike closing the world) never tells it, so ask it the same way a world close does.
+        try {
+            Class.forName("mobius.voxyseedgen.voxy.SeedFill").getMethod("stopForWorldClosing").invoke(null);
+        } catch (ClassNotFoundException ignored) {
+        } catch (Throwable t) {
+            Logger.error("Could not stop Voxy SeedGen before shutdown", t);
+        }
+        this.awaitWorldRefs(3000);
+
         try {this.ingestService.shutdown();} catch (Exception e) {Logger.error(e);}
         try {this.savingService.shutdown();} catch (Exception e) {Logger.error(e);}
 
@@ -270,6 +282,29 @@ public abstract class VoxyInstance {
         }
         Logger.info("Instance shutdown");
         this.activeWorldLock.unlockWrite(stamp);
+    }
+
+    private void awaitWorldRefs(long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            boolean used = false;
+            long stamp = this.activeWorldLock.readLock();
+            try {
+                for (var world : this.activeWorlds.values()) {
+                    if (world.isWorldUsed()) { used = true; break; }
+                }
+            } finally {
+                this.activeWorldLock.unlockRead(stamp);
+            }
+            if (!used) return;
+            try {
+                //noinspection BusyWait
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
     }
 
     public boolean isIngestEnabled(WorldIdentifier worldId) {
