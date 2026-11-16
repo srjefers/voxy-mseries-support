@@ -95,7 +95,17 @@ public class MixinRenderSectionManager {
     private boolean voxy$updateOnUpload(RenderSection instance, BuiltSectionInfo info) {
         boolean wasBuilt = instance.getFlags()!=0;
         int flags = instance.getFlags();
-        if (!instance.setInfo(info)) {
+        boolean changed = instance.setInfo(info);
+        if (me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.MASK_EMPTY
+                && me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.DRAWN_ONLY) {
+            long epos = voxy$boundPos(instance.getChunkX(), instance.getChunkY(), instance.getChunkZ());
+            boolean empty = instance.isBuilt() && instance.getFlags() == 0;
+            if (me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorSetEmpty(epos, empty)) {
+                VoxyRenderSystem esys = ((IGetVoxyRenderSystem)(this.level.levelRenderer)).getVoxyRenderSystem();
+                if (esys != null) esys.chunkBoundRenderer.setEmptySection(epos, empty);
+            }
+        }
+        if (!changed) {
             return false;
         }
         if (wasBuilt == (instance.getFlags()!=0)) {//Only want to do stuff on change
@@ -107,7 +117,8 @@ public class MixinRenderSectionManager {
             if (wasBuilt && instance.getFlags() != 0 && info != null) {
                 boolean hasOpaque = voxy$hasOpaque(info);
                 long rpos = voxy$boundPos(instance.getChunkX(), instance.getChunkY(), instance.getChunkZ());
-                if (me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorReclass(rpos, hasOpaque)) {
+                if (me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorReclass(rpos, hasOpaque)
+                        && !me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.DRAWN_ONLY) {
                     VoxyRenderSystem sys = ((IGetVoxyRenderSystem)(this.level.levelRenderer)).getVoxyRenderSystem();
                     if (sys != null) {
                         sys.chunkBoundRenderer.removeSection(rpos);
@@ -156,11 +167,11 @@ public class MixinRenderSectionManager {
             //TODO: on chunk remove do ingest if is surrounded by built chunks (or when the tracker says is ok)
 
             me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorRemove(pos);
-            system.chunkBoundRenderer.removeSection(pos);
+            if (!me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.DRAWN_ONLY) system.chunkBoundRenderer.removeSection(pos);
         } else {//Add
             boolean hasOpaque = voxy$hasOpaque(info);
             me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorAdd(pos, hasOpaque);
-            system.chunkBoundRenderer.addSection(pos, hasOpaque);
+            if (!me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.DRAWN_ONLY) system.chunkBoundRenderer.addSection(pos, hasOpaque);
         }
         return true;
     }
@@ -181,13 +192,7 @@ public class MixinRenderSectionManager {
 
     @Unique
     private static long voxy$boundPos(int x, int y, int z) {
-        //Do some very cheeky stuff for MiB
-        if (VoxyCommon.IS_MINE_IN_ABYSS) {
-            int sector = (x+512)>>10;
-            x-=sector<<10;
-            y+=16+(256-32-sector*30);
-        }
-        return SectionPos.asLong(x,y,z);
+        return me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.boundPos(x, y, z);
     }
 
     @org.spongepowered.asm.mixin.injection.Inject(method = "<init>", at = @At("RETURN"))
