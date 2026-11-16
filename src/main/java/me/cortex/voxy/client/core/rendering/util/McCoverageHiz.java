@@ -39,6 +39,9 @@ public final class McCoverageHiz {
     private static final int RING = 3;
     // frames an old capture may be reprojected again while no newer one has finished
     private static final int MAX_HELD_AGE = 4;
+    // captures kept while the camera stays put: twice the 8 sample TAA jitter of BSL and Complementary,
+    // since a frame can skip a capture (no readback finished, or two finished and the older was dropped)
+    private static final int STABLE_HISTORY = 16;
     private static final boolean IRIS_DEPTH_FALLBACK = !"0".equals(System.getenv("VOXY_HIZ_IRIS_DEPTH"));
 
     private static final String FULLSCREEN_VS = """
@@ -84,6 +87,10 @@ public final class McCoverageHiz {
     private long cpuCapture;  // last mapped capture, baseW*baseH floats
     private long cpuPyramid;  // every mip level, tightly packed floats
     private float[] captureArr = new float[0], level0Arr = new float[0];
+    private float[][] history = new float[STABLE_HISTORY][0];
+    private int historyCount, historyNext;
+    private final float[] historyInvVP = new float[16];
+    private final double[] historyCam = new double[3];
     private IGpuTexture texture;
     private int skipped, reused;
 
@@ -212,6 +219,7 @@ public final class McCoverageHiz {
         }
         final float[] src = this.captureArr, dst = this.level0Arr, inv = this.heldInvVP, cur = this.curVP;
         MemoryUtil.memFloatBuffer(this.cpuCapture, n).get(src);
+        this.stabilize(src, n);
         Arrays.fill(dst, 1.0f);
         final float dx = (float) (this.heldCam[0] - this.curCam[0]);
         final float dy = (float) (this.heldCam[1] - this.curCam[1]);
@@ -247,6 +255,31 @@ public final class McCoverageHiz {
             }
         }
         MemoryUtil.memFloatBuffer(this.cpuPyramid, n).put(dst);
+    }
+
+    /**
+     * TAA packs jitter MC's depth by a subpixel each frame, so coverage at block edges flips and the sections
+     * behind them toggle every frame. While the capture camera stays put, only texels covered in each of the
+     * last {@link #STABLE_HISTORY} captures count, which is the same set every frame once the jitter has cycled.
+     */
+    private void stabilize(float[] src, int n) {
+        boolean still = this.history[0].length == n
+                && Arrays.equals(this.heldInvVP, this.historyInvVP) && Arrays.equals(this.heldCam, this.historyCam);
+        if (!still) {
+            if (this.history[0].length != n) this.history = new float[STABLE_HISTORY][n];
+            System.arraycopy(this.heldInvVP, 0, this.historyInvVP, 0, 16);
+            System.arraycopy(this.heldCam, 0, this.historyCam, 0, 3);
+            this.historyCount = this.historyNext = 0;
+        }
+        if (this.heldAge == 0) {
+            System.arraycopy(src, 0, this.history[this.historyNext], 0, n);
+            this.historyNext = (this.historyNext + 1) % STABLE_HISTORY;
+            this.historyCount = Math.min(this.historyCount + 1, STABLE_HISTORY);
+        }
+        for (int k = 0; k < this.historyCount; k++) {
+            float[] h = this.history[k];
+            for (int i = 0; i < n; i++) src[i] = Math.max(src[i], h[i]);
+        }
     }
 
     private void buildMips() {
