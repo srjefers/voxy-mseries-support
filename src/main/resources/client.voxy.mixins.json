@@ -45,6 +45,7 @@
     "sodium.MixinVideoSettingsScreen",
     "minecraft.MixinLayerLightSectionStorage",
     "minecraft.AccessorGlCommandEncoder",
+    "minecraft.MixinMouseHandlerGrab",
     "flywheel.MixinFlwMaterialRenderState",
     "flywheel.MixinFlwOitFramebuffer"
   ],
