@@ -183,6 +183,9 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
     private static java.util.Map<String, String> cmdgenDefines() {
         var m = new java.util.LinkedHashMap<String, String>();
         m.put("TRANSLUCENT_WRITE_BASE", "1024");
+        // Max culled-face quads a merged opaque draw may bridge (0 = exact merge only).
+        String gap = System.getenv("VOXY_CMD_MERGE_GAP");
+        m.put("CMD_MERGE_GAP", gap != null ? Integer.toString(Math.max(0, Integer.parseInt(gap.trim()))) : "32");
         m.put("TEMPORAL_OFFSET", Integer.toString(TEMPORAL_OFFSET));
         m.put("TRANSLUCENT_DISTANCE_BUFFER_BINDING", "7");
         // Capacities of the opaque and temporal draw-command regions, mirroring
@@ -755,8 +758,17 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                 // per-draw baseInstance via setVertexBytes at binding 6;
                 // quads3.vert reads it from a small UBO when this define
                 // is set, instead of gl_BaseInstance.
-                opaqueDefines.put("VOXY_METAL_BI_FIX", "");
-                translucentDefines.put("VOXY_METAL_BI_FIX", "");
+                // Metal does pass baseInstance through for these draws, so the push is opt-in.
+                if (me.cortex.voxy.client.core.metal.MetalRenderEncoder.LEGACY_BI_FIX) {
+                    opaqueDefines.put("VOXY_METAL_BI_FIX", "");
+                    translucentDefines.put("VOXY_METAL_BI_FIX", "");
+                }
+                if (CHUNKED_DRAW) {
+                    opaqueDefines.put("VOXY_CHUNKED_DRAW", "");
+                    translucentDefines.put("VOXY_CHUNKED_DRAW", "");
+                    opaqueDefines.put("VOXY_CHUNK_BINDING", Integer.toString(CHUNK_BINDING));
+                    translucentDefines.put("VOXY_CHUNK_BINDING", Integer.toString(CHUNK_BINDING));
+                }
             }
 
             // NOTE: MDIC terrain pipelines do NOT opt into supportIndirectCommandBuffers.
@@ -886,16 +898,16 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         if (MetalMvpUtil.METAL_NDC_REMAP && this.backend.getType() != BackendType.OPENGL) {
             MetalMvpUtil.applyNdcRemap(mat);
         }
-        mat.getToAddress(ptr); ptr += 4*4*4;
+        me.cortex.voxy.common.util.JomlMem.put(mat, ptr); ptr += 4*4*4;
 
-        viewport.section.getToAddress(ptr); ptr += 4*3;
+        me.cortex.voxy.common.util.JomlMem.put(viewport.section, ptr); ptr += 4*3;
 
         if (viewport.frameId<0) {
             Logger.error("Frame ID negative, this will cause things to break, wrapping around");
             viewport.frameId &= 0x7fffffff;
         }
         MemoryUtil.memPutInt(ptr, viewport.frameId&0x7fffffff); ptr += 4;
-        viewport.innerTranslation.getToAddress(ptr); ptr += 4*3;
+        me.cortex.voxy.common.util.JomlMem.put(viewport.innerTranslation, ptr); ptr += 4*3;
 
         // std140 padding: cameraSubPos (vec3 at offset 80) consumes 12B; the
         // next vec4 must be 16B-aligned, so skip the 4B trailing pad before
@@ -1221,11 +1233,75 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
 
         encoder.bindIndexBuffer(me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer.INSTANCE.getBuffer(),
                 me.cortex.voxy.client.core.gpu.RenderEncoder.INDEX_TYPE_UINT16, 0);
+        if (CHUNKED_DRAW && encoder instanceof me.cortex.voxy.client.core.metal.MetalRenderEncoder mre) {
+            this.drawChunked(mre, viewport, indirectOffset, maxDrawCount);
+            return;
+        }
         encoder.drawIndexedIndirect(
                 me.cortex.voxy.client.core.gpu.RenderEncoder.PRIMITIVE_TRIANGLES,
                 viewport.drawCallBuffer, indirectOffset,
                 maxDrawCount,
                 /*stride*/ 5 * 4); // DrawElementsIndirectCommand = 5 uint32
+    }
+
+    // Metal: draw a whole pass as one instanced draw over fixed size quad chunks (quads3.vert,
+    // VOXY_CHUNKED_DRAW). Encoding 60-80k draws a frame on the CPU was the bottleneck at long
+    // render distances. VOXY_CHUNKED_DRAW=0 goes back to one draw per command.
+    static final boolean CHUNKED_DRAW = !"0".equals(System.getenv("VOXY_CHUNKED_DRAW"))
+            && !me.cortex.voxy.client.core.metal.MetalRenderEncoder.LEGACY_BI_FIX;
+    private static final int CHUNK_BINDING = 12;
+    // quads per instance; the shader reads each chunk's count, so only the host side depends on it
+    public static final int CHUNK_QUADS = envInt("VOXY_CHUNK_QUADS", 32, 4, 255);
+    private me.cortex.voxy.client.core.metal.MetalBuffer chunkBuffer;
+    private long chunkCursor;
+    private int chunkFrame = Integer.MIN_VALUE;
+    private final java.util.ArrayDeque<Object[]> retiredChunkBuffers = new java.util.ArrayDeque<>();
+
+    private static int envInt(String name, int def, int min, int max) {
+        try {
+            String v = System.getenv(name);
+            return v == null ? def : Math.max(min, Math.min(max, Integer.parseInt(v.trim())));
+        } catch (NumberFormatException e) {
+            return def;
+        }
+    }
+
+    private void drawChunked(me.cortex.voxy.client.core.metal.MetalRenderEncoder encoder,
+                             MDICViewport viewport, long indirectOffset, int maxDrawCount) {
+        if (viewport.frameId != this.chunkFrame) {
+            this.chunkFrame = viewport.frameId;
+            this.chunkCursor = 0;
+            // buffers replaced mid-frame can still be in use by the GPU; a few frames later they are idle
+            while (!this.retiredChunkBuffers.isEmpty()
+                    && viewport.frameId - (int) this.retiredChunkBuffers.peekFirst()[1] > 3) {
+                ((me.cortex.voxy.client.core.metal.MetalBuffer) this.retiredChunkBuffers.pollFirst()[0]).free();
+            }
+        }
+        if (this.chunkBuffer == null) {
+            this.chunkBuffer = (me.cortex.voxy.client.core.metal.MetalBuffer) this.backend.createBuffer(8L << 20, 0, false);
+        }
+        for (int attempt = 0; attempt < 2; attempt++) {
+            long cap = (this.chunkBuffer.size() - this.chunkCursor) / 8;
+            long r = encoder.drawIndexedChunked(me.cortex.voxy.client.core.gpu.RenderEncoder.PRIMITIVE_TRIANGLES,
+                    viewport.drawCallBuffer, indirectOffset, maxDrawCount, 5 * 4,
+                    this.chunkBuffer, this.chunkCursor, cap, CHUNK_QUADS, CHUNK_BINDING);
+            if (r == Long.MIN_VALUE) {
+                encoder.drawIndexedIndirect(me.cortex.voxy.client.core.gpu.RenderEncoder.PRIMITIVE_TRIANGLES,
+                        viewport.drawCallBuffer, indirectOffset, maxDrawCount, 5 * 4);
+                return;
+            }
+            if (r >= 0) {
+                me.cortex.voxy.client.core.util.FrameTiming.chunkInstances += r;
+                this.chunkCursor = (this.chunkCursor + r * 8 + 255) & ~255L;
+                return;
+            }
+            // overflow: earlier passes this frame still use the buffer, so retire it and retry once with a bigger one
+            long newSize = Math.max(this.chunkBuffer.size() * 2, ((-r) * 8 + 256) * 4);
+            this.retiredChunkBuffers.add(new Object[]{this.chunkBuffer, viewport.frameId});
+            this.chunkBuffer = (me.cortex.voxy.client.core.metal.MetalBuffer) this.backend.createBuffer(newSize, 0, false);
+            this.chunkCursor = 0;
+            Logger.info("[Metal-CHUNKED] grew chunk table to " + (newSize >> 20) + " MB");
+        }
     }
 
     @Override
@@ -1491,6 +1567,10 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
 
     @Override
     public void free() {
+        if (this.chunkBuffer != null) { this.chunkBuffer.free(); this.chunkBuffer = null; }
+        while (!this.retiredChunkBuffers.isEmpty()) {
+            ((me.cortex.voxy.client.core.metal.MetalBuffer) this.retiredChunkBuffers.pollFirst()[0]).free();
+        }
         this.uniform.free();
         this.distanceCountBuffer.free();
         if (this.translucentTerrainShader != null) this.translucentTerrainShader.free();

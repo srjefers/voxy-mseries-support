@@ -268,6 +268,12 @@ public final class MetalNative {
     /** Waits until the command buffer has completed execution. */
     public static native void mtlCommandBufferWaitUntilCompleted(long cmdBuffer);
 
+    /** GPU execution time (GPUEndTime - GPUStartTime) of a completed command buffer, in ns. */
+    public static native long mtlCommandBufferGpuTimeNs(long cmdBuffer);
+
+    /** Quads submitted through mtlRenderEncoderDrawIndexedChunked since the last call (render thread only). */
+    public static native long mtlChunkedQuadsAndReset();
+
     /** Gets the command buffer status (0=notEnqueued, 1=enqueued, 2=committed, 3=scheduled, 4=completed, 5=error). */
     public static native int mtlCommandBufferGetStatus(long cmdBuffer);
 
@@ -392,6 +398,25 @@ public final class MetalNative {
             long encoder, int primitiveType, int indexType,
             long indexBuffer, long indexBufferOffset,
             long indirectBuffer, long indirectOffset);
+
+    /**
+     * Issues {@code drawCount} indexed draws in one JNI call, reading the
+     * DrawElementsIndirectCommand records from CPU-visible memory at
+     * {@code cmdsAddr}. Empty commands are skipped. Returns draws issued.
+     * {@code perDrawBinding >= 0} also pushes baseInstance via setVertexBytes.
+     */
+    public static native int mtlRenderEncoderDrawIndexedBatch(
+            long encoder, int primitiveType, int indexType,
+            long indexBuffer, long indexBufferOffset,
+            long cmdsAddr, int drawCount, int stride, int perDrawBinding);
+
+    /** Chunked single instanced draw; returns entries used or -(needed) on overflow. */
+    public static native long mtlRenderEncoderDrawIndexedChunked(
+            long encoder, int primitiveType, int indexType,
+            long indexBuffer, long indexBufferOffset,
+            long cmdsAddr, int drawCount, int stride,
+            long chunkBuffer, long chunkContents, long chunkByteOffset,
+            long capacityEntries, int chunkQuads, int bindIndex);
 
     // --- Pipeline static state: depth-stencil + blend + raster ---
 

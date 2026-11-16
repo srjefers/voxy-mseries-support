@@ -30,6 +30,17 @@ public final class FrameTiming {
     /** Draws issued through that loop (2 JNI crossings each). */
     public static long jniDrawCount;
 
+    /** Whole runPipelineMetal (CPU encode + all waits). */
+    public static long voxyTotalNs;
+    /** Time between Voxy frame starts, i.e. the full frame time. */
+    public static long wallNs;
+    public static long lastFrameStartNs;
+    /** Summed GPU execution time of all submitted command buffers. */
+    public static long gpuNs;
+    public static long submits;
+    /** Chunked-draw instances (each CHUNK_QUADS quads of vertex work). */
+    public static long chunkInstances;
+
     private FrameTiming() {}
 
     public static void reset() {
@@ -38,5 +49,10 @@ public final class FrameTiming {
         bridgeFlushNs = 0;
         jniDrawLoopNs = 0;
         jniDrawCount = 0;
+        voxyTotalNs = 0;
+        wallNs = 0;
+        gpuNs = 0;
+        submits = 0;
+        chunkInstances = 0;
     }
 }

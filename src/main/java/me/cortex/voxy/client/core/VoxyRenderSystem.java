@@ -654,7 +654,7 @@ public class VoxyRenderSystem {
             // moves >128 blocks.
             this.metalRingDiagFrame++;
             if (this.metalRingDiagFrame % 600 == 1) {
-                me.cortex.voxy.common.Logger.info(String.format(
+                me.cortex.voxy.common.Logger.info(String.format(java.util.Locale.ROOT, 
                         "[Metal-RING f=%d] processedThisFrame=%s  cam=(%.0f, %.0f)  cfgRD=%d",
                         this.metalRingDiagFrame, processedThisFrame,
                         viewport.cameraX, viewport.cameraZ,
