@@ -41,7 +41,10 @@
     "sodium.MixinRenderSectionManager",
     "sodium.MixinSodiumWorldRenderer",
     "sodium.MixinVideoSettingsScreen",
-    "minecraft.MixinLayerLightSectionStorage"
+    "minecraft.MixinLayerLightSectionStorage",
+    "minecraft.AccessorGlCommandEncoder",
+    "flywheel.MixinFlwMaterialRenderState",
+    "flywheel.MixinFlwOitFramebuffer"
   ],
   "injectors": {
     "defaultRequire": 1
