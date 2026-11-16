@@ -255,7 +255,7 @@ public final class MetalBudgetBufferRenderer {
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long addr = stack.nmalloc(64);
-            matrix.getToAddress(addr);
+            me.cortex.voxy.common.util.JomlMem.put(matrix, addr);
             this.activeEncoder.setBytes(PUSH_BINDING, addr, 64);
         }
         this.activeEncoder.drawIndexed(

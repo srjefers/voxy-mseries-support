@@ -109,9 +109,9 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
         this.ssaoCompute.bind();
         try (var stack = MemoryStack.stackPush()) {
             long ptr = stack.nmalloc(4*4*4);
-            viewport.MVP.getToAddress(ptr);
+            me.cortex.voxy.common.util.JomlMem.put(viewport.MVP, ptr);
             nglUniformMatrix4fv(3, 1, false, ptr);//MVP
-            viewport.MVP.invert(new Matrix4f()).getToAddress(ptr);
+            me.cortex.voxy.common.util.JomlMem.put(viewport.MVP.invert(new Matrix4f()), ptr);
             nglUniformMatrix4fv(4, 1, false, ptr);//invMVP
         }
 
