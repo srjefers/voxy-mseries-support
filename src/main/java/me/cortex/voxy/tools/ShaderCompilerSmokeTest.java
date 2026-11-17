@@ -61,7 +61,8 @@ public final class ShaderCompilerSmokeTest {
                 new ShaderCase("chunkoutline/outline.vsh", RuntimeShaderCompiler.Stage.VERTEX, empty, "chunkoutline/outline.vsh (M9 — integer-mix extension)"),
                 new ShaderCase("chunkoutline/outline.fsh", RuntimeShaderCompiler.Stage.FRAGMENT, empty, "chunkoutline/outline.fsh"),
                 new ShaderCase("lod/gl46/prep.comp", RuntimeShaderCompiler.Stage.COMPUTE, empty, "lod/gl46/prep.comp"),
-                new ShaderCase("hiz/hiz.comp", RuntimeShaderCompiler.Stage.COMPUTE, empty, "hiz/hiz.comp (subgroups)"),
+                // hiz/hiz.comp is left out: only HiZBuffer2 loads it, which nothing creates, and its
+                // subgroupClusteredMax(v, 16) has no MSL form (Metal clusters in quads only).
                 new ShaderCase("lod/gl46/cmdgen.comp", RuntimeShaderCompiler.Stage.COMPUTE, cmdgenA, "lod/gl46/cmdgen.comp + injected defines"),
                 new ShaderCase("lod/hierarchical/debug/setup.comp", RuntimeShaderCompiler.Stage.COMPUTE, empty, "lod/hierarchical/debug/setup.comp"),
                 new ShaderCase("util/scatter.comp", RuntimeShaderCompiler.Stage.COMPUTE,
