@@ -195,6 +195,7 @@ public final class MetalRenderEncoder implements RenderEncoder {
                     ? "[Metal] indirect draw loop: native batch ON (one JNI call per slice; VOXY_METAL_DRAW_BATCH=0 restores the per-draw Java loop)"
                     : "[Metal] indirect draw loop: native batch OFF (VOXY_METAL_DRAW_BATCH=0) — per-draw Java JNI loop");
         }
+        boolean batched = false;
         if (drawBatchActive) {
             // Lever D (2026-09-25): the per-draw Java loop below costs two JNI
             // crossings per draw (~40k/frame at 20k draws, 0.9-1.8 ms/frame
@@ -209,7 +210,9 @@ public final class MetalRenderEncoder implements RenderEncoder {
                         this.boundIndexBuffer, this.boundIndexBufferOffset,
                         indirectBuf, indirectContents,
                         offset, drawCount, stride, VOXY_METAL_PER_DRAW_UBO_BINDING);
-                return;
+                // No early return: the FrameTiming accounting below has to see the batch too,
+                // or [Metal-TIMING] reads jniDrawLoop=0 and draws=0 whenever the batch is on.
+                batched = true;
             } catch (UnsatisfiedLinkError e) {
                 // The loaded libvoxy_metal.dylib predates the batch export (a
                 // stale copy on java.library.path wins over the bundled one):
@@ -219,7 +222,7 @@ public final class MetalRenderEncoder implements RenderEncoder {
                         + e.getMessage() + ") — falling back to the per-draw Java loop");
             }
         }
-        {
+        if (!batched) {
             long perDrawScratchAddr = MemoryUtil.memAddress(this.perDrawScratch);
             for (int i = 0; i < drawCount; i++) {
                 long cmdAddr = offset + (long) i * stride;

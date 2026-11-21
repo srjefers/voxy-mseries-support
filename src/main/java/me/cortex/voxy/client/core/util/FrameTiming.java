@@ -25,9 +25,12 @@ public final class FrameTiming {
     public static long drawCallFlushNs;
     /** Wait #3: end-of-frame bridge handoff submit (AbstractRenderPipeline). */
     public static long bridgeFlushNs;
-    /** The per-draw indirect JNI loop (MetalRenderEncoder.drawIndexedIndirect). */
+    /**
+     * Indirect draw submission in MetalRenderEncoder.drawIndexedIndirect: the native batch
+     * (default), or the per-draw Java JNI loop with VOXY_METAL_DRAW_BATCH=0.
+     */
     public static long jniDrawLoopNs;
-    /** Draws issued through that loop (2 JNI crossings each). */
+    /** Draws issued through it, in either form (the loop costs 2 JNI crossings per draw, the batch one per slice). */
     public static long jniDrawCount;
     /** The MC-lightmap glGetTexImage readback + mirror upload (LightMapHelper.syncFromMc). */
     public static long lightmapSyncNs;
