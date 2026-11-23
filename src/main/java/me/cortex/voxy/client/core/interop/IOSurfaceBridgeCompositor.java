@@ -217,7 +217,7 @@ public final class IOSurfaceBridgeCompositor {
 
     private IOSurfaceBridgeCompositor() {}
 
-    /** Composite the bridge's contents into the currently bound DRAW framebuffer. */
+    /** Composite the bridge's contents into MC's main render target (see {@code resolveMcMainFbo}). */
     public static void composite(IOSurfaceBridge bridge) {
         composite(bridge, USE_BLIT);
     }
@@ -281,14 +281,16 @@ public final class IOSurfaceBridgeCompositor {
         // MC 1.21+'s blaze3d, the level renders into MC's RenderTarget,
         // not the system FB. So a blit-to-FBO-0 lands somewhere the user
         // never sees (or gets overwritten by MC's final present). Resolve
-        // the GL FBO id from MC's RenderTarget.colorTexture (a GlTexture)
-        // via reflection on the private `firstFboId` field — public API
-        // doesn't expose it on this MC version.
+        // the GL FBO id from MC's RenderTarget.colorTexture (a GlTexture):
+        // its private `firstFboId`, widened in voxy.accesswidener.
         int mcDrawFbo = resolveMcMainFbo(mainRT);
         if (mcDrawFbo <= 0) {
-            // Fall back to whatever DRAW_FBO was bound — preserves M12
-            // behaviour if resolution fails.
-            mcDrawFbo = prevDrawFb;
+            // H7: never fall back to the bound DRAW framebuffer. Here it is
+            // FBO 0 (the window, which MC's final blit overwrites) or the FBO
+            // of whatever pass ran last, such as the 16x16 lightmap. Skip the
+            // composite; resolveMcMainFbo has warned once. Nothing was bound
+            // yet, so there is no state to restore.
+            return;
         }
 
         if (useBlit) {
@@ -951,48 +953,44 @@ public final class IOSurfaceBridgeCompositor {
     }
 
     /**
-     * Resolve the GL framebuffer id backing MC's main RenderTarget. MC 1.21+
-     * doesn't expose this directly; we go through the color GpuTexture which
-     * on the GL backend is a {@code com.mojang.blaze3d.opengl.GlTexture}
-     * with a private {@code firstFboId}. Cached after first successful read.
+     * The GL framebuffer id MC renders its main RenderTarget through. MC 1.21+
+     * does not expose it. On the GL backend the colour texture is a
+     * {@code com.mojang.blaze3d.opengl.GlTexture}, whose private
+     * {@code firstFboId} (widened in voxy.accesswidener, like
+     * {@code GlBuffer.handle}) is the FBO MC created for it. MC clears the main
+     * RT through that FBO at the start of every frame, so it exists by the time
+     * Sodium's SOLID pass runs. Returns -1 if it cannot be resolved; the caller
+     * then skips the composite. A field read, so no cache is needed.
+     *
+     * <p>H7: this used to look the field up by reflection,
+     * {@code getDeclaredField("firstFboId")}. That name exists only in the dev
+     * client, which runs on Mojang's names. The release jar runs on
+     * intermediary names ({@code class_10868.field_64516}), and Loom remaps
+     * bytecode references but not strings. So the lookup failed on every frame
+     * (one WARN per frame), the composite fell back to the bound framebuffer,
+     * FBO 0, and Minecraft's final blit covered the LODs: none were visible. A
+     * plain field access is remapped like every other Minecraft reference.
      */
-    private static int cachedMcMainFbo = -1;
-    private static Object cachedMcMainColorTex;
-    private static java.lang.reflect.Field firstFboIdField;
+    private static boolean mcMainFboWarned;
+    private static boolean mcMainFboRecoveryLogged;
     private static int resolveMcMainFbo(com.mojang.blaze3d.pipeline.RenderTarget mainRT) {
-        try {
-            Object colorTex = mainRT.getColorTexture();
-            if (colorTex == null) return cachedMcMainFbo;
-            if (colorTex == cachedMcMainColorTex && cachedMcMainFbo > 0) {
-                return cachedMcMainFbo;
+        var colorTex = mainRT.getColorTexture();
+        int fbo = colorTex instanceof com.mojang.blaze3d.opengl.GlTexture glTex ? glTex.firstFboId : -1;
+        if (fbo > 0) {
+            if (mcMainFboWarned && !mcMainFboRecoveryLogged) {
+                mcMainFboRecoveryLogged = true;
+                Logger.info("IOSurfaceBridgeCompositor: MC mainRT FBO resolved after all (fbo=" + fbo
+                        + "); compositing LODs again");
             }
-            cachedMcMainColorTex = colorTex;
-            if (firstFboIdField == null
-                    || !firstFboIdField.getDeclaringClass().isInstance(colorTex)) {
-                Class<?> c = colorTex.getClass();
-                while (c != null && c != Object.class) {
-                    try {
-                        firstFboIdField = c.getDeclaredField("firstFboId");
-                        firstFboIdField.setAccessible(true);
-                        break;
-                    } catch (NoSuchFieldException ignored) {
-                        c = c.getSuperclass();
-                    }
-                }
-                if (firstFboIdField == null) {
-                    Logger.warn("IOSurfaceBridgeCompositor: could not locate firstFboId on " + colorTex.getClass().getName());
-                    return cachedMcMainFbo;
-                }
-            }
-            int fbo = firstFboIdField.getInt(colorTex);
-            if (fbo > 0) {
-                cachedMcMainFbo = fbo;
-            }
-            return cachedMcMainFbo;
-        } catch (Throwable t) {
-            Logger.warn("IOSurfaceBridgeCompositor: failed to resolve MC mainRT FBO", t);
-            return cachedMcMainFbo;
+            return fbo;
         }
+        if (!mcMainFboWarned) {
+            mcMainFboWarned = true;
+            Logger.warn("IOSurfaceBridgeCompositor: failed to resolve MC mainRT FBO (colour texture "
+                    + (colorTex == null ? "null" : colorTex.getClass().getName()) + ", firstFboId=" + fbo
+                    + "); LODs are not composited while it stays unresolved. Logged once.");
+        }
+        return -1;
     }
 
     private static boolean rebind(IOSurfaceBridge bridge) {
