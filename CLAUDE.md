@@ -18,15 +18,17 @@ behind `backend != OPENGL` gates or is provably no-op on GL.
 ## Commands
 
 ```bash
-VOXY_FORCE_METAL=1 ./gradlew runClient   # dev client with the Metal path (the everyday command)
-./gradlew runClient                      # without the opt-in, Voxy disables itself → plain Sodium
+./gradlew runClient                      # dev client with the Metal path (the everyday command)
+VOXY_FORCE_METAL=0 ./gradlew runClient   # kill switch: Voxy turns itself off → plain Sodium
 ./gradlew build                          # full build incl. native dylib + remapped jar → build/libs/
 cd native/metal && ./build.sh [Debug|Release]   # rebuild libvoxy_metal.dylib standalone (gradle does this automatically)
 ```
 
-- **`VOXY_FORCE_METAL=1` is the required opt-in.** Without it `VoxyClient` force-disables
-  Voxy on non-GL backends (so the user sees normal Sodium rendering instead of a crash).
-- **Headless-ish debug loop:** `VOXY_QUICKPLAY="<world folder name>" VOXY_FORCE_METAL=1 ./gradlew runClient`
+- **The Metal path is on by default** (since `feature/metal-default-on`; it used to need
+  `VOXY_FORCE_METAL=1`, which is now harmless). `VOXY_FORCE_METAL=0` or `-Dvoxy.forceMetal=false`
+  makes `VoxyClient` disable Voxy on non-GL backends, so Sodium renders unmodified. Intel Macs,
+  Rosetta Java and macOS < 13 fall back to the GL backend and Voxy turns itself off there.
+- **Headless-ish debug loop:** `VOXY_QUICKPLAY="<world folder name>" ./gradlew runClient`
   auto-joins a singleplayer world on launch so diagnostics land in logs without menu interaction.
 - **Logs:** `run/logs/latest.log`. Grep the `[Metal-*]` markers (full table in `docs/DEVELOPMENT.md`).
 - **Runtime shaders** are GLSL→SPIR-V→MSL compiled on first use and cached in
@@ -40,10 +42,11 @@ cd native/metal && ./build.sh [Debug|Release]   # rebuild libvoxy_metal.dylib st
 - **`runClient` runs on the official launcher's Java 21** (the players' JVM) by default;
   `-PrunJava=27` or `-PrunJava=<path>` picks another. `-PnoIris=true` drops Iris from the
   dev runtime. The closest to a player:
-  `VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 ./gradlew runClient -PnoIris=true -PrunXmx=6G`.
+  `VOXY_QUICKPLAY="voxytest" ./gradlew runClient -PnoIris=true -PrunXmx=6G`.
 - **`./gradlew runProductionClient`** runs the release jar the way a launcher does
-  (intermediary names, Fabric API + Sodium 0.8.1, no Iris, Java 21, `run/`). `runClient`
-  uses Mojang names, so only this run shows reflection-by-name bugs (H7).
+  (intermediary names, Fabric API + Sodium 0.8.1, no Iris, Java 21, no JVM arguments, `run/`;
+  `-PforceMetal=false` adds the kill switch). `runClient` uses Mojang names, so only this run
+  shows reflection-by-name bugs (H7).
 
 ### Tests
 

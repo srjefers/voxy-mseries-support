@@ -99,7 +99,7 @@ real translucent biome-tinted water, full texture detail, ~111 FPS.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `VOXY_FORCE_METAL=1` | off | **Required** opt-in for the Metal render path |
+| `VOXY_FORCE_METAL=0` | on | Kill switch for the Metal render path (same as `-Dvoxy.forceMetal=false`). It used to be a required opt-in (`=1`); since `feature/metal-default-on` the path is on by default |
 | `VOXY_LOD_FIXED_MIP` | `1` on Metal | `0` re-enables derivative mip selection |
 | `VOXY_LOD_BRIGHTNESS` | `0.92` | Opaque LOD brightness parity (1.0 disables) |
 | `VOXY_FOG_SMOOTH_MS` | `200` | Fog colour smoothing time constant (0 disables) |
@@ -151,7 +151,7 @@ real translucent biome-tinted water, full texture detail, ~111 FPS.
 ## Running
 
 ```bash
-VOXY_FORCE_METAL=1 ./gradlew runClient
+./gradlew runClient
 ```
 
 Useful log markers: `[Metal-DEFINES]` (shader variant), `[Metal-WATERBAKE]`

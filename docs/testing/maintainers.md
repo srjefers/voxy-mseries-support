@@ -102,8 +102,9 @@ Fabric Loader 0.18.2, Fabric API 0.140.0+1.21.11, Sodium mc1.21.11-0.8.1
 (exactly). Iris 1.10.3 is optional (1.10.4 to 1.10.7 break *Video Settings*
 with Sodium 0.8.1). Do not use voxyworldgenv2 2.2.2.
 
-**JVM arguments:** `-Xmx6G -Dvoxy.forceMetal=true` (`-Xmx4G` on a 16 GB
-Mac). Without `-Dvoxy.forceMetal=true`, Voxy turns itself off.
+**Install:** put the jar in `mods/`. Voxy turns on by itself; no JVM
+argument is needed for it. Raise the launcher's default memory to `-Xmx6G`
+(`-Xmx4G` on a 16 GB Mac). `-Dvoxy.forceMetal=false` turns Voxy off.
 
 **How to test:** [testing guide](https://github.com/srjefers/voxy-mseries-support/blob/dev/docs/testing/README.md).
 **Report results:** [test report form](https://github.com/srjefers/voxy-mseries-support/issues/new?template=test-report.yml).

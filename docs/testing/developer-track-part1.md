@@ -108,12 +108,12 @@ another Java.
 
 | What | Command |
 |---|---|
-| Start the game | `VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G` |
-| Join the test world on launch | `VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G` |
-| Like a player without Iris | `VOXY_FORCE_METAL=1 ./gradlew runClient -PnoIris=true -PrunXmx=6G` |
+| Start the game | `./gradlew runClient -PrunXmx=6G` |
+| Join the test world on launch | `VOXY_QUICKPLAY="voxytest" ./gradlew runClient -PrunXmx=6G` |
+| Like a player without Iris | `./gradlew runClient -PnoIris=true -PrunXmx=6G` |
 
-- `VOXY_FORCE_METAL=1` is required. Without it, Voxy turns itself off and you
-  see plain Sodium.
+- Voxy turns on by itself. `VOXY_FORCE_METAL=0` turns it off and you see
+  plain Sodium. `VOXY_FORCE_METAL=1` from older notes is harmless.
 - `-PrunXmx=6G` caps the Java heap like `-Xmx6G` in a launcher profile. On a
   16 GB Mac, use `-PrunXmx=4G` and say so in your report.
 - `VOXY_QUICKPLAY` takes the world's save folder name.
@@ -619,7 +619,7 @@ That means:
 - No `crash-*` or `hs_err_pid*` file from the last 60 minutes.
 
 A result of "PASS, with N warning(s)" also passes, but read the warnings. If
-one says Voxy disabled itself, the launch was missing `VOXY_FORCE_METAL=1`.
+one says Voxy was turned off, the launch had `VOXY_FORCE_METAL=0`.
 Repeat the test.
 
 **Fail if.** The last line says `== Result: FAIL` and the exit status is 1:
@@ -718,7 +718,7 @@ select BSL, and turn shaders off for phase 1.
 **Command.**
 
 ```bash
-VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G
+./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -792,7 +792,8 @@ settings are not saved in `run/options.txt`.
   VSync off.
 - If Voxy's F3 lines are missing, run
   `grep -F '[VOXY_FORCE_METAL] Voxy enabled on METAL backend' run/logs/latest.log`.
-  If it finds nothing, the launch was missing `VOXY_FORCE_METAL=1`.
+  If it finds nothing, look for `Voxy disabled on`: the launch had
+  `VOXY_FORCE_METAL=0`.
 
 ### P1-NOPACK-START: Start without a pack, start-up log lines, F3 lines, pack toggle
 
@@ -814,7 +815,7 @@ the row `debug` is set in F3+F6.
 **Command.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -923,7 +924,7 @@ ON during the test, with Apply. At the end, back to the `P1-SETUP` value.
 **Command.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='5:time set noon;6:weather clear;7:effect give @p minecraft:water_breathing infinite' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='5:time set noon;6:weather clear;7:effect give @p minecraft:water_breathing infinite' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1019,13 +1020,13 @@ close backlog item B10.
 Run A, the fix (default):
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_CMD='5:time set noon;6:weather clear;8:tp @p X Y Z YAW PITCH' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_CMD='5:time set noon;6:weather clear;8:tp @p X Y Z YAW PITCH' ./gradlew runClient -PrunXmx=6G
 ```
 
 Run B, the old behavior:
 
 ```bash
-VOXY_BOUND_TRANS_SPLIT=all VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_CMD='5:time set noon;6:weather clear;8:tp @p X Y Z YAW PITCH' ./gradlew runClient -PrunXmx=6G
+VOXY_BOUND_TRANS_SPLIT=all VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_CMD='5:time set noon;6:weather clear;8:tp @p X Y Z YAW PITCH' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1129,7 +1130,7 @@ with depth, and fog that does not look washed out.
 **Command.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1224,7 +1225,7 @@ Areas that older code saved only update after `/voxy import current`.
 **Command.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_CMD='5:time set midnight;6:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_CMD='5:time set midnight;6:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1286,7 +1287,7 @@ that never releases. This is stress item S4 in
 **Command.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_CMD='5:give @p minecraft:spyglass;6:time set noon;7:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_CMD='5:give @p minecraft:spyglass;6:time set noon;7:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1374,13 +1375,13 @@ ship `voxy.json`.
 Run A forces the inject path with BSL:
 
 ```bash
-VOXY_METAL_VX_CONTRACT=0 VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_METAL_VX_CONTRACT=0 VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 Run B, optional, is a normal launch:
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1469,13 +1470,13 @@ about 512 blocks away.
 Run A:
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_CMD='5:time set noon;6:weather clear;7:give @p minecraft:dirt' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_CMD='5:time set noon;6:weather clear;7:give @p minecraft:dirt' ./gradlew runClient -PrunXmx=6G
 ```
 
 Run B, the older inject path where the original fix lived:
 
 ```bash
-VOXY_VX_MATERIAL_OPAQUE=0 VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_CMD='5:time set noon;6:weather clear;7:give @p minecraft:dirt' ./gradlew runClient -PrunXmx=6G
+VOXY_VX_MATERIAL_OPAQUE=0 VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_CMD='5:time set noon;6:weather clear;7:give @p minecraft:dirt' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1568,7 +1569,7 @@ results. It does not pass or fail on looks.
 **Command.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='5:time set 9000;6:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='5:time set 9000;6:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1633,13 +1634,13 @@ neighbor block that covers them.
 Run A:
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 Run B:
 
 ```bash
-VOXY_MESH_FACE_OCCLUDE=0 VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_MESH_FACE_OCCLUDE=0 VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**

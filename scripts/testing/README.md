@@ -211,9 +211,9 @@ or set `VOXY_RESULTS_DIR`.
 
 1. Quit the game. Run `settings-dump.sh` and check the values the test asks
    for.
-2. Start the game with these JVM arguments in your launcher profile:
-   `-Xmx6G -Dvoxy.forceMetal=true` (`-Xmx4G` on a 16 GB Mac). Without
-   `-Dvoxy.forceMetal=true`, Voxy turns itself off and you only see Sodium.
+2. Start the game with `-Xmx6G` in your launcher profile's JVM arguments
+   (`-Xmx4G` on a 16 GB Mac). Voxy turns on by itself;
+   `-Dvoxy.forceMetal=false` turns it off and you only see Sodium.
 3. Optional: run `sampler.sh` in a second Terminal tab.
 4. Do the test. Press F2 for screenshots. On a MacBook, press fn+F2.
 5. Quit the game. Run `log-check.sh`.

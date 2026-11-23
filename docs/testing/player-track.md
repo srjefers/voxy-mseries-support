@@ -109,8 +109,7 @@ arguments from [section 3](#3-java-arguments-and-memory).
      your home folder. In the file dialog, Cmd+Shift+H opens your home
      folder.
    - Click *More options*. In *JVM arguments*, change `-Xmx2G` to the value
-     for your Mac from section 3. Add `-Dvoxy.forceMetal=true` at the end.
-     Leave the other arguments as they are.
+     for your Mac from section 3. Leave the other arguments as they are.
    - Click *Create*.
 7. Copy the mod jars into the mods folder. This command opens it in Finder:
 
@@ -139,7 +138,7 @@ on macOS ignore them.
    greyed out, tick the checkbox of its group first.
    - *Maximum memory allocation*: the `-Xmx` value from section 3, in MiB.
      Use 4096 for 4 GB and 6144 for 6 GB.
-   - *Java arguments*: `-Dvoxy.forceMetal=true`
+   - *Java arguments*: leave empty. Voxy needs none.
    - Java: use Java 21 for Apple Silicon (arm64). If Prism offers to
      download Java, the Mojang build includes `jcmd`.
 3. Add the mod jars: *Edit > Mods > Add file*. Or open the instance folder
@@ -163,7 +162,7 @@ name and the value as two fields, for example `VOXY_FRAME_TIMING` and `1`.
 2. Open the instance settings, then *Java and memory*:
    - *Custom memory allocation*: the `-Xmx` value from section 3. Use
      4096 MB for 4 GB and 6144 MB for 6 GB.
-   - *Custom Java arguments*: `-Dvoxy.forceMetal=true`
+   - *Custom Java arguments*: leave empty. Voxy needs none.
    - *Custom environment variables*: optional. Write `KEY=VALUE` pairs
      separated by spaces, for example `VOXY_FRAME_TIMING=1`.
 3. Open the instance folder with *Open folder* and copy the mod jars into
@@ -179,24 +178,24 @@ CPU but not thread names. That is fine. Report what it gives you.
 
 ### Other launchers
 
-CurseForge and other launchers work too. Set the same memory and Java
-arguments. In CurseForge they are in *Profile Options*: *Custom RAM
-Allocation* and *Additional Arguments*. Find the instance folder with the
+CurseForge and other launchers work too. Set the same memory. In CurseForge
+it is in *Profile Options*: *Custom RAM Allocation*. Find the instance folder with the
 launcher's *Open Folder* button. CurseForge has no setting for environment
 variables, so skip the steps marked "Prism or Modrinth App only".
 
 ## 3. Java arguments and memory
 
-Every test profile needs these two Java (JVM) arguments:
+Voxy turns on by itself on an Apple Silicon Mac: it needs no Java argument.
+Give the game more memory than the launcher's default `-Xmx2G`:
 
 ```text
--Xmx6G -Dvoxy.forceMetal=true
+-Xmx6G
 ```
 
-- `-Dvoxy.forceMetal=true` turns on Voxy's Metal renderer. Without it, Voxy
-  turns itself off and you only get plain Sodium. In Prism and the Modrinth
-  App, the environment variable `VOXY_FORCE_METAL=1` does the same thing.
-  The Java argument works in every launcher.
+- To turn Voxy off without removing the jar, add `-Dvoxy.forceMetal=false`
+  (PT-02 does this). In Prism and the Modrinth App, the environment variable
+  `VOXY_FORCE_METAL=0` does the same thing. Jars built before the
+  on-by-default change still need `-Dvoxy.forceMetal=true`.
 - `-Xmx` sets the Java memory limit. Pick it from your Mac's memory:
 
 | Mac memory | `-Xmx` |
@@ -439,7 +438,7 @@ These lines and effects are expected. Do not report them as failures.
 | ID | Test | Time | Needs | Maps to |
 |---|---|---|---|---|
 | [PT-01](#pt-01-clean-start-without-shaders) | Clean start without shaders | 20 min | | P8-LAUNCHER-CLEAN, P1-NOPACK-START |
-| [PT-02](#pt-02-f3-lines-and-the-opt-in) | F3 lines and the opt-in | 10 min | PT-01 | P1-SETUP, P8-LAUNCHER-CLEAN, P4-NO-OPTIN-FALLBACK |
+| [PT-02](#pt-02-f3-lines-and-the-off-switch) | F3 lines and the off switch | 10 min | PT-01 | P1-SETUP, P8-LAUNCHER-CLEAN, P4-NO-OPTIN-FALLBACK |
 | [PT-03](#pt-03-iris-and-bsl-optional) | Iris and BSL (optional) | 15 min | Iris, BSL | P8-LAUNCHER-WITH-PACK, P2-BSL-VISUALS |
 | [PT-04](#pt-04-far-terrain-edge-grass-water-and-horizon) | Far terrain: edge, grass, water and horizon | 25 min | | P2-BSL-VISUALS, UC-06, UC-07 |
 | [PT-05](#pt-05-rejoin-five-times-memory-and-threads) | Rejoin five times: memory and threads | 20 min | `sampler.sh` | P3-REJOIN-MEMORY |
@@ -534,13 +533,13 @@ that mod in your report.
 
 ---
 
-### PT-02: F3 lines and the opt-in
+### PT-02: F3 lines and the off switch
 
-- **Maps to:** P1-SETUP (F3 part), P8-LAUNCHER-CLEAN (F3 and opt-in steps),
-  P4-NO-OPTIN-FALLBACK
+- **Maps to:** P1-SETUP (F3 part), P8-LAUNCHER-CLEAN (F3 and off-switch
+  steps), P4-NO-OPTIN-FALLBACK
 - **Time:** about 10 minutes
-- **Goal:** Voxy shows its F3 lines and the right version. Without the
-  opt-in, Voxy turns itself off and the game still works.
+- **Goal:** Voxy shows its F3 lines and the right version. With
+  `-Dvoxy.forceMetal=false`, Voxy turns itself off and the game still works.
 
 **Steps**
 
@@ -554,8 +553,7 @@ that mod in your report.
    - `voxy-0.2.8-alpha-<commit>` in green. The commit must match your jar's
      file name.
 4. Press F2 with F3 open. Quit the game.
-5. Remove `-Dvoxy.forceMetal=true` from the Java arguments. Also remove
-   `VOXY_FORCE_METAL` if you set it as an environment variable.
+5. Add `-Dvoxy.forceMetal=false` at the end of the Java arguments.
 6. Launch and enter `voxytest`. Check three things:
    - Terrain ends at the normal render distance. There is no far terrain.
    - *Options... > Video Settings...* has no Voxy entry.
@@ -566,22 +564,22 @@ that mod in your report.
    grep -F -e 'Voxy disabled on METAL backend' -e 'Voxy render system created' "$VOXY_GAME_DIR/logs/latest.log"
    ```
 
-8. Put `-Dvoxy.forceMetal=true` back. All other tests need it.
+8. Remove `-Dvoxy.forceMetal=false` again. All other tests need Voxy on.
 
 **Pass if**
 
-- With the opt-in, both Voxy lines show, and the version line is green with
-  your jar's commit.
-- Without it, the game runs normally with no far terrain and no Voxy menu.
-  The `grep` shows `[M9 TRANSITIONAL] Voxy disabled on METAL backend` and no
-  `Voxy render system created`.
+- With no Voxy Java argument, both Voxy lines show, and the version line is
+  green with your jar's commit.
+- With `-Dvoxy.forceMetal=false`, the game runs normally with no far terrain
+  and no Voxy menu. The `grep` shows `Voxy disabled on METAL backend: turned
+  off with -Dvoxy.forceMetal=false` and no `Voxy render system created`.
 
 **Fail if**
 
 - The Voxy lines are missing while the `debug` row is set to *In Overlay*.
 - The commit in F3 differs from the jar name.
-- Without the opt-in, the game crashes, far terrain appears or the Voxy
-  menu appears.
+- With `-Dvoxy.forceMetal=false`, the game crashes, far terrain appears or
+  the Voxy menu appears.
 
 Version line colors: red means installed but off. Yellow means on, with no
 world loaded. Dark green means a world is loaded but the renderer is not
@@ -1344,7 +1342,7 @@ title.
 | Problem | What to do |
 |---|---|
 | Fabric shows an error screen about Sodium at launch | Use Sodium `mc1.21.11-0.8.1` exactly. Remove any other Sodium jar. |
-| No far terrain, only plain Sodium | `-Dvoxy.forceMetal=true` is missing. In F3 the `voxy-...` line is red, and the log has `[M9 TRANSITIONAL] Voxy disabled`. |
+| No far terrain, only plain Sodium | In F3 the `voxy-...` line is red. If the log has `Voxy disabled on METAL backend: turned off`, remove `-Dvoxy.forceMetal=false` (or `VOXY_FORCE_METAL=0`). If it has `[M9 TRANSITIONAL] Voxy disabled`, your jar is older than the on-by-default change: add `-Dvoxy.forceMetal=true` or get a newer jar. If it has `Using OpenGL render backend`, the Mac is not Apple Silicon or Java runs under Rosetta (x86_64): use an arm64 Java 21. |
 | Voxy's lines are missing in F3 | Press F3+F6 and set the `debug` row to *In Overlay*. |
 | The first launch is slow | Voxy compiles its shaders once and caches them in `~/.voxy/shader-cache`. |
 | BSL makes far terrain white | Set BSL's *LOD Density* to 0.25 (PT-03 step 2). |

@@ -27,10 +27,10 @@ Phases 0 to 5 are in [part 1](developer-track-part1.md) and
 The standard launch for phases 6 and 7:
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" ./gradlew runClient -PrunXmx=6G
 ```
 
-- `VOXY_FORCE_METAL=1` is required. Without it, Voxy turns itself off.
+- Voxy turns on by itself; `VOXY_FORCE_METAL=0` turns it off.
 - `VOXY_QUICKPLAY="<world folder>"` joins that world on launch.
 - `-PrunXmx=6G` caps the Java heap like a launcher profile with `-Xmx6G`.
 - Put every variable on the same line, before `./gradlew`. Do not `export`
@@ -714,7 +714,7 @@ Distance* 32, set before launch. The `UC-06` coast viewpoint. Time noon.
 **Launch.** The injection path, with the abyss fill painted bright green:
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_VX_MATERIAL_OPAQUE=0 VOXY_VX_ABYSS_DEBUG=1 ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_VX_MATERIAL_OPAQUE=0 VOXY_VX_ABYSS_DEBUG=1 ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1216,7 +1216,7 @@ focus: disabled".
 **Launch.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='10:tp @p 0 120 0;70:tp @p 15000 120 15000;130:tp @p -15000 120 15000;190:tp @p 0 120 -15000;250:tp @p 0 120 0' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='10:tp @p 0 120 0;70:tp @p 15000 120 15000;130:tp @p -15000 120 15000;190:tp @p 0 120 -15000;250:tp @p 0 120 0' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1283,7 +1283,7 @@ disabled".
 **Launch.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_FRAME_TIMING=1 VOXY_AUTO_SCREENSHOT=60 VOXY_DEBUG_CMD='5:time set noon;6:weather clear;300:weather rain;600:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_FRAME_TIMING=1 VOXY_AUTO_SCREENSHOT=60 VOXY_DEBUG_CMD='5:time set noon;6:weather clear;300:weather rain;600:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1349,7 +1349,7 @@ terrain when that happens.
 **Launch.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1419,13 +1419,13 @@ measure disk per chunk and fps before, during and after generation.
 **Launch.**
 
 ```bash
-VOXY_QUICKPLAY="voxy-stress-gen" VOXY_FORCE_METAL=1 VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD="5:time set noon;6:weather clear" ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxy-stress-gen" VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD="5:time set noon;6:weather clear" ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
 
 1. First time only: launch without joining a world:
-   `VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G`. Go to *Singleplayer >
+   `./gradlew runClient -PrunXmx=6G`. Go to *Singleplayer >
    Create New World* and type `voxy-stress-gen` in *World Name*.
 2. On the *Game* tab, set *Game Mode* to Creative and *Allow Cheats* ON. On
    the *World* tab, leave *World Type* on Default. The screen must show
@@ -1702,7 +1702,7 @@ UC/GC,#N:
 - To mimic the 1 GB geometry arena of a 16 GB Mac, launch with:
 
   ```bash
-  JAVA_TOOL_OPTIONS="-Dvoxy.geometryBufferSizeOverrideMB=1024" VOXY_QUICKPLAY="voxy-stress-gen" VOXY_FORCE_METAL=1 VOXY_FRAME_TIMING=1 ./gradlew runClient -PrunXmx=6G
+  JAVA_TOOL_OPTIONS="-Dvoxy.geometryBufferSizeOverrideMB=1024" VOXY_QUICKPLAY="voxy-stress-gen" VOXY_FRAME_TIMING=1 ./gradlew runClient -PrunXmx=6G
   ```
 
   Check that the log says `[Metal-MEM] geometry arena 1024 MB ...
@@ -1816,7 +1816,7 @@ hang.
 **Launch.**
 
 ```bash
-VOXY_QUICKPLAY="voxy-stress-gen" VOXY_FORCE_METAL=1 VOXY_FRAME_TIMING=1 ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxy-stress-gen" VOXY_FRAME_TIMING=1 ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -2121,9 +2121,10 @@ checks and the developer details.
    bash scripts/testing/collect-report.sh --redact "$GAME"
    ```
 
-4. JVM arguments for the profile: `-Xmx6G -Dvoxy.forceMetal=true`. Of the
-   switches in this plan, only two are JVM properties that any launcher can
-   pass: `-Dvoxy.forceMetal=true` and `-Dvoxy.geometryBufferSizeOverrideMB`.
+4. JVM arguments for the profile: `-Xmx6G`. Voxy needs no other argument. Of
+   the switches in this plan, only two are JVM properties that any launcher
+   can pass: `-Dvoxy.forceMetal=false` (the off switch) and
+   `-Dvoxy.geometryBufferSizeOverrideMB`.
    `VOXY_*` environment variables need Prism (10.0.2 or newer) or the Modrinth
    App, which have an environment variable field. The official launcher and
    CurseForge do not.
@@ -2134,8 +2135,8 @@ checks and the developer details.
 **Depends on:** `P0-BUILD`.
 
 **Goal.** Check that the jar alone loads its native libraries and starts Voxy
-on Metal, without help from the dev environment. That is the failure in issue
-#18. It is also the first test with Voxy's default config, which has *Enable
+on Metal, without help from the dev environment and without any Voxy JVM
+argument. That is the failure in issue #18. It is also the first test with Voxy's default config, which has *Enable
 environmental fog* ON.
 
 **You need.**
@@ -2151,8 +2152,8 @@ environmental fog* ON.
 
 **Settings.**
 
-- JVM arguments: replace any `-Xmx` with `-Xmx6G` and add
-  `-Dvoxy.forceMetal=true`.
+- JVM arguments: replace any `-Xmx` with `-Xmx6G`. Add nothing for Voxy: it
+  must turn on by itself.
 - If you compare fps: *Video Settings > Sodium > Performance > Reduce FPS when*
   on *Minimized*.
 - If you watch Activity Monitor with the world open: press F3+P first, until
@@ -2210,12 +2211,11 @@ its full name.
 13. Run `bash scripts/testing/log-check.sh "$GAME"` and
     `bash scripts/testing/collect-report.sh --redact "$GAME"`. The report copies
     `latest.log`, and the next launch overwrites it.
-14. Negative test: remove `-Dvoxy.forceMetal=true` from the JVM arguments and
-    launch again. Join the world, open F3 and look at *Options > Video
-    Settings*.
+14. Off switch: add `-Dvoxy.forceMetal=false` to the JVM arguments and launch
+    again. Join the world, open F3 and look at *Options > Video Settings*.
 15. Quit and run the first `grep -E` line from step 12 again.
-16. Put `-Dvoxy.forceMetal=true` back in the JVM arguments. The next tests need
-    it.
+16. Remove `-Dvoxy.forceMetal=false` from the JVM arguments. The next tests
+    need Voxy on.
 
 **Look for.**
 
@@ -2238,23 +2238,24 @@ NoClassDefFoundError
 Failed to locate library
 Metal native library not bundled in jar; falling back to OpenGL
 Metal native library not available:
-[M9 TRANSITIONAL] Voxy disabled on METAL backend
+[VOXY_FORCE_METAL] Voxy disabled on METAL backend: turned off with -Dvoxy.forceMetal=false
 ```
 
-**Pass.** With the property, LODs reach the horizon, rejoins work, the water
+**Pass.** With no Voxy JVM argument, LODs reach the horizon, rejoins work, the water
 looks murky, and `voxy-config.json` says `use_environmental_fog` true. The log
 has `Metal native library loaded from`, `Using Metal render backend (Apple
 Silicon)`, `[VOXY_FORCE_METAL] Voxy enabled on METAL backend`,
 `MSL 3.0 pinned`, `[Metal-MEM] geometry arena` and
-`using pipeline 'NormalRenderPipeline'`. Without the property,
-`[M9 TRANSITIONAL] Voxy disabled on METAL backend` appears, there are no LODs
-and no Voxy entry in *Video Settings*, and the game runs normally.
+`using pipeline 'NormalRenderPipeline'`. With `-Dvoxy.forceMetal=false`,
+`Voxy disabled on METAL backend: turned off` appears, there are no LODs and
+no Voxy entry in *Video Settings*, and the game runs normally.
 
 **Fail.** Any `UnsatisfiedLinkError`, `NoClassDefFoundError`, `Failed to
 locate library`, `librocksdbjni`, `shaderc` or `spvc` error,
 `Metal native library not bundled in jar` or `Metal native library not
-available`. These mean the jar is missing a library. Also a fail: no LODs with
-the property, Voxy turning on without it, or a crash.
+available`. These mean the jar is missing a library. Also a fail: no LODs
+without Voxy JVM arguments, Voxy turning on with `-Dvoxy.forceMetal=false`, or
+a crash.
 
 ### P8-LAUNCHER-WITH-PACK: Release jar with Iris 1.10.3 and BSL in the launcher profile
 
@@ -2267,8 +2268,8 @@ jar itself.
 
 **You need.**
 
-- `P8-LAUNCHER-CLEAN` passed, with `-Dvoxy.forceMetal=true` back in the JVM
-  arguments.
+- `P8-LAUNCHER-CLEAN` passed, with `-Dvoxy.forceMetal=false` removed from the
+  JVM arguments again.
 - Iris 1.10.3 for 1.21.11, Fabric version (`1.10.3+1.21.11-fabric`), in
   `"$GAME/mods"`. Not 1.10.4 to 1.10.7: with Sodium 0.8.1 their *Video
   Settings* button does nothing (H8).
@@ -2341,7 +2342,7 @@ published jars: Voxy never shut down on disconnect.
 
 **You need.**
 
-- `P8-LAUNCHER-CLEAN` passed, with `-Dvoxy.forceMetal=true` in the JVM
+- `P8-LAUNCHER-CLEAN` passed, without `-Dvoxy.forceMetal=false` in the JVM
   arguments.
 - A Fabric 1.21.11 dedicated server with Fabric API, on this Mac or your local
   network. Fabric's server launcher is at

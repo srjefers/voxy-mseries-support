@@ -26,7 +26,7 @@ The first test takes about 30 minutes: set up a clean launcher profile, play a l
 1. Read the [testing guide](https://github.com/srjefers/voxy-mseries-support/blob/dev/docs/testing/README.md). Players follow the [player guide](https://github.com/srjefers/voxy-mseries-support/blob/dev/docs/testing/player-track.md), which shows every launcher step.
 2. Download the test jar from the pre-release: link to be added. Remove any other Voxy jar from your mods folder.
 3. Install Fabric Loader 0.18.2, Fabric API 0.140.0+1.21.11 and Sodium `mc1.21.11-0.8.1` (exactly this version). Iris 1.10.3 is optional; 1.10.4 to 1.10.7 break the Video Settings button with Sodium 0.8.1. Do not install voxyworldgenv2.
-4. Add these JVM arguments to your launcher profile: `-Xmx6G -Dvoxy.forceMetal=true`. On a 16 GB Mac, use `-Xmx4G`. Without `-Dvoxy.forceMetal=true`, Voxy turns itself off.
+4. In your launcher profile, raise the memory to `-Xmx6G` (`-Xmx4G` on a 16 GB Mac). Voxy needs no other JVM argument: it turns on by itself.
 5. Start with test PT-01 in the player guide, then send a [test report](https://github.com/srjefers/voxy-mseries-support/issues/new?template=test-report.yml).
 
 This is alpha software. Use a separate launcher profile or game folder, and back up any world you care about.
