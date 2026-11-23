@@ -48,6 +48,7 @@ public class VoxyConfig {
                     Logger.error("Could not parse config", e);
                 }
             }
+            Logger.info("Config doesnt exist, creating new");
             var config = new VoxyConfig();
             config.save();
             return config;
@@ -60,6 +61,11 @@ public class VoxyConfig {
     }
 
     public void save() {
+        if (!VoxyCommon.isAvailable()) {
+            Logger.info("Not saving config since voxy is unavalible");
+            return;
+        }
+
         try {
             Files.writeString(getConfigPath(), GSON.toJson(this));
         } catch (IOException e) {

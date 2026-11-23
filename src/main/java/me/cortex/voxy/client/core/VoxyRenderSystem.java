@@ -33,6 +33,7 @@ import me.cortex.voxy.commonImpl.VoxyCommon;
 import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
 import net.caffeinemc.mods.sodium.client.util.FogParameters;
 import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.lwjgl.opengl.GL11;
@@ -49,6 +50,19 @@ import static org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER;
 import static org.lwjgl.opengl.GL43C.GL_SHADER_STORAGE_BUFFER_BINDING;
 
 public class VoxyRenderSystem {
+    //Upstream 27f82dda doubled the render-distance tracker's processing budget (20 -> 40 top-level node
+    // add/removes per rendered frame — setCenterAndProcess runs in renderOpaque; upstream gives no
+    // rationale). The fork applies it only together with the
+    // 19-bit request ids (6a691211) so the faster ring cannot exhaust the request space.
+    // VOXY_RD_PROCESS_RATE=20 restores pre-sync.
+    private static final int RD_PROCESS_RATE = parseRdRate();
+    private static int parseRdRate() {
+        int r = 40;
+        String v = System.getenv("VOXY_RD_PROCESS_RATE");
+        if (v != null && !v.isBlank()) { try { r = Math.max(1, Integer.parseInt(v.trim())); } catch (NumberFormatException ignored) {} }
+        Logger.info("[Voxy-SYNC] render-distance process rate: " + r + "/frame (upstream 27f82dda; VOXY_RD_PROCESS_RATE=20 restores pre-sync)");
+        return r;
+    }
     private final WorldEngine worldIn;
 
 
@@ -157,10 +171,14 @@ public class VoxyRenderSystem {
         //Keep the world loaded, NOTE: this is done FIRST, to keep and ensure that even if the rest of loading takes more
         // than timeout, we keep the world acquired
         world.acquireRef();
+        Logger.info("Creating Voxy render system");
+
         System.gc();
 
-        if (Minecraft.getInstance().options.getEffectiveRenderDistance()<3) {
-            Logger.warn("Having a vanilla render distance of 2 can cause rare culling near the edge of your screen issues, please use 3 or more");
+        if (Minecraft.getInstance().options.renderDistance().get()<3) {//upstream 0033da2a: the configured value, not the server-clamped effective one
+            String msg = "Voxy: Having a vanilla render distance of 2 can cause rare culling near the edge of your screen issues, please use 3 or more";
+            Logger.warn(msg);
+            Minecraft.getInstance().getChatListener().handleSystemMessage(Component.literal(msg), false);//upstream b281d934
         }
 
         this.constructedIrisGbufferInject = IrisUtil.irisGbufferInjectMode();
@@ -190,6 +208,13 @@ public class VoxyRenderSystem {
             oldBufferBindings[i] = glGetIntegeri(GL_SHADER_STORAGE_BUFFER_BINDING, i);
         }
 
+        //A11 (fork): every component built below registers its release here, so a constructor
+        // failure (e.g. a pack whose Voxy pipeline cannot be created, GL_OUT_OF_MEMORY on the geometry
+        // buffer) frees what was already built instead of leaking it. Without this a failed build kept
+        // the ~4 GB geometry arena, the model atlas, 'Async Node Manager' + 'Model factory processor'
+        // threads and the HOT buffers alive, and MixinLevelRenderer then built a second renderer on top
+        // (Iris disabled). VOXY_CTOR_FAILURE_CLEANUP=0 restores the leak for A/B.
+        final java.util.ArrayDeque<Runnable> partialCleanup = new java.util.ArrayDeque<>();
         try {
             //wait for opengl to be finished, this should hopefully ensure all memory allocations are free
             glFinish();
@@ -202,27 +227,43 @@ public class VoxyRenderSystem {
 
             {
                 this.modelService = new ModelBakerySubsystem(world.getMapper());
+                {var c = this.modelService; partialCleanup.push(c::shutdown);}
                 this.renderGen = new RenderGenerationService(world, this.modelService, sm, IUsesMeshlets.class.isAssignableFrom(backendFactory.clz()));
+                {var c = this.renderGen; partialCleanup.push(c::shutdown);}
 
                 this.geometryData = new BasicSectionGeometryData(1 << 20, geometryCapacity);
+                {var c = this.geometryData; partialCleanup.push(c::free);}
 
                 this.nodeManager = new AsyncNodeManager(1 << 21, this.geometryData, this.renderGen);
+                {var c = this.nodeManager; partialCleanup.push(c::stop);}
                 this.nodeCleaner = new NodeCleaner(this.nodeManager);
+                {var c = this.nodeCleaner; partialCleanup.push(c::free);}
                 this.traversal = new HierarchicalOcclusionTraverser(this.nodeManager, this.nodeCleaner, this.renderGen);
+                {var c = this.traversal; partialCleanup.push(c::free);}
 
                 world.setDirtyCallback(this.nodeManager::worldEvent);
+                partialCleanup.push(() -> world.setDirtyCallback(null));
 
                 Arrays.stream(world.getMapper().getBiomeEntries()).forEach(this.modelService::addBiome);
                 world.getMapper().setBiomeCallback(this.modelService::addBiome);
+                partialCleanup.push(() -> world.getMapper().setBiomeCallback(null));
 
                 this.nodeManager.start();
             }
+            //Test trigger for the A11 cleanup (diagnostic, remove once verified): the first construction of the
+            // process fails here, after the worker threads started. Use it with a shader pack active: the level
+            // renderer then disables Iris and builds the renderer again (without a pack the exception crashes).
+            if ("1".equals(System.getenv("VOXY_CTOR_FAIL_ONCE")) && CTOR_FAIL_ONCE_FIRED.compareAndSet(false, true)) {
+                throw new RuntimeException("VOXY_CTOR_FAIL_ONCE: simulated renderer construction failure");
+            }
 
             this.pipeline = RenderPipelineFactory.createPipeline(this.nodeManager, this.nodeCleaner, this.traversal, this::frexStillHasWork);
+            {var c = this.pipeline; partialCleanup.push(c::free);}
             this.pipeline.setupExtraModelBakeryData(this.modelService);//Configure the model service
             var sectionRenderer = backendFactory.create(this.pipeline, this.modelService.getStore(), this.geometryData);
             this.pipeline.setSectionRenderer(sectionRenderer);
             this.viewportSelector = new ViewportSelector<>(sectionRenderer::createViewport);
+            {var c = this.viewportSelector; partialCleanup.push(c::free);}
 
             {
                 int minSec = Minecraft.getInstance().level.getMinSectionY() >> 5;
@@ -234,7 +275,7 @@ public class VoxyRenderSystem {
                     maxSec = 7;
                 }
 
-                this.renderDistanceTracker = new RenderDistanceTracker(20,
+                this.renderDistanceTracker = new RenderDistanceTracker(RD_PROCESS_RATE,//upstream 27f82dda: 40 (was 20); VOXY_RD_PROCESS_RATE tunes
                         minSec,
                         maxSec,
                         this.nodeManager::addTopLevel,
@@ -246,7 +287,17 @@ public class VoxyRenderSystem {
             this.chunkBoundRenderer = new ChunkBoundRenderer(this.pipeline);
 
             Logger.info("Voxy render system created with " + geometryCapacity + " geometry capacity, using pipeline '" + this.pipeline.getClass().getSimpleName() + "' with renderer '" + sectionRenderer.getClass().getSimpleName() + "'");
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | Error e) {//fork: an Error (e.g. OutOfMemoryError) also releases the world and the partial build
+            if (!"0".equals(System.getenv("VOXY_CTOR_FAILURE_CLEANUP"))) {
+                Logger.error("Voxy render system construction failed, releasing " + partialCleanup.size() + " partially built components", e);
+                while (!partialCleanup.isEmpty()) {//newest first, like a stack unwind
+                    try {
+                        partialCleanup.pop().run();
+                    } catch (Throwable t) {
+                        Logger.error("Error releasing a partially built renderer component", t);
+                    }
+                }
+            }
             world.releaseRef();//If something goes wrong, we must release the world first
             throw e;
         }
@@ -290,6 +341,8 @@ public class VoxyRenderSystem {
     private int fogClassStreak;
     private long fogClassStreakStartNs;
     private static boolean loggedViewportLeak;
+    private static boolean loggedZeroViewport;
+    private static final java.util.concurrent.atomic.AtomicBoolean CTOR_FAIL_ONCE_FIRED = new java.util.concurrent.atomic.AtomicBoolean();
 
     /** Metal-only kill switch: VOXY_LOD_ZOOM_REFINE=1 restores the upstream
      *  refine-on-zoom behaviour (spyglass demands finer LOD levels → ~3s
@@ -468,6 +521,14 @@ public class VoxyRenderSystem {
                 height = (int) (height*factor[1]);
             }
         }
+        if (width <= 0 || height <= 0) {//upstream 1952d3df: a 0x0 viewport (minimised window, Iris resize) must not reach the frame
+            if (!loggedZeroViewport) {//fork: once per transition (upstream logs every frame; Logger.error also posts to chat)
+                loggedZeroViewport = true;
+                Logger.error("Viewport width or height was zero, skipping Voxy frames until it is valid again");
+            }
+            return null;
+        }
+        loggedZeroViewport = false;
 
         viewport.zoomCompensation = 1.0f;
         if (!ZOOM_REFINE_ENABLED
@@ -575,6 +636,9 @@ public class VoxyRenderSystem {
     public void renderOpaque(Viewport<?> viewport) {
         if (viewport == null) {
             return;
+        }
+        if (viewport.width <= 0 || viewport.height <= 0) {//upstream d4acdaf1/1952d3df: only render on a valid viewport
+            return;//logged once by setupViewport's guard (the GL Iris path reuses a viewport that was valid when built)
         }
 
         if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
@@ -883,8 +947,41 @@ public class VoxyRenderSystem {
     }
 
     public void shutdown() {
+        try {
+            this.shutdown0();
+        } catch (Throwable t) {
+            //Fork: an Error (or anything escaping the per-step catches) must not skip the world release, or
+            // VoxyInstance.shutdown spins forever on isWorldUsed.
+            Logger.error("Error during render shutdown, releasing the world anyway", t);
+            if (!this.worldReleased) {
+                this.worldReleased = true;
+                this.worldIn.releaseRef();
+            }
+            throw t;
+        }
+    }
+
+    private boolean worldReleased;
+
+    private static final boolean SHUTDOWN_PER_STEP = !"0".equals(System.getenv("VOXY_SHUTDOWN_PER_STEP"));
+
+    private static void shutdownStep(String what, Runnable step) {
+        try {
+            step.run();
+        } catch (Throwable t) {
+            Logger.error("Error shutting down renderer component: " + what, t);
+        }
+    }
+
+    private void shutdown0() {
         Logger.info("Flushing download stream");
-        DownloadStream.INSTANCE.flushWaitClear();
+        try {//fork: a throwing callback (dead node-manager worker) must not abort the teardown that follows
+            DownloadStream.INSTANCE.flushWaitClear();
+        } catch (Exception e) {
+            Logger.error("Error flushing download stream", e);
+            //leftover frames would run stale callbacks against this (dead) renderer, possibly in the next session
+            try { DownloadStream.INSTANCE.waitDiscard(); } catch (Exception e2) { Logger.error("Error discarding download stream", e2); }
+        }
         // World-rejoin fix: UploadStream is a process-lifetime singleton but
         // its queued copies target the world-lifetime buffers freed below.
         // Un-flushed session-N entries used to execute on session-N+1's first
@@ -900,24 +997,46 @@ public class VoxyRenderSystem {
             }
         }
         Logger.info("Shutting down rendering");
-        try {
-            //Cleanup callbacks
-            this.worldIn.setDirtyCallback(null);
-            this.worldIn.getMapper().setBiomeCallback(null);
-            this.worldIn.getMapper().setStateCallback(null);
+        if (!SHUTDOWN_PER_STEP) {
+            try {
+                //Cleanup callbacks
+                this.worldIn.setDirtyCallback(null);
+                this.worldIn.getMapper().setBiomeCallback(null);
+                this.worldIn.getMapper().setStateCallback(null);
 
-            this.nodeManager.stop();
+                this.nodeManager.stop();
 
-            this.modelService.shutdown();
-            this.renderGen.shutdown();
-            this.traversal.free();
-            this.nodeCleaner.free();
+                this.modelService.shutdown();
+                this.renderGen.shutdown();
+                this.traversal.free();
+                this.nodeCleaner.free();
 
-            this.geometryData.free();
-            this.chunkBoundRenderer.free();
+                this.geometryData.free();
+                this.chunkBoundRenderer.free();
 
-            this.viewportSelector.free();
-        } catch (Exception e) {Logger.error("Error shutting down renderer components", e);}
+                this.viewportSelector.free();
+            } catch (Exception e) {Logger.error("Error shutting down renderer components", e);}
+        } else {
+            //Fork: one guarded step per component, same order. A throw in one step used to skip the rest:
+            // a failed nodeManager.stop() left the 'Model factory processor' thread running and the mesh
+            // service registered, which then made the instance's thread pool refuse to shut down.
+            // Identical to the block above when nothing throws. VOXY_SHUTDOWN_PER_STEP=0 restores it.
+            shutdownStep("world callbacks", () -> {
+                this.worldIn.setDirtyCallback(null);
+                this.worldIn.getMapper().setBiomeCallback(null);
+                this.worldIn.getMapper().setStateCallback(null);
+            });
+            //Lambdas, not method references: a method reference dereferences the field before the step's
+            // try, so a null component would throw past the guard.
+            shutdownStep("node manager", () -> this.nodeManager.stop());
+            shutdownStep("model service", () -> this.modelService.shutdown());
+            shutdownStep("render generation service", () -> this.renderGen.shutdown());
+            shutdownStep("traversal", () -> this.traversal.free());
+            shutdownStep("node cleaner", () -> this.nodeCleaner.free());
+            shutdownStep("geometry data", () -> this.geometryData.free());
+            shutdownStep("chunk bound renderer", () -> this.chunkBoundRenderer.free());
+            shutdownStep("viewport selector", () -> this.viewportSelector.free());
+        }
         Logger.info("Shutting down render pipeline");
         try {this.pipeline.free();} catch (Exception e){Logger.error("Error releasing render pipeline", e);}
 
@@ -936,11 +1055,36 @@ public class VoxyRenderSystem {
         } catch (Exception e) {
             Logger.error("Error resetting vx resolve pass", e);
         }
+        // 2026-09-25 memory audit: two more process-lifetime statics outlived
+        // the session on the Metal + pack path — the vx depth side-channel
+        // (2 x D32F fbw*fbh textures + FBOs/programs; destroy() had no caller)
+        // and the compositor's GL rect textures / FBO that pin the last
+        // session's IOSurfaces at the title screen (plus any aux entry a bridge
+        // close missed). Both are no-ops on the GL backend (never created).
+        // VOXY_GL_SESSION_RELEASE=0 keeps the old behaviour for A/B.
+        if (!"0".equals(System.getenv("VOXY_GL_SESSION_RELEASE"))) {
+            try {
+                me.cortex.voxy.client.core.util.VxIrisSideChannel.destroy();
+            } catch (Exception e) {
+                Logger.error("Error destroying vx side-channel", e);
+            }
+            try {
+                me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.releaseSession();
+            } catch (Exception e) {
+                Logger.error("Error releasing compositor GL objects", e);
+            }
+        }
 
 
 
         Logger.info("Flushing download stream");
-        DownloadStream.INSTANCE.flushWaitClear();
+        try {//fork: a throwing callback (dead node-manager worker) must not abort the teardown that follows
+            DownloadStream.INSTANCE.flushWaitClear();
+        } catch (Exception e) {
+            Logger.error("Error flushing download stream", e);
+            //leftover frames would run stale callbacks against this (dead) renderer, possibly in the next session
+            try { DownloadStream.INSTANCE.waitDiscard(); } catch (Exception e2) { Logger.error("Error discarding download stream", e2); }
+        }
         // Anything queued into the upload stream DURING the teardown above
         // targets buffers that may already be freed — drop those entries
         // WITHOUT executing them (see UploadStream.discardClear).
@@ -953,6 +1097,7 @@ public class VoxyRenderSystem {
         }
 
         //Release hold on the world
+        this.worldReleased = true;
         this.worldIn.releaseRef();
         Logger.info("Render shutdown completed");
     }
@@ -986,13 +1131,61 @@ public class VoxyRenderSystem {
 
             geometryCapacity = Math.min(geometryCapacity, limit);
         }
+        //Fork (Metal, unified memory): the arena is a Shared MTLBuffer, and the first command buffer that
+        // binds it makes the WHOLE length resident and wired (probe: +4096 MB footprint on first bind),
+        // while a heavily explored session peaked at ~440 MB of geometry. The VRAM clamp above only exists
+        // for NVIDIA GL, so every Apple Silicon Mac paid the full 4 GB. Scale the cap with physical RAM:
+        // RAM/16, clamped to 1..4 GB (16 GB -> 1 GB, 48 GB -> 3 GB, 64 GB+ -> 4 GB). NodeCleaner evicts
+        // when less than 256 MB is left, and on Metal the upload loop defers a section that has no
+        // contiguous block (AsyncNodeManager fit gate) instead of throwing 'Geometry OOM', so a smaller
+        // arena costs far-LOD detail, not a crash.
+        // -Dvoxy.geometryBufferSizeOverrideMB still wins; VOXY_METAL_ARENA_RAM_SCALE=0 restores 4 GB.
+        boolean metal = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+        String arenaSource = null;
+        long ram = -1;
+        if (metal) {
+            if ("0".equals(System.getenv("VOXY_METAL_ARENA_RAM_SCALE"))) {
+                arenaSource = "VOXY_METAL_ARENA_RAM_SCALE=0, not RAM-scaled";
+            } else {
+                ram = physicalMemoryBytes();
+                if (ram > 0) {
+                    long cap = Math.min(Math.max(ram / 16, 1L << 30), 1L << 32);
+                    cap = (cap & ~((1L << 28) - 1)) - 1024;//256 MiB steps, same -1 KiB shape as the default
+                    if (cap < geometryCapacity) {
+                        geometryCapacity = cap;
+                    }
+                    arenaSource = "RAM/16 clamped to 1-4 GB";
+                } else {
+                    arenaSource = "physical RAM unknown, not RAM-scaled";
+                }
+            }
+        }
         //geometryCapacity = 1<<28;
         //geometryCapacity = 1<<30;//1GB test
         var override = System.getProperty("voxy.geometryBufferSizeOverrideMB", "");
         if (!override.isEmpty()) {
             geometryCapacity = Long.parseLong(override)*1024L*1024L;
+            arenaSource = "-Dvoxy.geometryBufferSizeOverrideMB";
+        }
+        if (metal) {
+            Logger.info("[Metal-MEM] geometry arena " + ((geometryCapacity + 1024) >> 20) + " MB"
+                    + (ram > 0 ? " for " + (ram >> 30) + " GB of unified memory" : "")
+                    + " (" + arenaSource + "; the override property wins, VOXY_METAL_ARENA_RAM_SCALE=0 restores 4 GB)");
         }
         return geometryCapacity;
+    }
+
+    private static long physicalMemoryBytes() {
+        try {
+            var os = java.lang.management.ManagementFactory.getOperatingSystemMXBean();
+            if (os instanceof com.sun.management.OperatingSystemMXBean sun) {
+                return sun.getTotalMemorySize();
+            }
+        } catch (Throwable t) {
+            Logger.warn("Could not read physical memory size: " + t);
+        }
+        return -1;
     }
 
     public WorldEngine getEngine() {

@@ -168,11 +168,16 @@ public final class VxIrisSideChannel {
      */
     public boolean resolve(int colourRectTex, int depthRectTex, int fbw, int fbh, boolean depthIsWindow) {
         if (this.broken) return false;
-        if (!this.ensureResources(fbw, fbh)) {
-            this.broken = true;
-            return false;
+        VxTiming.begin(VxTiming.SC_OPAQUE);
+        try {
+            if (!this.ensureResources(fbw, fbh)) {
+                this.broken = true;
+                return false;
+            }
+            return this.resolveInto(this.fboOpaque, colourRectTex, depthRectTex, fbw, fbh, depthIsWindow);
+        } finally {
+            VxTiming.end(VxTiming.SC_OPAQUE);
         }
-        return this.resolveInto(this.fboOpaque, colourRectTex, depthRectTex, fbw, fbh, depthIsWindow);
     }
 
     /**
@@ -183,10 +188,15 @@ public final class VxIrisSideChannel {
      */
     public boolean resolveTrans(int transColourRectTex, int transDepthRectTex, int fbw, int fbh, boolean depthIsWindow) {
         if (this.broken) return false;
-        if (!this.ensureTransResources(fbw, fbh)) {
-            return false;
+        VxTiming.begin(VxTiming.SC_TRANS);
+        try {
+            if (!this.ensureTransResources(fbw, fbh)) {
+                return false;
+            }
+            return this.resolveInto(this.fboTrans, transColourRectTex, transDepthRectTex, fbw, fbh, depthIsWindow);
+        } finally {
+            VxTiming.end(VxTiming.SC_TRANS);
         }
-        return this.resolveInto(this.fboTrans, transColourRectTex, transDepthRectTex, fbw, fbh, depthIsWindow);
     }
 
     private boolean resolveInto(int targetFbo, int colourRectTex, int depthRectTex, int fbw, int fbh, boolean depthIsWindow) {
@@ -279,6 +289,20 @@ public final class VxIrisSideChannel {
                               org.joml.Matrix4f proj, org.joml.Matrix4f projInv,
                               org.joml.Vector3f upView, float maxDist, float push,
                               float seaOffset, float dtGate) {
+        VxTiming.begin(VxTiming.SC_ABYSS);
+        try {
+            return abyssDepth0(colourRectTex, depthRectTex, transDepthRectTex, fbw, fbh, depthIsWindow,
+                    proj, projInv, upView, maxDist, push, seaOffset, dtGate);
+        } finally {
+            VxTiming.end(VxTiming.SC_ABYSS);
+        }
+    }
+
+    private boolean abyssDepth0(int colourRectTex, int depthRectTex, int transDepthRectTex,
+                                int fbw, int fbh, boolean depthIsWindow,
+                                org.joml.Matrix4f proj, org.joml.Matrix4f projInv,
+                                org.joml.Vector3f upView, float maxDist, float push,
+                                float seaOffset, float dtGate) {
         if (this.broken || this.fboOpaque == 0 || transDepthRectTex == 0 || this.vao == 0) {
             return false;
         }

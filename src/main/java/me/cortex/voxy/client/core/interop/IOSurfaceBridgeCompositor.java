@@ -184,6 +184,37 @@ public final class IOSurfaceBridgeCompositor {
      */
     public static final boolean USE_BLIT = !"1".equals(System.getenv("VOXY_COMPOSITE_SHADER"));
 
+    /**
+     * Lever C (2026-09-25): re-specify each IOSurface into its GL rect
+     * texture ONCE per bridge per Metal frame instead of on every acquire.
+     * Root cause of the waste: every acquire*RectTex / composite* path
+     * called {@link #resync} unconditionally, and the vx-contract frame
+     * acquires the same bridges several times (VxContractInjector.inject0
+     * takes colour+depth, then transDepthBridge for the seafloor dim;
+     * MixinDefaultChunkRenderer then takes trans0/1/2 + the SAME
+     * transDepthBridge again for resolveTranslucentOnly) — 7+ CGL
+     * re-specifications per frame, each with 2 glGetInteger + 2 rebinds,
+     * for bytes that changed exactly once (at WAIT #3). The 2026-05-25
+     * guarantee is kept verbatim: GL re-specifies AFTER each Metal write,
+     * so per-frame coherence is unchanged — only the duplicates go.
+     * {@code VOXY_BRIDGE_RESYNC=every} restores the per-acquire behaviour
+     * (today's, for A/B); default {@code once}.
+     */
+    private static final boolean RESYNC_ONCE = !"every".equalsIgnoreCase(System.getenv("VOXY_BRIDGE_RESYNC"));
+    /** Bumped once per Metal frame by {@link #markBridgesWritten()}; 0 until the first Metal submit. */
+    private static int bridgeGeneration;
+    private static boolean resyncModeLogged;
+
+    /**
+     * Called by AbstractRenderPipeline.runPipelineMetal right after the
+     * end-of-frame submit (WAIT #3) — the single point per frame after which
+     * the IOSurfaces hold new Metal bytes. Every GL-side acquire that follows
+     * re-specifies each bridge once for this generation and skips repeats.
+     */
+    public static void markBridgesWritten() {
+        bridgeGeneration++;
+    }
+
     private IOSurfaceBridgeCompositor() {}
 
     /** Composite the bridge's contents into the currently bound DRAW framebuffer. */
@@ -198,6 +229,16 @@ public final class IOSurfaceBridgeCompositor {
      * {@link #compositeIrisGbuffer} to draw into the pack's terrain gbuffer.)
      */
     public static void composite(IOSurfaceBridge bridge, boolean useBlit) {
+        // VOXY_FRAME_TIMING=1 GL-side span; begin/end are JIT-folded no-ops when off.
+        me.cortex.voxy.client.core.util.VxTiming.begin(me.cortex.voxy.client.core.util.VxTiming.COMPOSITE);
+        try {
+            composite0(bridge, useBlit);
+        } finally {
+            me.cortex.voxy.client.core.util.VxTiming.end(me.cortex.voxy.client.core.util.VxTiming.COMPOSITE);
+        }
+    }
+
+    private static void composite0(IOSurfaceBridge bridge, boolean useBlit) {
         if (disabled || bridge == null || bridge.ioSurfaceHandle() == 0) return;
 
         // (Re)bind on first use or after the bridge re-allocated (resize).
@@ -223,12 +264,9 @@ public final class IOSurfaceBridgeCompositor {
         // texture at the IOSurface's current bytes. Save/restore the
         // rectangle-texture binding because composite() runs inside Sodium's
         // chunk render and must not leak GL state.
-        int prevActiveTex0 = glGetInteger(GL_ACTIVE_TEXTURE);
-        glActiveTexture(GL_TEXTURE0);
-        int prevTexRect0 = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
-        bridge.bindToGlTexture(compositeGlTex);
-        glBindTexture(GL_TEXTURE_RECTANGLE, prevTexRect0);
-        glActiveTexture(prevActiveTex0);
+        // (Lever C: routed through resync() so the once-per-frame gate and
+        // the [Metal-TIMING] resync counters cover this path too.)
+        resync(bridge, compositeGlTex);
 
         var mc = Minecraft.getInstance();
         var mainRT = mc.getMainRenderTarget();
@@ -362,6 +400,15 @@ public final class IOSurfaceBridgeCompositor {
      * compositor's CGL binding + per-frame resync machinery.
      */
     public static int acquireColorRectTex(IOSurfaceBridge bridge) {
+        me.cortex.voxy.client.core.util.VxTiming.begin(me.cortex.voxy.client.core.util.VxTiming.ACQUIRE);
+        try {
+            return acquireColorRectTex0(bridge);
+        } finally {
+            me.cortex.voxy.client.core.util.VxTiming.end(me.cortex.voxy.client.core.util.VxTiming.ACQUIRE);
+        }
+    }
+
+    private static int acquireColorRectTex0(IOSurfaceBridge bridge) {
         if (disabled || bridge == null || bridge.ioSurfaceHandle() == 0) return 0;
         if (compositeGlTex == 0 || boundIoSurface != bridge.ioSurfaceHandle()) {
             if (!rebind(bridge)) {
@@ -375,6 +422,15 @@ public final class IOSurfaceBridgeCompositor {
 
     /** Depth-bridge counterpart of {@link #acquireColorRectTex}. */
     public static int acquireDepthRectTex(IOSurfaceBridge depthBridge) {
+        me.cortex.voxy.client.core.util.VxTiming.begin(me.cortex.voxy.client.core.util.VxTiming.ACQUIRE);
+        try {
+            return acquireDepthRectTex0(depthBridge);
+        } finally {
+            me.cortex.voxy.client.core.util.VxTiming.end(me.cortex.voxy.client.core.util.VxTiming.ACQUIRE);
+        }
+    }
+
+    private static int acquireDepthRectTex0(IOSurfaceBridge depthBridge) {
         if (gbufferDisabled || depthBridge == null || depthBridge.ioSurfaceHandle() == 0) return 0;
         if (gbufferDepthGlTex == 0 || boundDepthIoSurface != depthBridge.ioSurfaceHandle()) {
             if (!rebindDepth(depthBridge)) {
@@ -392,7 +448,96 @@ public final class IOSurfaceBridgeCompositor {
     private static final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap AUX_RECT_TEXES =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
 
+    /** Session GL-object release (2026-09-25, memory audit): default ON;
+     *  VOXY_GL_SESSION_RELEASE=0 restores the leaking behaviour for A/B. */
+    private static final boolean GL_SESSION_RELEASE = !"0".equals(System.getenv("VOXY_GL_SESSION_RELEASE"));
+
+    /**
+     * Release every GL object this compositor created for the IOSurface
+     * {@code handle}: the aux rect texture (AUX_RECT_TEXES) and, if it is the
+     * bound primary colour/depth surface, the primary rect texture + FBO.
+     * Called from {@link IOSurfaceBridge#close()} BEFORE the surface's own
+     * CFRelease. Why: a GL texture bound with CGLTexImageIOSurface2D holds its
+     * own retain on the IOSurface, so an orphan GL texture keeps the surface's
+     * wired memory alive after the Java side released it (4 aux bridges x
+     * fbw*fbh*4 per session + per resize, ~95 MB/session at 3024x1964 — log
+     * census: aux GL names climbed 747..775 across sessions while the primary
+     * names recycled). Runs on the render thread with GL current at every
+     * existing close() site (pipeline free, plane-bridge realloc).
+     */
+    public static void releaseForBridge(long handle) {
+        if (!GL_SESSION_RELEASE || handle == 0) return;
+        try {
+            int tex = AUX_RECT_TEXES.remove(handle);
+            if (tex != 0) glDeleteTextures(tex);
+            if (handle == boundIoSurface && compositeGlTex != 0) {
+                if (compositeFbo != 0) glDeleteFramebuffers(compositeFbo);
+                glDeleteTextures(compositeGlTex);
+                compositeFbo = 0;
+                compositeGlTex = 0;
+                boundIoSurface = 0;
+            }
+            if (handle == boundDepthIoSurface && gbufferDepthGlTex != 0) {
+                glDeleteTextures(gbufferDepthGlTex);
+                gbufferDepthGlTex = 0;
+                boundDepthIoSurface = 0;
+            }
+        } catch (Throwable t) {
+            Logger.warn("IOSurfaceBridgeCompositor: releaseForBridge failed: " + t.getMessage());
+        }
+    }
+
+    /**
+     * End-of-session drain, called from VoxyRenderSystem.shutdown() next to
+     * MetalVxResolvePass.reset(): deletes any aux entries a close() did not
+     * reach (leak sentinel — logged with the count), the primary colour/depth
+     * GL objects (they pinned the last session's two surfaces at the title
+     * screen), and clears the once-per-process disable latches so a new
+     * session re-attempts the CGL bind instead of staying dark forever.
+     */
+    public static void releaseSession() {
+        if (!GL_SESSION_RELEASE) return;
+        try {
+            int leaked = AUX_RECT_TEXES.size();
+            if (leaked > 0) {
+                Logger.warn("IOSurfaceBridgeCompositor: " + leaked + " aux rect texture(s) survived their bridge close — deleting at shutdown");
+                for (int tex : AUX_RECT_TEXES.values()) if (tex != 0) glDeleteTextures(tex);
+                AUX_RECT_TEXES.clear();
+            }
+            if (compositeGlTex != 0) {
+                if (compositeFbo != 0) glDeleteFramebuffers(compositeFbo);
+                glDeleteTextures(compositeGlTex);
+                compositeFbo = 0;
+                compositeGlTex = 0;
+                boundIoSurface = 0;
+            }
+            if (gbufferDepthGlTex != 0) {
+                glDeleteTextures(gbufferDepthGlTex);
+                gbufferDepthGlTex = 0;
+                boundDepthIoSurface = 0;
+            }
+            if (disabled || gbufferDisabled) {
+                Logger.info("IOSurfaceBridgeCompositor: clearing disable latch(es) at session end (composite=" + disabled
+                        + ", gbuffer=" + gbufferDisabled + ") so the next session re-attempts the bind");
+                disabled = false;
+                gbufferDisabled = false;
+            }
+            Logger.info("IOSurfaceBridgeCompositor: session GL objects released (aux drained=" + leaked + ")");
+        } catch (Throwable t) {
+            Logger.warn("IOSurfaceBridgeCompositor: releaseSession failed: " + t.getMessage());
+        }
+    }
+
     public static int acquireAuxRectTex(IOSurfaceBridge bridge) {
+        me.cortex.voxy.client.core.util.VxTiming.begin(me.cortex.voxy.client.core.util.VxTiming.ACQUIRE);
+        try {
+            return acquireAuxRectTex0(bridge);
+        } finally {
+            me.cortex.voxy.client.core.util.VxTiming.end(me.cortex.voxy.client.core.util.VxTiming.ACQUIRE);
+        }
+    }
+
+    private static int acquireAuxRectTex0(IOSurfaceBridge bridge) {
         if (bridge == null || bridge.ioSurfaceHandle() == 0) return 0;
         long handle = bridge.ioSurfaceHandle();
         int tex = AUX_RECT_TEXES.getOrDefault(handle, 0);
@@ -411,6 +556,7 @@ public final class IOSurfaceBridgeCompositor {
                 return 0;
             }
             AUX_RECT_TEXES.put(handle, tex);
+            bridge.glResyncGen = bridgeGeneration; bridge.glResyncTex = tex; // the bind IS this frame's re-specification
             Logger.info("IOSurfaceBridgeCompositor: aux bridge bound to GL tex " + tex);
         } else {
             resync(bridge, tex);
@@ -424,17 +570,55 @@ public final class IOSurfaceBridgeCompositor {
      * IOSurface each frame (see composite()'s 2026-05-25 note).
      */
     private static void resync(IOSurfaceBridge bridge, int glTex) {
+        if (!resyncModeLogged) {
+            resyncModeLogged = true;
+            Logger.info("[Metal-RESYNC] IOSurface GL re-specification mode="
+                    + (RESYNC_ONCE ? "ONCE per bridge per Metal frame (VOXY_BRIDGE_RESYNC=every restores per-acquire)"
+                                   : "EVERY acquire (VOXY_BRIDGE_RESYNC=every; the pre-lever-C behaviour)")
+                    + " gen=" + bridgeGeneration);
+        }
+        // Once-per-frame gate. bridgeGeneration == 0 means no Metal submit
+        // has stamped a frame yet (or a pipeline that never calls
+        // markBridgesWritten) — then fall through to the per-acquire
+        // behaviour so the gate can never starve GL of a re-specification.
+        if (RESYNC_ONCE && bridgeGeneration != 0
+                && bridge.glResyncGen == bridgeGeneration && bridge.glResyncTex == glTex) {
+            if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
+                me.cortex.voxy.client.core.util.FrameTiming.resyncSkipped++;
+            }
+            return;
+        }
+        long tFT = me.cortex.voxy.client.core.util.FrameTiming.ENABLED ? System.nanoTime() : 0;
         int prevActiveTex = glGetInteger(GL_ACTIVE_TEXTURE);
         glActiveTexture(GL_TEXTURE0);
         int prevTexRect = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
-        bridge.bindToGlTexture(glTex);
+        boolean ok = bridge.bindToGlTexture(glTex);
         glBindTexture(GL_TEXTURE_RECTANGLE, prevTexRect);
         glActiveTexture(prevActiveTex);
+        // Stamp only a successful re-specification (a transient CGL failure
+        // must retry on the next acquire, as every pre-lever-C acquire did).
+        if (ok) { bridge.glResyncGen = bridgeGeneration; bridge.glResyncTex = glTex; }
+        if (ok && me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
+            me.cortex.voxy.client.core.util.FrameTiming.resyncCount++;
+            me.cortex.voxy.client.core.util.FrameTiming.resyncNs += System.nanoTime() - tFT;
+        }
     }
 
     public static boolean compositeIrisGbuffer(IOSurfaceBridge colorBridge, IOSurfaceBridge depthBridge,
                                                org.joml.Matrix4f invVoxyMVP, org.joml.Matrix4f mcMVP,
                                                boolean voxyDepthIsWindowConvention, float maxNdcZ) {
+        me.cortex.voxy.client.core.util.VxTiming.begin(me.cortex.voxy.client.core.util.VxTiming.COMPOSITE);
+        try {
+            return compositeIrisGbuffer0(colorBridge, depthBridge, invVoxyMVP, mcMVP,
+                    voxyDepthIsWindowConvention, maxNdcZ);
+        } finally {
+            me.cortex.voxy.client.core.util.VxTiming.end(me.cortex.voxy.client.core.util.VxTiming.COMPOSITE);
+        }
+    }
+
+    private static boolean compositeIrisGbuffer0(IOSurfaceBridge colorBridge, IOSurfaceBridge depthBridge,
+                                                 org.joml.Matrix4f invVoxyMVP, org.joml.Matrix4f mcMVP,
+                                                 boolean voxyDepthIsWindowConvention, float maxNdcZ) {
         if (gbufferDisabled || disabled
                 || colorBridge == null || colorBridge.ioSurfaceHandle() == 0
                 || depthBridge == null || depthBridge.ioSurfaceHandle() == 0) {
@@ -464,13 +648,10 @@ public final class IOSurfaceBridgeCompositor {
         // incoherence as composite() (see the 2026-05-25 comment there): GL
         // only reliably observes Metal's external writes when the texture is
         // re-specified from the IOSurface each frame.
-        int prevActiveTexR = glGetInteger(GL_ACTIVE_TEXTURE);
-        glActiveTexture(GL_TEXTURE0);
-        int prevTexRectR = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
-        colorBridge.bindToGlTexture(compositeGlTex);
-        depthBridge.bindToGlTexture(gbufferDepthGlTex);
-        glBindTexture(GL_TEXTURE_RECTANGLE, prevTexRectR);
-        glActiveTexture(prevActiveTexR);
+        // (Lever C: routed through resync() — same save/restore, plus the
+        // once-per-frame gate and the [Metal-TIMING] resync counters.)
+        resync(colorBridge, compositeGlTex);
+        resync(depthBridge, gbufferDepthGlTex);
 
         int fbw = colorBridge.width();
         int fbh = colorBridge.height();
@@ -581,7 +762,9 @@ public final class IOSurfaceBridgeCompositor {
     private static boolean rebindDepth(IOSurfaceBridge depthBridge) {
         int prevRectBinding = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
         try {
-            return rebindDepth0(depthBridge);
+            boolean ok = rebindDepth0(depthBridge);
+            if (ok) { depthBridge.glResyncGen = bridgeGeneration; depthBridge.glResyncTex = gbufferDepthGlTex; } // the bind IS this frame's re-specification
+            return ok;
         } finally {
             glBindTexture(GL_TEXTURE_RECTANGLE, prevRectBinding);
         }
@@ -815,7 +998,9 @@ public final class IOSurfaceBridgeCompositor {
     private static boolean rebind(IOSurfaceBridge bridge) {
         int prevRectBinding = glGetInteger(GL_TEXTURE_BINDING_RECTANGLE);
         try {
-            return rebind0(bridge);
+            boolean ok = rebind0(bridge);
+            if (ok) { bridge.glResyncGen = bridgeGeneration; bridge.glResyncTex = compositeGlTex; } // the bind IS this frame's re-specification
+            return ok;
         } finally {
             glBindTexture(GL_TEXTURE_RECTANGLE, prevRectBinding);
         }

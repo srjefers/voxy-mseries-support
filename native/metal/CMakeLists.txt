@@ -1,4 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
+# Must be set BEFORE project(): project() creates the cache entry, and a later
+# set(... CACHE ...) without FORCE is ignored. Before 2026-09-26 the 12.0 below sat
+# after project(), no -mmacosx-version-min reached clang, and the dylib was stamped
+# with the host's default (minos 26.0) — dyld refused it on macOS 13-15 and Voxy
+# silently disabled itself. 13.0 = the real floor: SPIRV-Cross emits MSL 3.0.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "macOS deployment target")
 project(voxy_metal LANGUAGES CXX OBJCXX)
 
 if(NOT APPLE)
@@ -7,7 +13,6 @@ endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "macOS deployment target")
 
 # Require ARM64; Metal backend is MVP-targeted at Apple Silicon only.
 if(NOT CMAKE_OSX_ARCHITECTURES)
@@ -57,6 +62,9 @@ target_include_directories(voxy_metal PRIVATE
 target_compile_options(voxy_metal PRIVATE
     -fobjc-arc
     -Wall -Wextra -Wno-unused-parameter
+    # An API newer than the deployment target without @available is an error, not a warning:
+    # it would load on the dev box and crash (or fail to load) on the oldest supported macOS.
+    -Werror=unguarded-availability-new
     -fvisibility=hidden)
 
 # JNI export must stay visible.

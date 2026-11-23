@@ -165,6 +165,19 @@ public final class MetalViewCapture {
      * Javadoc for the MVP trade-off.
      */
     public void emitToStream(long destAddr) {
+        emitToStream(destAddr, false);
+    }
+
+    /**
+     * @param skipDilate true for plant cross-model bakes (2026-09-25, S1 of the
+     *   far-LOD plant work): the bake-fill dilation turns a sparse blade cell
+     *   into a 100%-written flat green tile, which ModelFactory then marks as
+     *   full-cover + occluding and quads.frag has no alpha left to discard —
+     *   that, plus the zero depth metadata below, is what made every plant a
+     *   hollow green box at LOD 0. Plants keep their blade alpha instead;
+     *   ModelFactory centres their side faces (VOXY_LOD_PLANT_CROSS=0 reverts).
+     */
+    public void emitToStream(long destAddr, boolean skipDilate) {
         // CPU read from Shared storage. Backend.submit() in endBake() already
         // waited for the GPU; getBytes is then just a memcpy.
         this.bakeTarget.getBytes(0, 0, 0, this.totalW, this.totalH, this.readbackBuffer);
@@ -205,7 +218,7 @@ public final class MetalViewCapture {
         // (the second pass checks `(p & 0xFF000000) != 0`), so running it on
         // fullAlpha bakes only costs the per-cell average scan and only fills
         // genuinely empty texels.
-        if (nonzeroAlphaPixels > 0) {
+        if (nonzeroAlphaPixels > 0 && !skipDilate) {
             GlViewCapture.DIAG_BAKE_DILATE_RUNS.incrementAndGet();
             int filled = dilateOpaqueIntoGaps();
             GlViewCapture.DIAG_BAKE_DILATE_PIXELS_FILLED.addAndGet(filled);

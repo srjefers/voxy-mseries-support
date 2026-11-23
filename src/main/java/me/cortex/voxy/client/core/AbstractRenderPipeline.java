@@ -523,7 +523,9 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
     @Override
     protected void free0() {
         this.fb.free();
-        this.sectionRenderer.free();
+        if (this.sectionRenderer != null) {//null only when the renderer constructor failed before setSectionRenderer
+            this.sectionRenderer.free();
+        }
         this.depthMaskBlit.delete();
         this.depthSetBlit.delete();
         this.depthCopy.delete();
@@ -587,6 +589,14 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         if (fbw <= 0 || fbh <= 0) return;
         var backend = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get();
         if (!(backend instanceof me.cortex.voxy.client.core.metal.MetalRenderBackend mrb)) return;
+
+        // VOXY_FRAME_TIMING=1: GL-side vx pass probe frame boundary — folds
+        // the previous frame's spans (lightmap sync below, the SOLID-hook GL
+        // passes after this method returns) and polls the async GL timer
+        // queries. No-op (JIT-folded) when the gate is off.
+        if (me.cortex.voxy.client.core.util.VxTiming.ENABLED) {
+            me.cortex.voxy.client.core.util.VxTiming.beginFrame();
+        }
 
         // 1) Allocate the IOSurface bridge sized to MC's framebuffer. The
         //    bridge is the cross-context handle: Metal renders into the
@@ -701,7 +711,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                 temporalOpaqueDrawCount = org.lwjgl.system.MemoryUtil.memGetInt(p + 20);
             }
             int topNodeCount = this.traversal.getTopNodeCount();
-            int firstDispatchSize = (topNodeCount + 127) >> 7;
+            int firstDispatchSize = (topNodeCount + 31) >> 5;//HierarchicalOcclusionTraverser.LOCAL_WORK_SIZE_BITS = 5 (was >>7: logged 0 for 1..127 nodes)
             // fps over the 600-frame window between these logs — the perf A/B
             // matrix reads it straight from the log (paused-time windows show
             // up as implausibly low fps and are skipped by the reader).
@@ -709,12 +719,17 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             double windowFps = this.fpsWindowStartNs != 0
                     ? 600.0 / ((nowNs - this.fpsWindowStartNs) / 1e9) : -1;
             this.fpsWindowStartNs = nowNs;
+            // lightmapSync=<readbacks>/<skipped>: MC-lightmap glGetTexImage
+            // readbacks run vs skipped-as-unchanged this window (the per-tick
+            // throttle; VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1 → skipped=0).
             Logger.info(String.format(
-                    "[Metal-LayerB f=%d] fps=%.1f topNodeCount=%d firstDispatchSize=%d renderList.sectionCount=%d cmdGenDispatch=(%d,%d,%d) draws opaque=%d translucent=%d temporal=%d",
+                    "[Metal-LayerB f=%d] fps=%.1f topNodeCount=%d firstDispatchSize=%d renderList.sectionCount=%d cmdGenDispatch=(%d,%d,%d) draws opaque=%d translucent=%d temporal=%d lightmapSync=%d/%d",
                     this.metalFrame, windowFps, topNodeCount, firstDispatchSize,
                     renderListSectionCount,
                     cmdGenDispatchX, cmdGenDispatchY, cmdGenDispatchZ,
-                    opaqueDrawCount, translucentDrawCount, temporalOpaqueDrawCount));
+                    opaqueDrawCount, translucentDrawCount, temporalOpaqueDrawCount,
+                    me.cortex.voxy.client.core.rendering.util.LightMapHelper.takeWindowSyncs(),
+                    me.cortex.voxy.client.core.rendering.util.LightMapHelper.takeWindowSkips()));
             // VOXY_FRAME_TIMING=1 companion line: per-frame averages of the
             // three synchronous waits + the per-draw JNI loop over the same
             // 600-frame window, so the 120fps work can rank batching vs ICB
@@ -722,14 +737,28 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             if (me.cortex.voxy.client.core.util.FrameTiming.ENABLED) {
                 Logger.info(String.format(java.util.Locale.ROOT,
                         "[Metal-TIMING f=%d] per-frame avg over 600: hotWait=%.2fms"
-                        + " drawFlushWait=%.2fms bridgeWait=%.2fms jniDrawLoop=%.2fms draws=%d",
+                        + " drawFlushWait=%.2fms bridgeWait=%.2fms jniDrawLoop=%.2fms draws=%d"
+                        + " lightmapSync=%.3fms (%d readbacks, %.3fms each)"
+                        + " resync=%.1f/frame (skipped %.1f/frame) resyncCost=%.3fms",
                         this.metalFrame,
                         me.cortex.voxy.client.core.util.FrameTiming.hotReadbackNs / 600.0 / 1e6,
                         me.cortex.voxy.client.core.util.FrameTiming.drawCallFlushNs / 600.0 / 1e6,
                         me.cortex.voxy.client.core.util.FrameTiming.bridgeFlushNs / 600.0 / 1e6,
                         me.cortex.voxy.client.core.util.FrameTiming.jniDrawLoopNs / 600.0 / 1e6,
-                        me.cortex.voxy.client.core.util.FrameTiming.jniDrawCount / 600));
+                        me.cortex.voxy.client.core.util.FrameTiming.jniDrawCount / 600,
+                        me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncNs / 600.0 / 1e6,
+                        me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncCount,
+                        me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncCount == 0 ? 0.0
+                            : me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncNs
+                              / (double) me.cortex.voxy.client.core.util.FrameTiming.lightmapSyncCount / 1e6,
+                        me.cortex.voxy.client.core.util.FrameTiming.resyncCount / 600.0,
+                        me.cortex.voxy.client.core.util.FrameTiming.resyncSkipped / 600.0,
+                        me.cortex.voxy.client.core.util.FrameTiming.resyncNs / 600.0 / 1e6));
                 me.cortex.voxy.client.core.util.FrameTiming.reset();
+                // Same gate, same window: the GL-side vx-contract pass line
+                // (VxIrisSideChannel / MetalVxResolvePass / VxContractInjector /
+                // compositor / lightmap) with async GL_TIME_ELAPSED results.
+                me.cortex.voxy.client.core.util.VxTiming.report(this.metalFrame);
             }
         }
 
@@ -987,6 +1016,12 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         } else {
             backend.submit();
         }
+        // Lever C: this submit (WAIT #3) is the one point per frame after
+        // which the IOSurfaces hold new Metal bytes. Bump the compositor's
+        // bridge generation here so every GL-side acquire this frame
+        // re-specifies each bridge exactly once (see
+        // IOSurfaceBridgeCompositor.resync / VOXY_BRIDGE_RESYNC).
+        me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.markBridgesWritten();
         this.metalFrame++;
 
         // [Metal-VXPLANES] one-shot CPU read-back of the material g-buffer planes
@@ -1191,6 +1226,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
 
     public void addDebug(List<String> debug) {
         this.sectionRenderer.addDebug(debug);
+        this.traversal.addDebug(debug);
         RenderStatistics.addDebug(debug);
     }
 
@@ -1229,13 +1265,17 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
 
     /**
      * Whether the OPAQUE LOD layer also goes through the material g-buffer + BSL resolve.
-     * Default FALSE: opaque LODs render on the proven base path (lit colour → bridge →
-     * normal composite), which is what's stable on dev — the resolve runs ONLY on the
-     * translucent (water) layer (issue #11). The full opaque-material path darkened far
-     * terrain (BSL deferred shading of grazing LOD); kept behind VOXY_VX_MATERIAL_OPAQUE=1
-     * for A/B only. Trans-only is the mergeable shape: water BSL-shaded, opaque untouched.
+     * Default TRUE since 2026-09-25: the pack's own voxy_opaque program applies the SAME
+     * GetLighting as its near terrain (sun direction, light/ambient colours, shadow map,
+     * foliage subsurface), which is the only way the LOD ring matches Sodium's ring at
+     * the seam — the inject path lights LODs with MC's plain lightmap and the seam showed
+     * as paler, shadowless terrain that "gained" shadows as Sodium built each section
+     * (user-verified on-device: seam closed, spyglass and unzoomed). The earlier note
+     * about far terrain darkening did not reproduce in that run; VOXY_VX_MATERIAL_OPAQUE=0
+     * reverts to the inject path (which alone carries the abyss fill, seafloor dim and
+     * long-shadow march — watch near-water floors when comparing).
      */
-    public static final boolean VX_MATERIAL_OPAQUE = "1".equals(System.getenv("VOXY_VX_MATERIAL_OPAQUE"));
+    public static final boolean VX_MATERIAL_OPAQUE = !"0".equals(System.getenv("VOXY_VX_MATERIAL_OPAQUE"));
 
     /** Opaque LOD uses the material g-buffer + resolve only when explicitly opted in. */
     public boolean vxOpaqueMaterialMode() {

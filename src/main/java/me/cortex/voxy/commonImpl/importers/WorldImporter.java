@@ -269,7 +269,7 @@ public class WorldImporter implements IDataImporter {
                 }
             }
             this.service.blockTillEmpty();
-            while (this.chunksProcessed.get() != this.totalChunks.get() && this.isRunning) {
+            while (this.chunksProcessed.get() < this.totalChunks.get() && this.isRunning) {//fork: '<' so a double-accounted chunk cannot wedge the gate
                 Thread.yield();
                 try {
                     Thread.sleep(10);
@@ -379,6 +379,12 @@ public class WorldImporter implements IDataImporter {
                                 data.free();
                                 return;
                             }
+                            //fork: every queued chunk must be accounted exactly once (importChunkNBT
+                            // either counts it processed or un-counts it). A chunk that fails to decompress
+                            // or parse (e.g. a torn read of a region file the integrated server is writing
+                            // during '/voxy import current') used to stay in totalChunks forever, so the
+                            // completion gate never opened and the world stayed referenced.
+                            boolean accounted = false;
                             try {
                                 try (var decompressedData = this.decompress(b, data)) {
                                     if (decompressedData == null) {
@@ -386,11 +392,15 @@ public class WorldImporter implements IDataImporter {
                                     } else {
                                         var nbt = NbtIo.read(decompressedData);
                                         this.importChunkNBT(nbt, x, z);
+                                        accounted = true;//importChunkNBT accounted for it (processed++ or total--)
                                     }
                                 }
                             } catch (Exception e) {
                                 throw new RuntimeException(e);
                             } finally {
+                                if (!accounted) {
+                                    this.totalChunks.decrementAndGet();
+                                }
                                 data.free();
                             }
                         });

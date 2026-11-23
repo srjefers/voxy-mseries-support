@@ -10,6 +10,7 @@ import org.lwjgl.opengl.GL30C;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.system.MemoryUtil;
 
+import java.util.Locale;
 import java.util.Random;
 
 import static org.lwjgl.opengl.GL11.GL_NEAREST;
@@ -88,8 +89,8 @@ public class Capabilities {
 
         this.ssboMaxSize = glGetInteger64(GL_MAX_SHADER_STORAGE_BLOCK_SIZE);
 
-        this.isMesa = glGetString(GL_VERSION).toLowerCase().contains("mesa");
-        var vendor = glGetString(GL_VENDOR).toLowerCase();
+        this.isMesa = glGetString(GL_VERSION).toLowerCase(Locale.ROOT).contains("mesa");
+        var vendor = glGetString(GL_VENDOR).toLowerCase(Locale.ROOT);
         this.isIntel = vendor.contains("intel");
         this.isNvidia = vendor.contains("nvidia");
         this.isAmd = vendor.contains("amd")||vendor.contains("radeon");

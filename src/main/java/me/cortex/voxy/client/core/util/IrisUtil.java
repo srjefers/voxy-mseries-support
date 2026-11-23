@@ -6,6 +6,7 @@ import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
 import net.caffeinemc.mods.sodium.client.util.FogParameters;
 import net.fabricmc.loader.api.FabricLoader;
 import net.irisshaders.iris.Iris;
+import me.cortex.voxy.common.Logger;
 import net.irisshaders.iris.api.v0.IrisApi;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.shadows.ShadowRenderer;
@@ -56,8 +57,43 @@ public class IrisUtil {
         }
     }
 
+    /**
+     * Upstream 1952d3df swapped {@code Iris.isPackInUseQuick()} (the live pipeline is an
+     * IrisRenderingPipeline) for {@code Iris.getCurrentPack().isPresent()} (a pack is loaded).
+     * On the GL backend the fork keeps pure upstream ("current"): the GL path must match upstream.
+     * On Metal the predicate also selects gbuffer-inject vs IOSurface composite, so the pure form
+     * would drop the LOD frame whenever a pack is loaded but Iris runs its vanilla fallback pipeline
+     * (pack compile failure); the Metal default is "hybrid": a pack is loaded AND the live pipeline
+     * is either not built yet (null during pipeline recreation, the window upstream fixed) or an
+     * IrisRenderingPipeline. VOXY_IRIS_PACK_PREDICATE=hybrid|quick|current overrides on both
+     * backends (quick = pre-sync). Resolved on first use, after the render backend exists.
+     */
+    private static volatile String packPredicate;
+
+    private static String packPredicate() {
+        String mode = packPredicate;
+        if (mode == null) {
+            String v = System.getenv("VOXY_IRIS_PACK_PREDICATE");
+            boolean gl = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                    == me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+            mode = (v == null || v.isBlank()) ? (gl ? "current" : "hybrid") : v.trim().toLowerCase(java.util.Locale.ROOT);
+            if (!mode.equals("hybrid") && !mode.equals("quick") && !mode.equals("current")) mode = gl ? "current" : "hybrid";
+            packPredicate = mode;
+            me.cortex.voxy.common.Logger.info("[Voxy-SYNC] Iris pack predicate: " + mode + " (upstream 1952d3df; GL default current, Metal default hybrid; VOXY_IRIS_PACK_PREDICATE=quick restores pre-sync)");
+        }
+        return mode;
+    }
+
     private static boolean irisShaderPackEnabled0() {
-        return Iris.isPackInUseQuick();
+        switch (packPredicate()) {
+            case "quick": return Iris.isPackInUseQuick();
+            case "current": return Iris.getCurrentPack().isPresent();
+            default: {
+                if (Iris.getCurrentPack().isEmpty()) return false;
+                var pipeline = Iris.getPipelineManager().getPipelineNullable();
+                return pipeline == null || pipeline instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline;
+            }
+        }
     }
 
     public static boolean irisShaderPackEnabled() {
@@ -109,5 +145,40 @@ public class IrisUtil {
     }
     private static void disableIrisShaders0() {
         IrisApi.getInstance().getConfig().setShadersEnabledAndApply(false);//Disable shaders
+    }
+
+    /**
+     * Fork (Metal): like {@link #disableIrisShaders()}, but without saving the disable. Iris's only public
+     * disable (setShadersEnabledAndApply) saves enableShaders=false and then reloads, and the reload
+     * re-reads the file, so the save cannot be skipped. The finally blocks put the user's saved value
+     * back on disk once the reload is done, including when the nested renderer rebuild inside that
+     * reload throws, and leave the in-memory state off. Before this a single renderer failure with a pack
+     * active (the A11 test knob, a shader transpile error) silently turned the pack off for every later
+     * launch. Iris re-reads the file on its own reloads, so reloading shaders (R) or turning them back on
+     * tries the pack again; changing an Iris setting in the same session saves the in-memory value.
+     */
+    public static void disableIrisShadersForSession(Throwable cause) {
+        if (IRIS_INSTALLED) disableIrisShadersForSession0(cause);
+    }
+    private static void disableIrisShadersForSession0(Throwable cause) {
+        var cfg = net.irisshaders.iris.Iris.getIrisConfig();
+        boolean saved = cfg.areShadersEnabled();
+        String pack = cfg.getShaderPackName().orElse("?");
+        Logger.error("Voxy could not build its renderer with shader pack '" + pack + "'; shaders are OFF until"
+                + " you reload them (R) or turn them back on in Options > Video Settings > Shader Packs, which"
+                + " tries the pack again. iris.properties keeps enableShaders=" + saved + ", so the next launch"
+                + " tries it too. VOXY_IRIS_DISABLE_PERSIST=1 restores upstream's saved disable. Cause: " + cause);
+        try {
+            IrisApi.getInstance().getConfig().setShadersEnabledAndApply(false);
+        } finally {
+            try {
+                cfg.setShadersEnabled(saved);
+                cfg.save();
+            } catch (java.io.IOException io) {
+                Logger.error("Could not restore enableShaders in iris.properties", io);
+            } finally {
+                cfg.setShadersEnabled(false);
+            }
+        }
     }
 }

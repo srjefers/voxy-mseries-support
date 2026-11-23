@@ -21,6 +21,7 @@ import net.minecraft.client.renderer.ItemBlockRenderTypes;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
@@ -63,6 +64,13 @@ import static org.lwjgl.opengl.GL11.*;
 //TODO: NOTE!!! is it worth even uploading as a 16x16 texture, since automatic lod selection... doing 8x8 textures might be perfectly ok!!!
 // this _quarters_ the memory requirements for the texture atlas!!! WHICH IS HUGE saving
 public class ModelFactory {
+    /** Far-LOD plant work S1 (2026-09-25): plant cross models bake without
+     *  dilation and get centred side faces on Metal. VOXY_LOD_PLANT_CROSS=0
+     *  reverts to the hollow-box behaviour. Read from the bakery too. */
+    public static final boolean PLANT_CROSS = !"0".equals(System.getenv("VOXY_LOD_PLANT_CROSS"));
+    private static final java.util.concurrent.atomic.AtomicBoolean PLANT_CROSS_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
     public static final int MODEL_TEXTURE_SIZE = 16;
     public static final int LAYERS = Integer.numberOfTrailingZeros(MODEL_TEXTURE_SIZE);
 
@@ -296,7 +304,11 @@ public class ModelFactory {
         var biomeEntry = this.biomeQueue.poll();
         while (biomeEntry != null) {
             var biomeRegistry = Minecraft.getInstance().level.registryAccess().lookupOrThrow(Registries.BIOME);
-            var res = this.addBiome0(biomeEntry.id, biomeRegistry.getValue(Identifier.parse(biomeEntry.biome)));
+            var mcbiomeEntry = biomeRegistry.get(Identifier.parse(biomeEntry.biome));
+            if (!mcbiomeEntry.isPresent()) {
+                Logger.error("Could not find biome: " + biomeEntry.biome + " using default");
+            }
+            var res = this.addBiome0(biomeEntry.id, mcbiomeEntry.isPresent()?mcbiomeEntry.orElseThrow().value():DEFAULT_BIOME);
             if (res != null) {
                 this.uploadResults.add(res);
             }
@@ -566,6 +578,38 @@ public class ModelFactory {
             }
         }
 
+        // Metal plant cross models (2026-09-25, far-LOD plant work S1): the
+        // Metal capture writes no depth bits, so a cross model's four side
+        // faces come out at offset 0 — ON the cell walls — instead of the
+        // ~0.5 the GL bake measures for two 45-degree blades. Together with
+        // the bake-fill dilation (skipped for plants now, see
+        // MetalViewCapture.emitToStream) that made every tuft a hollow green
+        // box at LOD 0 and let it occlude its neighbours' side faces. Put the
+        // side faces at 0.5 (enc 32): quad_util mixes depthOffset with
+        // 1-depthOffset per face parity, so both opposing faces coincide at
+        // the cell centre = upstream's axis-aligned '+' cross, self-lit and
+        // non-occluding (offset >= 0.1 clears occludesFace below).
+        // GL bakes real depth and never hits the == 0 condition.
+        boolean plantCrossModel = false;
+        if (PLANT_CROSS && !isFluid
+                && blockState.getFluidState().isEmpty()
+                && blockState.getBlock() instanceof VegetationBlock
+                && me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                        != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+            plantCrossModel = true; // GPU model flag bit 16 (quads.frag edge-fade), Metal only
+            boolean any = false;
+            for (int face = 2; face < 6; face++) { // NORTH, SOUTH, WEST, EAST
+                if (sizes[face] >= 0.0f && sizes[face] < 0.01f) {
+                    sizes[face] = 0.5f;
+                    any = true;
+                }
+            }
+            if (any && PLANT_CROSS_LOGGED.compareAndSet(false, true)) {
+                Logger.info("[Metal-LODTEST] plant cross bake ON: undilated side cells + centred depth 0.5 for "
+                        + "VegetationBlock models (VOXY_LOD_PLANT_CROSS=0 reverts); first model " + blockState);
+            }
+        }
+
         //TODO: THIS, note this can be tested for in 2 ways, re render the model with quad culling disabled and see if the result
         // is the same, (if yes then needs double sided quads)
         // another way to test it is if e.g. up and down havent got anything rendered but the sides do (e.g. all plants etc)
@@ -729,6 +773,7 @@ public class ModelFactory {
 
         //TODO: THIS
         modelFlags |= isShaded?8:0;//model has AO and shade
+        modelFlags |= plantCrossModel?16:0;//Metal plant cross (see quads.frag VOXY_LOD_PLANT_EDGEFADE); never set on GL
 
         //modelFlags |= blockRenderLayer == RenderLayer.getSolid()?0:1;// should discard alpha
         MemoryUtil.memPutInt(uploadPtr, modelFlags); uploadPtr += 4;
@@ -821,6 +866,9 @@ public class ModelFactory {
     }
 
     private BiomeUploadResult addBiome0(int id, Biome biome) {
+        if (biome == null) {
+            throw new IllegalStateException("Null biome");
+        }
         for (int i = this.biomes.size(); i <= id; i++) {
             this.biomes.add(null);
         }
@@ -830,7 +878,8 @@ public class ModelFactory {
             throw new IllegalStateException("Biome was put in an id that was not null");
         }
         if (oldBiome == biome) {
-            Logger.error("Biome added was a duplicate");
+            Logger.error("Biome added was a duplicate: " + id);
+            return null;
         }
 
         if (this.modelsRequiringBiomeColours.isEmpty()) return null;
@@ -885,6 +934,10 @@ public class ModelFactory {
 
             @Override
             public int getBlockTint(BlockPos pos, ColorResolver colorResolver) {
+                if (colorResolver == null) {
+                    Logger.error("Block state: " + state + " colourprovider: " + colorProvider + " had a null colorresolver");
+                    return 0;
+                }
                 return colorResolver.getColor(biome, 0, 0);
             }
 
@@ -1015,7 +1068,7 @@ public class ModelFactory {
         return map;
     }
 
-    public long getModelMetadataFromClientId(int clientId) {
+    public final long getModelMetadataFromClientId(int clientId) {
         return this.metadataCache[clientId];
     }
 

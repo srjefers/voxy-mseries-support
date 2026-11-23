@@ -18,6 +18,9 @@ import java.util.Arrays;
 
 public class RenderDataFactory {
     private static final boolean CHECK_NEIGHBOR_FACE_OCCLUSION = true;
+    // Upstream 1f985ce6: the -x/+x section-border checks passed swapped face indices to faceOccludes.
+    // VOXY_MESH_XFACE_FIX=0 restores the swapped (pre-sync) indices for A/B.
+    private static final boolean MESH_XFACE_FIX = !"0".equals(System.getenv("VOXY_MESH_XFACE_FIX"));
     // When the neighbour is the same model id, the face between them is normally
     // culled (no interior faces between identical blocks). The original author
     // flagged that this BREAKS TRANSLUCENTS (water/glass) at chunk borders when
@@ -47,6 +50,23 @@ public class RenderDataFactory {
             && !"1".equals(System.getenv("VOXY_LOD_FAR_PLANTS"));
     private static final java.util.concurrent.atomic.AtomicBoolean PLANT_CULL_LOGGED =
             new java.util.concurrent.atomic.AtomicBoolean();
+
+    // Upstream mesher fixes 6212d95c + 514d0a0e + 89b3dacc (MCRcortex/voxy 2025-12-20 / 2026-04-29),
+    // shipped as one predicate because the three commits rewrite the same two lines:
+    //  (1) a same-model neighbour hides the face only when the model "culls same"; the old
+    //      `|| faceOccludes(meta, face)` also hid faces of models that do NOT cull same
+    //      (leaves, panes, slabs against an identical neighbour) — missing faces at LOD.
+    //  (2) a neighbour's occluding face hides this face only when this face CAN be
+    //      occluded (faceCanBeOccluded), the guard upstream had left commented out.
+    // Both directions mesh MORE faces than before. VOXY_MESH_FACE_OCCLUDE=0 restores the
+    // pre-sync predicate for A/B. On Metal the bakery marks fences/panes/walls/slabs/stairs fully opaque, so
+    // only LOD-0 plant side faces next to an occluding neighbour change; on GL, fences/panes/walls/slabs/stairs.
+    private static final boolean MESH_FACE_OCCLUDE_FIX = !"0".equals(System.getenv("VOXY_MESH_FACE_OCCLUDE"));
+
+    static {
+        me.cortex.voxy.common.Logger.info("[Voxy-SYNC] mesher face-occlusion predicate: "
+                + (MESH_FACE_OCCLUDE_FIX ? "upstream 6212d95c/514d0a0e/89b3dacc ON (VOXY_MESH_FACE_OCCLUDE=0 reverts)" : "PRE-SYNC (VOXY_MESH_FACE_OCCLUDE=0)"));
+    }
 
     private static int parseEnvInt(String name, int def) {
         String v = System.getenv(name);
@@ -145,7 +165,7 @@ public class RenderDataFactory {
 
             //Lower 26 bits can be auxiliary data since that is where quad position information goes;
             int auxData = (int) (data&((1<<26)-1));
-            data &= ~((1<<26)-1);
+            data &= ~((1L<<26)-1);
 
             int axisSide = auxData&1;
             int type = (auxData>>1)&3;//Translucent, double side, directional
@@ -291,7 +311,13 @@ public class RenderDataFactory {
                 }
                 long modelMetadata = this.modelMan.getModelMetadataFromClientId(modelId);
 
-                if (cullPlants && ModelQueries.isPlant(modelMetadata)) {
+                if (modelId == 0) {
+                    //Upstream 1f993f8e: model id 0 is the air bake (any block whose bake dedups to
+                    // it is "basically air") — emit like the air branch above (light byte only)
+                    // instead of packing quad data / metadata for a voxel the mesher never draws.
+                    sectionData[i * 2] = (block&(0xFFL<<56))>>>1;
+                    sectionData[i * 2 + 1] = 0;
+                } else if (cullPlants && ModelQueries.isPlant(modelMetadata)) {
                     //Far-LOD plant cull: same emission as the air branch above (light byte kept),
                     // no notEmpty/opaque/fluid bits so the mesher sees an empty voxel
                     if (PLANT_CULL_LOGGED.compareAndSet(false, true)) {
@@ -413,10 +439,16 @@ public class RenderDataFactory {
     private static final long LM = (0xFFL<<55);
 
     private static boolean shouldMeshNonOpaqueBlockFace(int face, long quad, long meta, long neighborQuad, long neighborMeta) {
-        if (((quad^neighborQuad)&(0xFFFFL<<26))==0 && (DISABLE_CULL_SAME_OCCLUDES || (ModelQueries.cullsSame(meta)||ModelQueries.faceOccludes(meta, face)))) return false;//This is a hack, if the neigbor and this are the same, dont mesh the face// TODO: FIXME
-        if (!ModelQueries.faceExists(meta, face)) return false;//Dont mesh if no face
-        //if (ModelQueries.faceCanBeOccluded(meta, face)) //TODO: maybe enable this
-            if (ModelQueries.faceOccludes(neighborMeta, face^1)) return false;
+        if (MESH_FACE_OCCLUDE_FIX) {
+            if (((quad^neighborQuad)&(0xFFFFL<<26))==0 && (DISABLE_CULL_SAME_OCCLUDES || ModelQueries.cullsSame(meta))) return false;//This is a hack, if the neigbor and this are the same, dont mesh the face// TODO: FIXME
+            if (!ModelQueries.faceExists(meta, face)) return false;//Dont mesh if no face
+            if (ModelQueries.faceCanBeOccluded(meta, face) && ModelQueries.faceOccludes(neighborMeta, face^1)) return false;
+            return true;
+        }
+        // Pre-sync predicate (VOXY_MESH_FACE_OCCLUDE=0)
+        if (((quad^neighborQuad)&(0xFFFFL<<26))==0 && (DISABLE_CULL_SAME_OCCLUDES || (ModelQueries.cullsSame(meta)||ModelQueries.faceOccludes(meta, face)))) return false;
+        if (!ModelQueries.faceExists(meta, face)) return false;
+        if (ModelQueries.faceOccludes(neighborMeta, face^1)) return false;
         return true;
     }
 
@@ -1084,7 +1116,7 @@ public class RenderDataFactory {
                         long meta = this.modelMan.getModelMetadataFromClientId(this.modelMan.getModelId(Mapper.getBlockId(neighborId)));
                         if (ModelQueries.isFullyOpaque(meta)) {
                             oki = false;
-                        } else if (CHECK_NEIGHBOR_FACE_OCCLUSION && ModelQueries.faceOccludes(meta, (2 << 1) | (1 - 1))) {
+                        } else if (CHECK_NEIGHBOR_FACE_OCCLUSION && ModelQueries.faceOccludes(meta, (2 << 1) | (MESH_XFACE_FIX ? 1 : 0))) {//upstream 1f985ce6: -x neighbour occludes with its +x face
                             //TODO check self occlsion
                             oki = false;
                         }
@@ -1106,7 +1138,7 @@ public class RenderDataFactory {
                         long meta = this.modelMan.getModelMetadataFromClientId(this.modelMan.getModelId(Mapper.getBlockId(neighborId)));
                         if (ModelQueries.isFullyOpaque(meta)) {
                             oki = false;
-                        } else if (CHECK_NEIGHBOR_FACE_OCCLUSION && ModelQueries.faceOccludes(meta, (2 << 1) | (1 - 0))) {
+                        } else if (CHECK_NEIGHBOR_FACE_OCCLUSION && ModelQueries.faceOccludes(meta, (2 << 1) | (MESH_XFACE_FIX ? 0 : 1))) {//upstream 1f985ce6: +x neighbour occludes with its -x face
                             //TODO check self occlsion
                             oki = false;
                         }
@@ -1744,13 +1776,20 @@ public class RenderDataFactory {
             coff += size;
         }
 
+
+
         int aabb = 0;
         aabb |= this.minX;
         aabb |= this.minY<<5;
         aabb |= this.minZ<<10;
-        aabb |= (this.maxX-this.minX-1)<<15;
-        aabb |= (this.maxY-this.minY-1)<<20;
-        aabb |= (this.maxZ-this.minZ-1)<<25;
+        //Feel like a clown for missing the Math.max
+        aabb |= Math.max(0,this.maxX-this.minX-1)<<15;
+        aabb |= Math.max(0,this.maxY-this.minY-1)<<20;
+        aabb |= Math.max(0,this.maxZ-this.minZ-1)<<25;
+
+        //if (this.maxX<=this.minX||this.maxY<=this.minY||this.maxZ<=this.minZ) {
+        //    throw new IllegalStateException("AABB bounds are not valid");
+        //}
 
         return new BuiltSection(section.key, section.getNonEmptyChildren(), aabb, buff, offsets);
     }

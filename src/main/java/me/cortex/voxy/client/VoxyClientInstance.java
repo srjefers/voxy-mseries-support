@@ -34,8 +34,8 @@ public class VoxyClientInstance extends VoxyInstance {
         if (path == null) {
             path = getBasePath();
         }
-        this.basePath = path;
-        this.storageConfig = getCreateStorageConfig(path);
+        this.basePath = path.normalize();//upstream f048f09b: hygiene — getWorldPath(LevelResource.ROOT) yields '<level>/./voxy'
+        this.storageConfig = getCreateStorageConfig(this.basePath);
         this.updateDedicatedThreads();
     }
 
@@ -65,6 +65,7 @@ public class VoxyClientInstance extends VoxyInstance {
         var ctx = new ConfigBuildCtx();
         ctx.setProperty(ConfigBuildCtx.BASE_SAVE_PATH, this.basePath.toString());
         ctx.setProperty(ConfigBuildCtx.WORLD_IDENTIFIER, identifier.getWorldId());
+        ctx.setProperty(ConfigBuildCtx.PLAYER_UUID, Minecraft.getInstance().getUser().getProfileId().toString().replace(':','-'));//upstream c6b30e51: {player_uuid} token for storage paths
         ctx.pushPath(ConfigBuildCtx.DEFAULT_STORAGE_PATH);
         return this.storageConfig.build(ctx);
     }

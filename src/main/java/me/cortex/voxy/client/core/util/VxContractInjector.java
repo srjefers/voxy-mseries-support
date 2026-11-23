@@ -312,6 +312,9 @@ public final class VxContractInjector {
         if (disabled || viewport == null || colorBridge == null || depthBridge == null) {
             return false;
         }
+        // VOXY_FRAME_TIMING=1 GL-side span (total inject incl. the side-channel
+        // decodes and the colour/trans draws, each also spanned on their own).
+        VxTiming.begin(VxTiming.INJECT);
         try {
             return inject0(viewport, colorBridge, depthBridge, transBridge, transDepthBridge);
         } catch (Throwable t) {
@@ -320,6 +323,8 @@ public final class VxContractInjector {
                 Logger.warn("VxContractInjector: inject failed — falling back to hidden LODs under pack", t);
             }
             return false;
+        } finally {
+            VxTiming.end(VxTiming.INJECT);
         }
     }
 
@@ -645,7 +650,13 @@ public final class VxContractInjector {
                         + "; VOXY_VX_ABYSS_FILL=0 reverts, _PUSH/_RGB tune)"
                         : "OFF (VOXY_VX_ABYSS_FILL=0)"));
             }
+            // Colour draw span + LOD coverage occlusion query (this shader
+            // discards every non-LOD pixel, so samples passed = LOD pixels).
+            VxTiming.begin(VxTiming.INJECT_COLOUR);
+            VxTiming.beginCoverage((long) fbw * fbh);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            VxTiming.endCoverage();
+            VxTiming.end(VxTiming.INJECT_COLOUR);
 
             // Phase D (issue #11): translucent LOD layer. Decode the
             // translucent depth bridge into vxDepthTexTrans and write the
@@ -656,6 +667,7 @@ public final class VxContractInjector {
             if (transBridge != null && transDepthBridge != null
                     && translucentTargets != null
                     && translucentTargets.length > 0) {
+                VxTiming.begin(VxTiming.INJECT_TRANS);
                 int transColourRect = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor
                         .acquireAuxRectTex(transBridge);
                 int transDepthRect = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor
@@ -687,6 +699,7 @@ public final class VxContractInjector {
                         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                     }
                 }
+                VxTiming.end(VxTiming.INJECT_TRANS);
             }
             return true;
         } finally {

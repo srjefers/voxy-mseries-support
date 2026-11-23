@@ -82,7 +82,15 @@ public abstract class MixinLevelRenderer implements IGetVoxyRenderSystem {
             this.renderer = new VoxyRenderSystem(world, instance.getServiceManager());
         } catch (RuntimeException e) {
             if (IrisUtil.irisShaderPackEnabled()) {
-                IrisUtil.disableIrisShaders();
+                //Fork (Metal): disable the pack for this session only instead of saving the disable;
+                // VOXY_IRIS_DISABLE_PERSIST=1 restores upstream's saved disable. GL is unchanged.
+                if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                        != me.cortex.voxy.client.core.gpu.BackendType.OPENGL
+                        && !"1".equals(System.getenv("VOXY_IRIS_DISABLE_PERSIST"))) {
+                    IrisUtil.disableIrisShadersForSession(e);
+                } else {
+                    IrisUtil.disableIrisShaders();
+                }
             } else {
                 throw e;
             }

@@ -19,7 +19,10 @@ import net.minecraft.resources.Identifier;
 public class VoxyConfigMenu implements ConfigEntryPoint {
     @Override
     public void registerConfigLate(ConfigBuilder B) {
+        if (!VoxyCommon.isAvailable()) return;//Dont even register the config if its not avalible (upstream cff48664)
+
         var CFG = VoxyConfig.CONFIG;
+        final var RENDER_RELOAD = OptionFlag.REQUIRES_RENDERER_RELOAD.getId().toString();
 
         var cc = B.registerModOptions("voxy", "Voxy", VoxyCommon.MOD_VERSION)
                 .setIcon(Identifier.parse("voxy:icon.png"));
@@ -66,7 +69,7 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
                                         "voxy:use_sodium_threads",
                                         Component.translatable("voxy.config.general.useSodiumBuilder"),
                                         ()->!CFG.dontUseSodiumBuilderThreads, v->CFG.dontUseSodiumBuilderThreads=!v)
-                                        .setPostChangeFlags("voxy:update_threads")
+                                        .setPostChangeFlags("voxy:update_threads", RENDER_RELOAD)//upstream 158ff6a5
                         ), new Group(
                                 new BoolOption(
                                         "voxy:ingest_enabled",
@@ -89,7 +92,7 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
                                                     vrsh.shutdownRenderer();
                                                 }
                                             }
-                                        },"voxy:enabled", "voxy:renderer_reload")
+                                        },"voxy:enabled", RENDER_RELOAD)//fork: the literal "voxy:renderer_reload" never matched any flag (upstream df90323f)
                                         .setEnabler("voxy:enabled")
                         ), new Group(
                                 new IntOption(
@@ -112,7 +115,7 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
                                                     vrs.setRenderDistance(c);
                                                 }
                                             }
-                                        }, "voxy:rendering", "voxy:renderer_reload")
+                                        }, "voxy:rendering", RENDER_RELOAD)//fork: see above
                         ), new Group(
                                 new BoolOption(
                                         "voxy:eviromental_fog",

@@ -23,6 +23,8 @@ import me.cortex.voxy.common.world.WorldEngine;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
+import java.util.List;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -490,7 +492,9 @@ public class HierarchicalOcclusionTraverser {
                         encoder.setBuffer(NODE_QUEUE_SINK_BINDING, sink, 0);
 
                         if (iter == 0) {
-                            encoder.dispatch(firstDispatchSize, 1, 1);
+                            if (firstDispatchSize != 0) {//upstream ad5f6ee0: a zero-sized dispatch makes the AMD GL driver log errors
+                                encoder.dispatch(firstDispatchSize, 1, 1);
+                            }
                         } else {
                             encoder.dispatchIndirect(this.queueMetaBuffer, iter * 4L * 4);
                         }
@@ -531,7 +535,9 @@ public class HierarchicalOcclusionTraverser {
             encoder.barrier(
                     ComputeEncoder.BARRIER_SHADER | ComputeEncoder.BARRIER_INDIRECT | ComputeEncoder.BARRIER_TRANSFER,
                     ComputeEncoder.BARRIER_SHADER | ComputeEncoder.BARRIER_INDIRECT);
-            encoder.dispatch(firstDispatchSize, 1, 1);
+            if (firstDispatchSize != 0) {//upstream ad5f6ee0: skip the zero-sized first dispatch
+                encoder.dispatch(firstDispatchSize, 1, 1);
+            }
             encoder.barrier(
                     ComputeEncoder.BARRIER_SHADER | ComputeEncoder.BARRIER_INDIRECT,
                     ComputeEncoder.BARRIER_SHADER | ComputeEncoder.BARRIER_INDIRECT);
@@ -625,5 +631,13 @@ public class HierarchicalOcclusionTraverser {
         this.scratchQueueA.free();
         this.scratchQueueB.free();
         this.hizSampler.close();
+    }
+
+    //Upstream 36f85026: top-level-node count on the F3 line when the TLN table is over half full
+    public void addDebug(List<String> debug) {
+        //Conditionally add debug: only once the top-level node table is over half full
+        if (this.topNodeCount>this.idx2topNodeMapping.length/2) {
+            debug.add("TLN#: " + this.topNodeCount);
+        }
     }
 }

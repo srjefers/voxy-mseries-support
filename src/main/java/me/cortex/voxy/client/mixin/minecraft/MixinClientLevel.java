@@ -2,6 +2,8 @@ package me.cortex.voxy.client.mixin.minecraft;
 
 import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.common.world.service.VoxelIngestService;
+import me.cortex.voxy.commonImpl.VoxyCommon;
+import me.cortex.voxy.commonImpl.VoxyInstance;
 import me.cortex.voxy.commonImpl.WorldIdentifier;
 import net.minecraft.client.multiplayer.ClientChunkCache;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -14,6 +16,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.dimension.DimensionType;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -56,7 +59,7 @@ public abstract class MixinClientLevel {
         //TODO: is this _really_ needed, we should have enough processing power to not need todo it if its only a
         // block removal
         if (!updated.isAir()) return;
-
+        if (VoxyCommon.getInstance()==null) return;
         if (!VoxyConfig.CONFIG.ingestEnabled) return;//Only ingest if setting enabled
 
         var self = (Level)(Object)this;
@@ -70,14 +73,17 @@ public abstract class MixinClientLevel {
         int z = pos.getZ()&15;
         if (x == 0 || x==15 || y==0 || y==15 || z==0||z==15) {//Update if there is a statechange on the boarder
             var csp = SectionPos.of(pos);
+            //Is not using voxy$cheekyGetChunk as dont think is need
+            var chunk = self.getChunk(pos.getX()>>4, pos.getZ()>>4, ChunkStatus.FULL, false);
+            if (chunk != null) {
+                var section = chunk.getSection(csp.y() - this.bottomSectionY);
+                var lp = self.getLightEngine();
 
-            var section = self.getChunk(pos).getSection(csp.y()-this.bottomSectionY);
-            var lp = self.getLightEngine();
+                var blp = lp.getLayerListener(LightLayer.BLOCK).getDataLayerData(csp);
+                var slp = lp.getLayerListener(LightLayer.SKY).getDataLayerData(csp);
 
-            var blp = lp.getLayerListener(LightLayer.BLOCK).getDataLayerData(csp);
-            var slp = lp.getLayerListener(LightLayer.SKY).getDataLayerData(csp);
-
-            VoxelIngestService.rawIngest(wi, section, csp.x(), csp.y(), csp.z(), blp==null?null:blp.copy(), slp==null?null:slp.copy());
+                VoxelIngestService.rawIngest(wi, section, csp.x(), csp.y(), csp.z(), blp == null ? null : blp.copy(), slp == null ? null : slp.copy());
+            }
         }
     }
 }
