@@ -6,6 +6,7 @@ import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import me.cortex.voxy.client.core.gl.shader.ShaderLoader;
 import me.cortex.voxy.common.Logger;
+import me.cortex.voxy.common.util.JomlCompat;
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
@@ -161,7 +162,7 @@ public class BudgetBufferRenderer {
     public static void render(Matrix4f matrix) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long addr = stack.nmalloc(64);
-            matrix.getToAddress(addr);
+            JomlCompat.put(matrix, addr);
             pushMatrix(addr, 64);
         }
         glDrawElements(GL_TRIANGLES, quadCount * 2 * 3, GL_UNSIGNED_SHORT, 0L);

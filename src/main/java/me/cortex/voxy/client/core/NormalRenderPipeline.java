@@ -12,6 +12,7 @@ import me.cortex.voxy.client.core.rendering.hierachical.HierarchicalOcclusionTra
 import me.cortex.voxy.client.core.rendering.hierachical.NodeCleaner;
 import me.cortex.voxy.client.core.rendering.post.FullscreenBlit;
 import me.cortex.voxy.client.core.rendering.util.DepthFramebuffer;
+import me.cortex.voxy.common.util.JomlCompat;
 import net.minecraft.client.Minecraft;
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryStack;
@@ -109,9 +110,9 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
         this.ssaoCompute.bind();
         try (var stack = MemoryStack.stackPush()) {
             long ptr = stack.nmalloc(4*4*4);
-            viewport.MVP.getToAddress(ptr);
+            JomlCompat.put(viewport.MVP, ptr);
             nglUniformMatrix4fv(3, 1, false, ptr);//MVP
-            viewport.MVP.invert(new Matrix4f()).getToAddress(ptr);
+            JomlCompat.put(viewport.MVP.invert(new Matrix4f()), ptr);
             nglUniformMatrix4fv(4, 1, false, ptr);//invMVP
         }
 

@@ -15,6 +15,7 @@ import me.cortex.voxy.client.core.rendering.util.DepthFramebuffer;
 import me.cortex.voxy.client.core.rendering.util.DownloadStream;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.util.TrackedObject;
+import me.cortex.voxy.common.util.JomlCompat;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.system.MemoryUtil;
@@ -479,8 +480,8 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         // Push PushMats { mat4 invProjMat; mat4 projMat; } into the UBO at BLIT_DEPTH_MATS_PUSH_BINDING.
         try (var stack = org.lwjgl.system.MemoryStack.stackPush()) {
             long addr = stack.nmalloc(BLIT_DEPTH_MATS_PUSH_SIZE);
-            new Matrix4f(viewport.MVP).invert().getToAddress(addr);                 // invProjMat
-            targetTransform.getToAddress(addr + 4 * 4 * 4);                          // projMat
+            JomlCompat.put(new Matrix4f(viewport.MVP).invert(), addr);                 // invProjMat
+            JomlCompat.put(targetTransform, addr + 4 * 4 * 4);                          // projMat
             blitShader.setBytes(BLIT_DEPTH_MATS_PUSH_BINDING, addr, BLIT_DEPTH_MATS_PUSH_SIZE);
         }
 

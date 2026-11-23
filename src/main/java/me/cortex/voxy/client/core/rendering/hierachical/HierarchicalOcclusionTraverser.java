@@ -20,6 +20,7 @@ import me.cortex.voxy.client.core.rendering.util.UploadStream;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.util.MemoryBuffer;
 import me.cortex.voxy.common.world.WorldEngine;
+import me.cortex.voxy.common.util.JomlCompat;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
@@ -339,10 +340,10 @@ public class HierarchicalOcclusionTraverser {
     private void uploadUniform(Viewport<?> viewport) {
         long ptr = UploadStream.INSTANCE.upload(this.uniformBuffer, 0, 1024);
 
-        viewport.MVP.getToAddress(ptr); ptr += 4 * 4 * 4;
-        viewport.section.getToAddress(ptr); ptr += 4 * 3;
+        JomlCompat.put(viewport.MVP, ptr); ptr += 4 * 4 * 4;
+        JomlCompat.put(viewport.section, ptr); ptr += 4 * 3;
         MemoryUtil.memPutInt(ptr, viewport.hiZBuffer.getPackedLevels()); ptr += 4;
-        viewport.innerTranslation.getToAddress(ptr); ptr += 4 * 3;
+        JomlCompat.put(viewport.innerTranslation, ptr); ptr += 4 * 3;
 
         float screenspaceAreaDecreasingSize = VoxyConfig.CONFIG.subDivisionSize * VoxyConfig.CONFIG.subDivisionSize;
         if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()

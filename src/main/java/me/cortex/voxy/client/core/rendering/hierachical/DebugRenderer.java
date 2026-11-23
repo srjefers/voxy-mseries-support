@@ -7,6 +7,7 @@ import me.cortex.voxy.client.core.gl.shader.ShaderType;
 import me.cortex.voxy.client.core.rendering.Viewport;
 import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
 import me.cortex.voxy.client.core.rendering.util.UploadStream;
+import me.cortex.voxy.common.util.JomlCompat;
 import net.minecraft.util.Mth;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -42,7 +43,7 @@ public class DebugRenderer {
         int sy = Mth.floor(viewport.cameraY)>>5;
         int sz = Mth.floor(viewport.cameraZ)>>5;
 
-        new Matrix4f(viewport.projection).mul(viewport.modelView).getToAddress(ptr); ptr += 4*4*4;
+        JomlCompat.put(new Matrix4f(viewport.projection).mul(viewport.modelView), ptr); ptr += 4*4*4;
 
         MemoryUtil.memPutInt(ptr, sx); ptr += 4;
         MemoryUtil.memPutInt(ptr, sy); ptr += 4;
@@ -50,7 +51,7 @@ public class DebugRenderer {
         MemoryUtil.memPutInt(ptr, viewport.width); ptr += 4;
 
         var innerTranslation = new Vector3f((float) (viewport.cameraX-(sx<<5)), (float) (viewport.cameraY-(sy<<5)), (float) (viewport.cameraZ-(sz<<5)));
-        innerTranslation.getToAddress(ptr); ptr += 4*3;
+        JomlCompat.put(innerTranslation, ptr); ptr += 4*3;
 
         MemoryUtil.memPutInt(ptr, viewport.height); ptr += 4;
     }

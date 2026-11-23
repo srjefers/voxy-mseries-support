@@ -459,6 +459,33 @@ tasks.register('testShaderCompiler', JavaExec) {
     errorOutput = System.err
 }
 
+// The Java 21 runtime the official Minecraft Launcher ships for 1.21.x on Apple Silicon (Microsoft
+// OpenJDK 21.0.7): the JVM players run Voxy on. The dev client's JVM is whatever runs Gradle.
+def launcherJava21 = file("${System.getProperty('user.home')}/Library/Application Support/minecraft/runtime/java-runtime-delta/mac-os-arm64/java-runtime-delta/jre.bundle/Contents/Home/bin/java")
+
+// H6 verification: JomlCompat's LWJGL writes against JOML's own get(ByteBuffer), byte for byte, and
+// getToAddress where it works. -PtestJava=launcher runs it on the launcher's Java 21 (where JOML's
+// getToAddress throws on macOS); -PtestJava=<path to bin/java> on any other JVM.
+tasks.register('testJomlCompat', JavaExec) {
+    group = 'verification'
+    description = 'Smoke-test JomlCompat: LWJGL writes vs JOML, byte for byte (H6).'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'me.cortex.voxy.tools.JomlCompatSmokeTest'
+    workingDir = rootProject.projectDir
+    standardOutput = System.out
+    errorOutput = System.err
+    def testJava = project.findProperty("testJava")
+    if (testJava) {
+        def exe = testJava == "launcher" ? launcherJava21 : file(testJava)
+        executable = exe.absolutePath
+        doFirst {
+            if (!exe.canExecute()) {
+                throw new GradleException("-PtestJava=${testJava}: no java executable at ${exe}")
+            }
+        }
+    }
+}
+
 // M3 verification: open a Metal render pass with clear-color load action and
 // confirm the command buffer commits + completes. Requires macos-arm64 host
 // with libvoxy_metal.dylib built (./gradlew buildMetalNative).
