@@ -92,13 +92,18 @@ else
     printf 'Metal device: not found. Voxy did not start its Metal backend.\n'
 fi
 
+# Metal is on by default; jars built before that change needed -Dvoxy.forceMetal=true, and their
+# "disabled" line says "Set VOXY_FORCE_METAL=1".
 if [ "$(count '[VOXY_FORCE_METAL] Voxy enabled')" -gt 0 ]; then
-    printf 'Voxy opt-in:  enabled (Metal render path is on)\n'
+    printf 'Voxy Metal:   enabled (Metal render path is on)\n'
+elif [ "$(count 'Set VOXY_FORCE_METAL=1')" -gt 0 ]; then
+    printf 'Voxy Metal:   WARN: Voxy disabled itself. This jar is older than the on-by-default change: add -Dvoxy.forceMetal=true to the JVM arguments, or use a newer jar.\n'
+    WARNS=$((WARNS + 1))
 elif [ "$(count 'Voxy disabled on')" -gt 0 ]; then
-    printf 'Voxy opt-in:  WARN: Voxy disabled itself. Add -Dvoxy.forceMetal=true to the JVM arguments.\n'
+    printf 'Voxy Metal:   WARN: turned off with -Dvoxy.forceMetal=false or VOXY_FORCE_METAL=0. Remove it to use Voxy.\n'
     WARNS=$((WARNS + 1))
 else
-    printf 'Voxy opt-in:  no opt-in line found\n'
+    printf 'Voxy Metal:   no enabled/disabled line found (not a Metal Mac, or Voxy did not start)\n'
 fi
 
 joml=$(LC_ALL=C grep -a -m1 -F '[JomlCompat]' "$L" | sed -E 's/.*\[JomlCompat\] //' | cut -c1-160)

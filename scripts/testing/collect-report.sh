@@ -131,7 +131,7 @@ newest() {
     LC_ALL=C grep -a -E '^[[:space:]]+- (minecraft|fabricloader|fabric-api|java|voxy|sodium|iris|voxyworldgenv2) ' "$L" | sed -E 's/^[[:space:]]+/  /'
     LC_ALL=C grep -a -m1 -F 'Metal device:' "$L" | sed -E 's/.*(Metal device:)/\1/'
     LC_ALL=C grep -a -m1 -E 'Render backend: ' "$L" | sed -E 's/.*(Render backend: )/\1/'
-    LC_ALL=C grep -a -m1 -E '\[VOXY_FORCE_METAL\] Voxy enabled|Voxy disabled on' "$L" | sed -E 's/.*(\[VOXY_FORCE_METAL\] Voxy enabled on [A-Z]+ backend|\[M9 TRANSITIONAL\] Voxy disabled on [A-Z]+ backend).*/\1/'
+    LC_ALL=C grep -a -m1 -E '\[VOXY_FORCE_METAL\] Voxy enabled|Voxy disabled on' "$L" | sed -E 's/.*(\[VOXY_FORCE_METAL\] Voxy enabled on [A-Z]+ backend|\[(M9 TRANSITIONAL|VOXY_FORCE_METAL)\] Voxy disabled on [A-Z]+ backend).*/\1/'
     LC_ALL=C grep -a -m1 -F 'OpenGL Renderer:' "$L" | sed -E 's/.*(OpenGL Renderer:)/\1/'
     echo
     echo "== All mods in the log (top level)"
