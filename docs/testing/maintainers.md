@@ -1,13 +1,12 @@
 # GitHub setup for public testing
 
 These are the steps the repository owner does once on GitHub. Steps 1 to 4
-are required, in this order. Steps 5 and 6 are optional. PR #21 must be
-merged into `dev` before step 2.
+are required, in this order. Steps 5 and 6 are optional.
 
 | # | Step | Required | gh CLI |
 |---|---|---|---|
 | 1 | Create the `testing` label | Yes | Yes |
-| 2 | Merge the testing kit into `dev` | Yes | Yes (PR) |
+| 2 | Merge the code of PR #21 into `dev` | Yes | Yes (PR) |
 | 3 | Publish a pre-release with the jar | Yes | Yes |
 | 4 | Post the call for testers and pin it | Yes | Yes |
 | 5 | Turn on Discussions with a Testing category | Optional | Partly |
@@ -36,14 +35,19 @@ gh label create testing -R srjefers/voxy-mseries-support \
 
 Web UI: *Issues > Labels > New label*. Name `testing`, color `#1D76DB`.
 
-## 2. Merge the testing kit into `dev` (required)
+## 2. Merge the code of PR #21 into `dev` (required)
 
-GitHub reads issue forms only from the default branch, `dev`. `dev` is
-push-protected, so the kit goes in through a PR. The kit is part of PR #21,
-so merging #21 is this step. The guides link to README sections, docs and
-log lines that #21 adds, so they belong in the same merge.
+GitHub reads issue forms only from the default branch, `dev`, and `dev` is
+push-protected, so the kit went in first through its own docs-only PR from
+the branch `test/document-testing`: the form, the guides, the scripts and
+the README sections they link to. That PR changes no code of the mod.
 
-Files the kit adds:
+The guides describe the log lines, the macOS 13 floor and the release-jar
+fixes of PR #21 (branch `feature/lod-shadows-perf-stress`). A jar built
+from `dev` without #21 lacks them, so merge #21 before you build the jar in
+step 3.
+
+Files the kit added:
 
 - `.github/ISSUE_TEMPLATE/test-report.yml`: the report form.
 - `.github/ISSUE_TEMPLATE/config.yml`: keeps blank issues and adds a
