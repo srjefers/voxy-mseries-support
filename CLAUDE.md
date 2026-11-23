@@ -41,6 +41,9 @@ cd native/metal && ./build.sh [Debug|Release]   # rebuild libvoxy_metal.dylib st
   `-PrunJava=27` or `-PrunJava=<path>` picks another. `-PnoIris=true` drops Iris from the
   dev runtime. The closest to a player:
   `VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 ./gradlew runClient -PnoIris=true -PrunXmx=6G`.
+- **`./gradlew runProductionClient`** runs the release jar the way a launcher does
+  (intermediary names, Fabric API + Sodium 0.8.1, no Iris, Java 21, `run/`). `runClient`
+  uses Mojang names, so only this run shows reflection-by-name bugs (H7).
 
 ### Tests
 

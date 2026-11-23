@@ -72,8 +72,21 @@ One difference stays: names. `runClient` runs on Mojang's names, and the
 release jar runs on intermediary names. Code that looks up a Minecraft class,
 field or method by its name works in the dev client and fails in the release
 jar (H7: `getDeclaredField("firstFboId")`). Use the access widener or a mixin
-accessor instead. Before a release, test the built jar in the launcher
-(`P8-LAUNCHER-CLEAN` in the developer track).
+accessor instead.
+
+**The release jar itself: `runProductionClient`.** Loom's production run
+task starts the vanilla client on intermediary names through Fabric Loader,
+like a launcher. It loads the jar from `remapJar`, Fabric API and Sodium 0.8.1
+(`productionRuntimeMods`), and no Iris. It runs on Java 21 with
+`-Dvoxy.forceMetal=true`, in `run/`:
+
+```bash
+VOXY_QUICKPLAY="voxytest" ./gradlew runProductionClient -PrunXmx=6G
+```
+
+It is the only local run that shows H7-class bugs. Before a release, still
+test the built jar in the launcher (`P8-LAUNCHER-CLEAN` in the developer
+track).
 
 ## Debugging workflow
 

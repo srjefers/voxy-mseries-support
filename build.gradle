@@ -156,6 +156,32 @@ tasks.named { it == 'runClient' }.configureEach { task ->
     task.doFirst { logger.lifecycle(">>> runClient JVM: ${jvm}${irisNote}") }
 }
 
+// The release jar, run the way a launcher runs it (Loom's ClientProductionRunTask): the vanilla
+// client on intermediary names through Fabric Loader's KnotClient, the remapped jar from remapJar,
+// Fabric API and Sodium 0.8.1 from productionRuntimeMods, no Iris, Java 21, -Dvoxy.forceMetal=true,
+// game folder run/. It shows what runClient cannot: code that looks up a Minecraft member by its
+// Mojang name works in runClient and fails here (H7). VOXY_QUICKPLAY and -PrunXmx work as for
+// runClient. Java 21 is found by Gradle toolchains: the JVM that runs Gradle when it is a 21.
+dependencies {
+    // Not transitive: the fabric-api jar nests its modules (jar-in-jar), as in a launcher's mods folder.
+    productionRuntimeMods("net.fabricmc.fabric-api:fabric-api:${project.fabric_version}") { transitive = false }
+    productionRuntimeMods("maven.modrinth:sodium:mc1.21.11-0.8.1-fabric") { transitive = false }
+}
+tasks.register('runProductionClient', net.fabricmc.loom.task.prod.ClientProductionRunTask) {
+    group = 'fabric'
+    description = 'Runs the release jar like a launcher: intermediary names, Fabric API, Sodium, no Iris, Java 21.'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+    jvmArgs.add("-Dvoxy.forceMetal=true")
+    def xmx = project.findProperty("runXmx") ?: System.getenv("VOXY_RUN_XMX")
+    if (xmx) {
+        jvmArgs.add("-Xmx${xmx}")
+    }
+    def world = System.getenv("VOXY_QUICKPLAY")
+    if (world) {
+        programArgs.addAll("--quickPlaySingleplayer", world)
+    }
+}
+
 def modRuntimeOnlyMsk = {arg->}
 if (!isInGHA) {
     modRuntimeOnlyMsk = { arg ->
