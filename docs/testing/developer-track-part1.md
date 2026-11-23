@@ -27,6 +27,9 @@ Every test keeps its ID from the test plan. Use that ID in your report.
   Metal library, `libvoxy_metal.dylib`.
 - A JDK 21 or newer for arm64. A JRE is not enough, because the native build
   needs `jni.h`.
+- Gradle must run on Java 21 to 25. Gradle 9.2.1 does not run on Java 26 or
+  newer: a fresh clone, or any change to `build.gradle`, fails with
+  `Unsupported class file major version`.
 - Git, and internet access. The first build downloads Minecraft and the dev
   mods.
 
@@ -39,7 +42,16 @@ ls "$(/usr/libexec/java_home)/include/jni.h"
 ```
 
 The version must be 21 or newer, `os.arch` must be `aarch64`, and `ls` must
-find `jni.h`.
+find `jni.h`. If the version is 26 or newer, run every `./gradlew` command on
+a Java 21. The official launcher's runtime works:
+
+```bash
+J21="$HOME/Library/Application Support/minecraft/runtime/java-runtime-delta/mac-os-arm64/java-runtime-delta/jre.bundle/Contents/Home"
+./gradlew -Dorg.gradle.java.home="$J21" build
+```
+
+Or put `org.gradle.java.home=<that path>` in `~/.gradle/gradle.properties`
+once. Details in [Which Java runs what](../DEVELOPMENT.md#which-java-runs-what).
 
 ### Get the code
 
@@ -81,12 +93,19 @@ git status --short
 
 The dev client already includes Sodium `mc1.21.11-0.8.1`, Iris 1.10.7,
 Fabric API, Lithium, Mod Menu, Chunky and spark. You do not install mods by
-hand. Iris is always loaded, so "no pack" means shaders turned off with K.
+hand. Iris is loaded unless you add `-PnoIris=true`, so in these tests "no
+pack" means shaders turned off with K.
+
+The dev client runs on the official launcher's Java 21, the Java players use,
+when the launcher is installed. Gradle prints `>>> runClient JVM: ...` and
+the log says `- java 21`. `-PrunJava=27` or `-PrunJava=<path to java>` picks
+another Java.
 
 | What | Command |
 |---|---|
 | Start the game | `VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G` |
 | Join the test world on launch | `VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G` |
+| Like a player without Iris | `VOXY_FORCE_METAL=1 ./gradlew runClient -PnoIris=true -PrunXmx=6G` |
 
 - `VOXY_FORCE_METAL=1` is required. Without it, Voxy turns itself off and you
   see plain Sodium.
@@ -253,8 +272,8 @@ writes must match JOML's on the Java 21 that players run.
 
 **Needs.**
 
-- Xcode Command Line Tools, CMake 3.20 or newer, and a JDK 21 or newer. See
-  [Requirements](#requirements).
+- Xcode Command Line Tools, CMake 3.20 or newer, and a JDK 21 or newer, with
+  Gradle on Java 21 to 25. See [Requirements](#requirements).
 - The game closed.
 - No uncommitted changes to tracked files. Otherwise the jar name ends in
   `-dirty`.
@@ -297,7 +316,8 @@ Without the official launcher, give the path of any Java 21 `java` instead:
    names a mixin class that uses an optional mod (Iris, Nvidium, Flashback,
    Chunky, Vivecraft or Mod Menu) outside that mod's own mixin package. Without
    that mod, such a jar crashes on every world join, as P8 found with Iris
-   (H5). The dev client always has Iris, so it never shows this.
+   (H5). The dev client loads Iris by default, so it shows this only with
+   `-PnoIris=true`.
 8. Read the JOML check. The `java` line must say 21, and the last line must
    say `== PASS`. It compares Voxy's matrix and vector writes with JOML's, byte
    for byte, on the Java that players use. The dev client may run on a newer

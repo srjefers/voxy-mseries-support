@@ -14,7 +14,9 @@ rates and for what smaller Macs need.
 
 ## Quick start (development environment)
 
-Requirements: macOS on Apple Silicon, JDK 21+, this repository.
+Requirements: macOS on Apple Silicon, a JDK 21 to 25 to run Gradle (Gradle 9.2.1 does not
+run on Java 26 or newer; see [Which Java runs what](docs/DEVELOPMENT.md#which-java-runs-what)),
+this repository.
 
 ```bash
 VOXY_FORCE_METAL=1 ./gradlew runClient

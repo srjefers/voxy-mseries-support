@@ -32,6 +32,15 @@ cd native/metal && ./build.sh [Debug|Release]   # rebuild libvoxy_metal.dylib st
 - **Runtime shaders** are GLSL→SPIR-V→MSL compiled on first use and cached in
   `~/.voxy/shader-cache` keyed by source hash. Delete the directory to force recompilation.
 - **Gradle daemon is disabled** (`org.gradle.daemon=false`); builds are cold each time.
+- **Gradle 9.2.1 runs on Java 17–25 only.** On JDK 26+ any build that must compile
+  `build.gradle` fails (`Unsupported class file major version`). Run it on a Java 21, e.g.
+  `./gradlew -Dorg.gradle.java.home="<launcher Java 21 Home>" …` (path and details in
+  `docs/DEVELOPMENT.md`, "Which Java runs what"). Don't set `JAVA_HOME` to the launcher
+  runtime: the native build takes `jni.h` from it.
+- **`runClient` runs on the official launcher's Java 21** (the players' JVM) by default;
+  `-PrunJava=27` or `-PrunJava=<path>` picks another. `-PnoIris=true` drops Iris from the
+  dev runtime. The closest to a player:
+  `VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 ./gradlew runClient -PnoIris=true -PrunXmx=6G`.
 
 ### Tests
 
@@ -44,7 +53,9 @@ smoke tests (one per Metal/Vulkan milestone) in `me.cortex.voxy.tools`. Run one 
 ./gradlew testMetalCompute       # compute dispatch + SSBO writeback
 ./gradlew testMetalIcb           # MTLIndirectCommandBuffer (the MDIC primitive)
 ./gradlew testIOSurfaceBridge    # IOSurface-backed MTLTexture allocation
+./gradlew testJomlCompat -PtestJava=launcher   # JomlCompat vs JOML byte for byte, on the players' Java 21
 # also: testMetalRender, testMetalVertexBuffer, testVulkan{Loader,Compute,Triangle,Clear}
+bash scripts/testing/check-mixin-optional-refs.sh   # after ./gradlew build: no optional-mod refs in mixins
 ```
 
 Most require a macOS aarch64 host with `libvoxy_metal.dylib` built. Vulkan ones use
@@ -122,6 +133,17 @@ These are non-obvious and were each paid for with a crash or invisible-render bu
 - **Don't trust GL state at the Sodium SOLID hook.** The viewport can be polluted
   (16×16 lightmap pass) and MC's main RT does not contain the sky at composite
   time. Size/target from `Minecraft.getMainRenderTarget()`.
+- **No optional-mod types (Iris, Nvidium, Flashback, Chunky, Vivecraft, Mod Menu) in a
+  mixin outside that mod's own mixin package**, not even on a dead path: Mixin resolves
+  every referenced class when it applies the mixin, and without the mod the target class
+  fails to load (H5: every world join crashed without Iris). Move such code to a plain
+  class (`MetalVxResolveHooks`).
+- **No JOML `getToAddress`; use `JomlCompat.put`.** On macOS Java 21 (the launcher's)
+  `MemUtilUnsafe` cannot initialise and `getToAddress` throws (H6). The dev client on
+  JDK 27 never showed it.
+- **No reflection by name on Minecraft classes.** The release jar runs on intermediary
+  names; strings are not remapped (H7: LODs invisible). Use `voxy.accesswidener` or a
+  mixin accessor.
 
 ## Conventions
 

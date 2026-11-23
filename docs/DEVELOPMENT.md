@@ -21,6 +21,60 @@ VOXY_FORCE_METAL=1 ./gradlew runClient   # dev client with the Metal path enable
   `~/.voxy/shader-cache` keyed by source hash — delete the directory to force
   recompilation (any `.glsl` edit produces new cache entries automatically).
 
+### Which Java runs what
+
+**Gradle itself: Java 17 to 25.** Gradle 9.2.1 compiles `build.gradle` with a
+Groovy that cannot read Java 26+ class files. On JDK 27 every build that has
+to compile the script (a fresh clone, or any change to `build.gradle`) fails
+with `Unsupported class file major version 71`. Gradle only runs on Java 26
+from 9.4 and on Java 27 from 9.8. Until the wrapper moves, if `java -version`
+says 26 or newer, run Gradle on a Java 21. The official launcher's runtime
+works and includes `javac`:
+
+```bash
+J21="$HOME/Library/Application Support/minecraft/runtime/java-runtime-delta/mac-os-arm64/java-runtime-delta/jre.bundle/Contents/Home"
+./gradlew -Dorg.gradle.java.home="$J21" build
+```
+
+To make that permanent, put `org.gradle.java.home=<that path>` in
+`~/.gradle/gradle.properties` (it applies to every Gradle build of your user),
+or install a JDK 21 (`brew install openjdk@21`) and point `org.gradle.java.home`
+at it. Do not set `JAVA_HOME` to the launcher's runtime: `native/metal/build.sh`
+takes `jni.h` from `JAVA_HOME`, and that runtime has no `include/`. With
+`JAVA_HOME` unset, the native build finds a full JDK through
+`/usr/libexec/java_home`.
+
+**The dev client: the launcher's Java 21.** `runClient` runs Minecraft on
+the official launcher's Java 21 (Microsoft OpenJDK 21.0.7), the JVM players
+use. Before, it ran on whatever JDK ran Gradle (JDK 27 on the reference Mac),
+which hid H6: JOML's `getToAddress` throws on macOS Java 21 only. Gradle
+prints the choice as `>>> runClient JVM: ...`; Fabric logs `- java 21`.
+
+| Option | Dev client JVM |
+|---|---|
+| (none) | The launcher's Java 21; a JDK 21 toolchain if the launcher is not installed |
+| `-PrunJava=27` | An installed JDK 27 found by Gradle toolchains (the JDK used before) |
+| `-PrunJava=<path to bin/java>` | Any java binary |
+
+**Without Iris: `-PnoIris=true`.** The dev client loads Iris by default, so
+it never showed H5 (a mixin that referenced Iris crashed every world join
+without it). `-PnoIris=true` leaves Iris and its nested libraries out of the
+dev runtime only. Compiling and the built jar are unchanged.
+
+**The closest the dev client gets to a player:**
+
+```bash
+VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 \
+  ./gradlew runClient -PnoIris=true -PrunXmx=6G
+```
+
+One difference stays: names. `runClient` runs on Mojang's names, and the
+release jar runs on intermediary names. Code that looks up a Minecraft class,
+field or method by its name works in the dev client and fails in the release
+jar (H7: `getDeclaredField("firstFboId")`). Use the access widener or a mixin
+accessor instead. Before a release, test the built jar in the launcher
+(`P8-LAUNCHER-CLEAN` in the developer track).
+
 ## Debugging workflow
 
 The loop that produced every fix in this port:
@@ -122,6 +176,17 @@ development:
   of negative ints (use multiplication), no `(v<<L)>>R` sign-extension
   idioms (use `bitfieldExtract`), no boolean-select `mix()` overloads
   (use ternaries) in shaders that are live on the Metal path.
+- **No optional-mod types in a mixin outside that mod's mixin package.**
+  Mixin looks up every class a mixin body references when it applies the
+  mixin, so a single Iris reference in a Sodium mixin crashed every world
+  join without Iris (H5). Put that code in a plain class
+  (`MetalVxResolveHooks`); `scripts/testing/check-mixin-optional-refs.sh`
+  checks the built jar.
+- **No JOML `getToAddress`; use `JomlCompat.put`.** On macOS Java 21 JOML's
+  `MemUtilUnsafe` cannot initialise and `getToAddress` throws (H6).
+  `./gradlew testJomlCompat -PtestJava=launcher` checks the replacement.
+- **No reflection by name on Minecraft classes.** The release jar runs on
+  intermediary names (H7). Use `voxy.accesswidener` or a mixin accessor.
 
 ## Conventions
 

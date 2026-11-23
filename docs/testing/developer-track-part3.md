@@ -59,8 +59,8 @@ VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G
 
 ### Shader pack, keys and screenshots
 
-- Iris is always loaded in the dev client. "No pack" means shaders turned off
-  with K.
+- Iris is loaded in the dev client unless you add `-PnoIris=true`, which these
+  tests do not use. "No pack" means shaders turned off with K.
 - K turns shaders on or off. The chat says "Toggled shaders to ...". O opens
   the pack list. R reloads shaders.
 - The BSL tests use BSL v10.1.3. Download it from its official page and put

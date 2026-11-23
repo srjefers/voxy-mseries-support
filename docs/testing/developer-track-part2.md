@@ -77,8 +77,9 @@ Debug variables used in this part:
 
 ### Shader pack, keys and screenshots
 
-- Iris 1.10.7 is always loaded in the dev client. Phases 3 and 5 run with BSL
-  v10.1.3 on. Put `BSL_v10.1.3.zip` in `run/shaderpacks/`, as in part 1.
+- Iris 1.10.7 is loaded in the dev client (unless you add `-PnoIris=true`,
+  which these tests do not use). Phases 3 and 5 run with BSL v10.1.3 on.
+  Put `BSL_v10.1.3.zip` in `run/shaderpacks/`, as in part 1.
 - `P3-IRIS-RECREATE` also needs Complementary Reimagined r5.8.1. Download it
   from its official page and put `ComplementaryReimagined_r5.8.1.zip` in
   `run/shaderpacks/`.
