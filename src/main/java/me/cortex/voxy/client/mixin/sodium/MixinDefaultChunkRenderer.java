@@ -158,55 +158,22 @@ public abstract class MixinDefaultChunkRenderer extends ShaderChunkRenderer {
                 // viewport == null: setupViewport skipped a 0x0 frame (minimised window, Iris resize).
                 // The resolve passes below dereference it, and the bridges hold the previous frame.
                 if (viewport != null && pipeline != null && pipeline.metalBridge() != null) {
+                    // The two vx material branches name Iris types, so their bodies live in
+                    // MetalVxResolveHooks: a mixin body that references an optional mod's class
+                    // fails to apply when that mod is missing (H5). Keep Iris types out of here.
                     if (pipeline.vxOpaqueMaterialMode()
                             && pipeline instanceof me.cortex.voxy.client.core.MetalVxRenderPipeline mvp
                             && pipeline.metalVxOpaque0() != null
                             && pipeline.metalDepthBridge() != null) {
-                        // FULL material path (A/B only, VOXY_VX_MATERIAL_OPAQUE=1): run the
-                        // pack's voxy_opaque AND voxy_translucent over the material g-buffer.
-                        // Darkens far opaque (BSL deferred shading of grazing LOD) — not the
-                        // mergeable shape; kept for comparison.
-                        var irisPipe = net.irisshaders.iris.Iris.getPipelineManager().getPipelineNullable();
-                        if (irisPipe instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline irp) {
-                            int oP0 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxOpaque0());
-                            int oP1 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxOpaque1());
-                            int oP2 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxOpaque2());
-                            int oD  = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalDepthBridge());
-                            int tP0 = pipeline.metalVxTrans0() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans0()) : 0;
-                            int tP1 = pipeline.metalVxTrans1() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans1()) : 0;
-                            int tP2 = pipeline.metalVxTrans2() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans2()) : 0;
-                            int tD  = pipeline.metalDepthTransBridge() != null ? me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalDepthTransBridge()) : 0;
-                            me.cortex.voxy.client.core.util.MetalVxResolvePass.resolve(
-                                    mvp.getPipelineData(), irp, viewport.projection, viewport.modelView,
-                                    oP0, oP1, oP2, oD, tP0, tP1, tP2, tD,
-                                    viewport.width, viewport.height);
-                        }
+                        // FULL material path (default; VOXY_VX_MATERIAL_OPAQUE=0 selects TRANS-ONLY).
+                        me.cortex.voxy.client.core.util.MetalVxResolveHooks.resolveFullMaterial(mvp, viewport);
                     } else if (pipeline.vxMaterialMode()
                             && pipeline instanceof me.cortex.voxy.client.core.MetalVxRenderPipeline mvp2
                             && pipeline.metalVxTrans0() != null
                             && pipeline.metalDepthTransBridge() != null) {
-                        // TRANS-ONLY (issue #11, the mergeable shape): opaque LODs go through
-                        // the proven Phase-B inject (bridge colour + vxDepthTexOpaque, untouched
-                        // vs dev); ONLY the translucent (water) layer runs voxy_translucent over
-                        // its material g-buffer → colortex16, so water gets real BSL shading.
-                        // 4th arg (transDepthBridge, non-null by the branch guard): the
-                        // inject's seafloor water-column dim needs the LOD trans depth to
-                        // reconstruct the water column above each opaque pixel. transBridge
-                        // stays null, so the Phase-D passthrough (which needs BOTH) stays
-                        // off and colortex16 is still written only by resolveTranslucentOnly.
-                        me.cortex.voxy.client.core.util.VxContractInjector.inject(viewport,
-                                pipeline.metalBridge(), pipeline.metalDepthBridge(), null,
-                                pipeline.metalDepthTransBridge());
-                        var irisPipe = net.irisshaders.iris.Iris.getPipelineManager().getPipelineNullable();
-                        if (irisPipe instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline irp) {
-                            int tP0 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans0());
-                            int tP1 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans1());
-                            int tP2 = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalVxTrans2());
-                            int tD  = me.cortex.voxy.client.core.interop.IOSurfaceBridgeCompositor.acquireAuxRectTex(pipeline.metalDepthTransBridge());
-                            me.cortex.voxy.client.core.util.MetalVxResolvePass.resolveTranslucentOnly(
-                                    mvp2.getPipelineData(), irp, tP0, tP1, tP2, tD,
-                                    viewport.width, viewport.height);
-                        }
+                        // TRANS-ONLY (issue #11, the mergeable shape): Phase-B inject for opaque,
+                        // voxy_translucent over the water material g-buffer.
+                        me.cortex.voxy.client.core.util.MetalVxResolveHooks.resolveTranslucentOnly(mvp2, viewport);
                     } else if (IrisUtil.vxContractActive()) {
                         // Native vx contract (milestone issue #9): hand the
                         // LOD depth to the pack's vxDepthTexOpaque/Trans
