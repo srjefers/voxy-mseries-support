@@ -1,5 +1,5 @@
 <!-- Title: Call for testers: Voxy far terrain on Apple Silicon Macs -->
-<!-- Before posting: replace "link to be added" with the pre-release URL. -->
+<!-- The link points at the v0.2.8-alpha-metal.1 pre-release. For a newer build, update it. -->
 
 **Voxy for Apple Silicon** is a fork of [Voxy](https://github.com/MCRcortex/voxy), the Minecraft mod that draws far terrain all the way to the horizon. Upstream Voxy needs OpenGL 4.6, which macOS does not have. This fork draws the far terrain with Metal instead. It is playable today, but it has been tested on one Mac only, an M4 Max. We need yours too.
 
@@ -24,7 +24,7 @@ The first test takes about 30 minutes: set up a clean launcher profile, play a l
 ### How to help
 
 1. Read the [testing guide](https://github.com/srjefers/voxy-mseries-support/blob/dev/docs/testing/README.md). Players follow the [player guide](https://github.com/srjefers/voxy-mseries-support/blob/dev/docs/testing/player-track.md), which shows every launcher step.
-2. Download the test jar from the pre-release: link to be added. Remove any other Voxy jar from your mods folder.
+2. Download the test jar from the pre-release: <https://github.com/srjefers/voxy-mseries-support/releases/tag/v0.2.8-alpha-metal.1>. Remove any other Voxy jar from your mods folder.
 3. Install Fabric Loader 0.18.2, Fabric API 0.140.0+1.21.11 and Sodium `mc1.21.11-0.8.1` (exactly this version). Iris 1.10.3 is optional; 1.10.4 to 1.10.7 break the Video Settings button with Sodium 0.8.1. Do not install voxyworldgenv2.
 4. In your launcher profile, raise the memory to `-Xmx6G` (`-Xmx4G` on a 16 GB Mac). Voxy needs no other JVM argument: it turns on by itself.
 5. Start with test PT-01 in the player guide, then send a [test report](https://github.com/srjefers/voxy-mseries-support/issues/new?template=test-report.yml).

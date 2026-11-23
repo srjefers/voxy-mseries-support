@@ -48,7 +48,7 @@ maintainers' full test plan, so your result lands in the right place.
 | Fabric Loader | 0.18.2 | All tests | The Fabric Installer or your launcher |
 | Fabric API | `0.140.0+1.21.11` | All tests | <https://modrinth.com/mod/fabric-api> |
 | Sodium | `mc1.21.11-0.8.1`, file `sodium-fabric-0.8.1+mc1.21.11.jar` | All tests | <https://modrinth.com/mod/sodium> |
-| Voxy for Apple Silicon | The newest pre-release, file `voxy-0.2.8-alpha-<commit>.jar` | All tests | <https://github.com/srjefers/voxy-mseries-support/releases> |
+| Voxy for Apple Silicon | The newest pre-release, file `voxy-0.2.8-alpha-metal.<n>-<commit>.jar` | All tests | <https://github.com/srjefers/voxy-mseries-support/releases> |
 | Iris | `1.10.3+1.21.11-fabric`, file `iris-fabric-1.10.3+mc1.21.11.jar` | Optional: PT-03 and the shader steps | <https://modrinth.com/mod/iris> |
 | BSL Shaders | 10.1.3, file `BSL_v10.1.3.zip` | Optional, with Iris | <https://modrinth.com/shader/bsl-shaders> |
 | Chunky | 1.4.55, file `Chunky-Fabric-1.4.55.jar` | Optional: PT-11 | <https://modrinth.com/plugin/chunky> |
@@ -67,7 +67,7 @@ Read these before you download:
   *Versions* tab and pick `1.10.3+1.21.11-fabric`. Iris 1.10.4 to 1.10.7 are
   made for a newer Sodium. They start, but with Sodium 0.8.1 the *Video
   Settings* button does nothing, so you cannot open Voxy's settings. Iris
-  1.10.3 is new to this test plan: PT-03 is where it gets tested.
+  1.10.3 was tested in game with Voxy and BSL on 2026-11-23.
 - BSL 10.1.3 is the tested shader pack. Other packs are welcome too: say
   which one and its version in your report.
 - Do not install voxyworldgenv2 2.2.2. It is incompatible.
@@ -550,8 +550,8 @@ that mod in your report.
    - `I/S/AWSC: ...`: Voxy's ingest queue, save queue and active sections.
    - `UC/GC,#N: ...`: far terrain memory used and capacity in MB, then the
      section count.
-   - `voxy-0.2.8-alpha-<commit>` in green. The commit must match your jar's
-     file name.
+   - `voxy-0.2.8-alpha-metal.<n>-<commit>` in green. The version and commit
+     must match your jar's file name.
 4. Press F2 with F3 open. Quit the game.
 5. Add `-Dvoxy.forceMetal=false` at the end of the Java arguments.
 6. Launch and enter `voxytest`. Check three things:

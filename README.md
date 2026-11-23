@@ -1,6 +1,8 @@
 # Voxy — Apple M-Series Support
 
 > **Status: ALPHA** — playable on Apple Silicon, under active development.
+> First public pre-release: **0.2.8-alpha-metal.1** (Minecraft 1.21.11), on the
+> [Releases](https://github.com/srjefers/voxy-mseries-support/releases) page.
 
 A fork of [Voxy](https://github.com/MCRcortex/voxy) (the LOD rendering mod for
 Minecraft) ported to run on **Apple M-series GPUs**. Upstream Voxy requires
@@ -34,9 +36,11 @@ launcher profile with `-Xmx6G` would see, cap it the same way:
 ./gradlew runClient -PrunXmx=6G
 ```
 
-To use the mod in a launcher profile, build the jar and drop it in `mods/`
-together with the matching Sodium version. Voxy turns on by itself; see
-[Java memory](#java-memory-and-turning-voxy-off) for the recommended heap:
+To use the mod in a launcher profile, download the jar from
+[Releases](https://github.com/srjefers/voxy-mseries-support/releases) (or build
+it) and drop it in `mods/` together with the matching Sodium version. Voxy
+turns on by itself; see [Java memory](#java-memory-and-turning-voxy-off) for
+the recommended heap:
 
 ```bash
 ./gradlew build    # output: build/libs/voxy-<version>.jar
@@ -74,15 +78,18 @@ install with Sodium 0.8.1, but each one changes Sodium's *Video Settings* screen
 newer Sodium (`renderIconWithSpacing` gained a parameter in Sodium 0.8.2). With Sodium
 0.8.1 that screen fails to load, so the button does nothing and Voxy's settings, which
 live there, cannot be opened. Sodium 0.8.1 refuses Iris 1.10.2 and older at launch.
-Iris 1.10.3 has passed a static check against Sodium 0.8.1 and against Voxy's own Iris
-code. It has not been tested in game with Voxy yet: the dev client and every test so far
-used Iris 1.10.7, where this failure does not show.
+Iris 1.10.3 was tested in game with Voxy and BSL 10.1.3 on 2026-11-23, in the official
+launcher with its default JVM arguments: *Video Settings* and Voxy's page open, LODs take
+the pack's shading, and the log check passes.
 
 ### Java memory and turning Voxy off
 
 Voxy needs no JVM arguments: on an Apple Silicon Mac it turns on by itself.
-For the Java heap, change the launcher's default `-Xmx2G` in the profile's
-JVM arguments (pick the value from the table below):
+The launcher's default `-Xmx2G` is enough to play: in testing on 2026-11-23
+the Java heap stayed below 90 % of 2 GB with and without BSL, because Voxy
+keeps its LOD geometry outside the Java heap. More heap helps with Chunky
+pre-generation and very large render distances. To raise it, change `-Xmx2G`
+in the profile's JVM arguments (pick the value from the table below):
 
 ```
 -Xmx6G
@@ -99,7 +106,7 @@ need `-Dvoxy.forceMetal=true`.
 |---|---|---|---|
 | Chip (GPU cores) | M1–M4 base, 7–10 cores† | M1–M4 Pro, 14–20 cores† | M4 Max, 40 cores |
 | Unified memory | 16 GB | 24–32 GB | 48 GB |
-| Java heap | `-Xmx4G` | `-Xmx6G` | `-Xmx6G` (the dev run defaulted to 12 GB) |
+| Java heap | `-Xmx2G` (the launcher's default) | `-Xmx4G`–`-Xmx6G` | `-Xmx2G` and `-Xmx6G` (the dev run defaulted to 12 GB) |
 | Minecraft render distance | 8–12 chunks | 12–16 chunks | 32 chunks |
 | Voxy render distance (menu value) | 256–512 chunks (512 is the default) | 512–1024 chunks | 2016 chunks |
 | Voxy *Pixels² of subdivision size* | 128 | 96 | 96 |
@@ -234,13 +241,34 @@ look alarming but are not errors.
 - **Translucent, animated water** with correct underwater behavior (fog murk,
   no X-ray, stable visuals while swimming)
 - Correct LOD↔terrain boundary (chunk-bound depth masking)
-- Spyglass / zoomed FOV, screenshots, render-distance changes
+- Screenshots and render-distance changes
 - Frame rates measured on an M4 Max are in
   [System requirements](#system-requirements) (synchronous GPU model — more
   headroom planned)
 
 ## Known issues / not yet done
 
+Seen during the on-device test campaign for 0.2.8-alpha-metal.1 (details in
+`docs/testing/`). None of them crashes the game.
+
+- **Log noise after reloads and rejoins:** thousands of `Chunk already in map`
+  warnings after *Apply* in Video Settings, the shader toggle (K) or leaving
+  and re-entering a world in the same session. Untested risk: re-entering a
+  different world or place in the same session could leave a square hole in
+  the LODs until a restart.
+- After *Enable Voxy* OFF → ON, the mask that hides LODs under nearby chunks
+  can stay incomplete until the next reload.
+- **Holes in LOD terrain** inside an area pre-generated with Chunky were seen
+  once (empty rectangles that fill in when you get close). The latest test, on
+  a fresh 4 × 4 km Chunky area, had none.
+- **LOD trees** can show a single leaf colour until their chunks load.
+- **Seen from high above the ocean:** a grey wall, sometimes with a thin gap,
+  where nearby water meets LOD water, and thin dotted lines on far LOD water.
+  Cosmetic.
+- **Spyglass and zoom:** visual glitches have been reported; not yet
+  documented.
+- **With BSL:** distant grass can look brighter, as if unshadowed, away from
+  noon; and up to three rings can show at the LOD border.
 - **LOD water animation phase** can be slightly offset from MC's water, and
   flowing water (rivers/waterfalls seen up close) uses a static frame —
   accepted open issue.
@@ -276,8 +304,42 @@ look alarming but are not errors.
 - [`docs/LOD-FLICKER-INVESTIGATION.md`](docs/LOD-FLICKER-INVESTIGATION.md) —
   historical investigation notes (May 2026).
 
-## Credits
+## Credits and thanks
 
-- [MCRcortex](https://github.com/MCRcortex) — Voxy, the upstream mod this
-  fork builds on.
-- Port and stabilization work: see `docs/MIGRATION-HISTORY.md`.
+**Voxy.** This fork exists because of [Voxy](https://github.com/MCRcortex/voxy),
+created by [MCRcortex](https://github.com/MCRcortex) (Cortex). The LOD
+engine, the storage, the voxelization and the renderer this port moves onto
+Metal are their work. Thanks also to everyone who contributed to upstream
+Voxy: [KaptainWutax](https://github.com/KaptainWutax),
+[boredhuman](https://github.com/boredhuman), [zea64](https://github.com/zea64),
+[Philanche](https://github.com/Philanche),
+[Samalando](https://github.com/Samalando),
+[Xenthio](https://github.com/Xenthio), [drouarb](https://github.com/drouarb)
+and [rhysdh540](https://github.com/rhysdh540)
+([full list](https://github.com/MCRcortex/voxy/graphs/contributors)). Voxy is
+All Rights Reserved. The upstream developers know about this fork and had no
+objection to its builds; they will be taken down if they ask.
+
+**Contributors to this fork.** Thank you to the people who sent pull requests:
+
+- [justAnArthur](https://github.com/justAnArthur): fixes for LODs, packaging
+  and addon linking in launcher installs (#25), Metal culling and draw batching with Create/Flywheel
+  and world-loading fixes (#27), the shader smoke-test fix (#38), and the
+  detailed reports #28–#37. Issue #37 proposed turning the Metal path on by
+  default, which 0.2.8-alpha-metal.1 does.
+- [BrekkeLiten](https://github.com/BrekkeLiten): the port of the Metal
+  backend to Minecraft 26.3 with Voxy 0.2.20 and Sodium 0.9 (#24).
+- [NidaleNieve](https://github.com/NidaleNieve): adapting Voxy 0.2.16 to
+  1.21.11 on Metal and stabilizing Sodium/Iris rendering (#22).
+
+**Special thanks** to [pamms0606-sketch](https://github.com/pamms0606-sketch),
+who hand-patched an early jar and reported the launcher crash that shaped the
+release checks (#18), and to [udmur1](https://github.com/udmur1), who showed
+the port running on Minecraft 26.3 (#23).
+
+Voxy for Apple Silicon also stands on [Sodium](https://github.com/CaffeineMC/sodium),
+[Iris](https://github.com/IrisShaders/Iris), [Fabric](https://fabricmc.net/)
+and [LWJGL](https://www.lwjgl.org/) (shaderc and SPIRV-Cross for the
+GLSL → MSL path).
+
+Port and stabilization work: see `docs/MIGRATION-HISTORY.md`.
