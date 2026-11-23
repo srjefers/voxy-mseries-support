@@ -39,7 +39,7 @@ step, then lists 13 short tests. Start with `PT-01`. The basics:
 
 1. Download the Voxy jar from
    [Releases](https://github.com/srjefers/voxy-mseries-support/releases).
-   Keep its file name, for example `voxy-0.2.8-alpha-455d8cbb.jar`.
+   Keep its file name, for example `voxy-0.2.8-alpha-metal.1-<commit>.jar`.
 2. In your launcher (official, Prism, Modrinth App or CurseForge), create a
    Minecraft 1.21.11 profile with Fabric Loader 0.18.2 or newer. Give it its
    own empty game folder.

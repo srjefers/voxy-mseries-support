@@ -122,7 +122,7 @@ body:
     attributes:
       label: Voxy jar or commit
       description: "Players: the jar file name in your mods folder. Developers: the output of `git rev-parse --short HEAD`."
-      placeholder: voxy-0.2.8-alpha-455d8cbb.jar
+      placeholder: voxy-0.2.8-alpha-metal.1-<commit>.jar
     validations:
       required: true
 

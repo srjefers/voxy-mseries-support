@@ -115,11 +115,11 @@ SHA-256: <paste the shasum output>
 Create it as a draft, check it, then publish:
 
 ```bash
-TAG=v0.2.8-alpha-test1
+TAG=v0.2.8-alpha-metal.1
 gh release create "$TAG" "$JAR" -R srjefers/voxy-mseries-support \
   --target "$(git rev-parse HEAD)" \
   --prerelease --draft \
-  --title "Voxy 0.2.8-alpha, test build 1" \
+  --title "Voxy for Apple Silicon 0.2.8-alpha-metal.1 (Minecraft 1.21.11)" \
   --notes-file ~/voxy-release-notes.md
 gh release view "$TAG" -R srjefers/voxy-mseries-support --web   # review
 gh release edit "$TAG" -R srjefers/voxy-mseries-support --draft=false
@@ -232,4 +232,5 @@ read each report.
 - Close a report once its result is recorded. Keep bug issues open until
   the fix ships in a new pre-release.
 - For each new test build, repeat step 3 with the next tag
-  (`v0.2.8-alpha-test2`) and update the link in the pinned issue.
+  (`v0.2.8-alpha-metal.2`, after raising `mod_version` in `gradle.properties`)
+  and update the link in the pinned issue.
