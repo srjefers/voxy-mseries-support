@@ -36,6 +36,10 @@ Every script has `--help`.
 | `sampler.sh` | During a test, game open | Records memory, CPU and threads every 30 s |
 | `log-check.sh` | After a test, game closed | Checks the log for known Voxy failures |
 | `collect-report.sh` | At the end | Puts everything in one zip for your report |
+| `check-mixin-optional-refs.sh` | Developers, after `./gradlew build` | Checks the built jar for mixins that would crash without an optional mod |
+
+Players do not need `check-mixin-optional-refs.sh`. It reads a jar you built
+and needs `javap` from a JDK.
 
 ### settings-dump.sh
 
@@ -89,7 +93,13 @@ It reads `logs/latest.log` and prints:
 
 - The Voxy version, the jar in `mods/`, the `Metal device:` line, and
   whether Voxy turned itself on.
-- A count for each known failure message. Each count must be 0.
+- `JOML writes:`, the way Voxy writes matrices on your Java. On the Java 21
+  of the official launcher it says `MemUtilUnsafe unavailable ...: using LWJGL
+  writes`. That is normal.
+- A count for each known failure message. Each count must be 0. The list
+  includes the three release-jar failures found in phase 8: the crash on
+  world join without Iris, the JOML crash on Java 21, and the missing
+  framebuffer that hid every LOD.
 - How many model atlases were created and freed. After you quit, the two
   numbers must match. Inside a world, one atlas can still be open.
 - Crash reports and `hs_err_pid*.log` files from the last 60 minutes.
@@ -129,6 +139,37 @@ next to the folder. The folder holds:
   screenshots are not copied. Attach the ones that show the problem yourself.
 
 Attach the zip and your screenshots to your report on GitHub.
+
+### check-mixin-optional-refs.sh
+
+For developers. Run it after `./gradlew build`, from the repository:
+
+```bash
+bash scripts/testing/check-mixin-optional-refs.sh
+bash scripts/testing/check-mixin-optional-refs.sh path/to/voxy.jar
+```
+
+Without an argument it checks the only `build/libs/voxy-*.jar`. It extracts
+Voxy's mixin classes from the jar, reads them with `javap -v`, and fails if a
+mixin outside an optional mod's own mixin package uses a class of that mod:
+Iris, Nvidium, Flashback, Chunky, Vivecraft or Mod Menu.
+
+Why: when Mixin applies a mixin, it looks up the class of every method and
+field the mixin uses. If that class belongs to a mod that is not installed,
+the target class fails to load and the game crashes, even when the code never
+runs. In phase 8, a mixin on Sodium's chunk renderer called Iris directly, so
+every world join crashed without Iris. The dev client always loads Iris, so
+only the release jar showed it.
+
+Mixins in `client/mixin/iris`, `client/mixin/flashback`,
+`client/mixin/nvidium` and `commonImpl/mixin/chunky` are skipped. They target
+that mod's own classes, so Mixin skips them when the mod is missing.
+
+It needs `javap` from a JDK: on the `PATH`, the JDK that
+`/usr/libexec/java_home` finds, or `JAVAP=/path/to/javap`.
+
+Exit status: 0 means pass, 1 means at least one mixin uses an optional mod,
+2 means the script could not run.
 
 **Privacy.** The log contains your Minecraft name, file paths with your Mac
 user name, and the addresses of servers you joined. `--redact` replaces your

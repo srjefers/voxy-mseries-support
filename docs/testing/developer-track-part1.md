@@ -246,7 +246,10 @@ test in the game.
 
 **Goal.** Check that everything compiles and that the build makes the jar
 used in phase 8. Also check that the Metal library still targets macOS 13.
-If it does not, Voxy turns itself off on macOS 13 to 15.
+If it does not, Voxy turns itself off on macOS 13 to 15. Two more checks guard
+against release-jar crashes that the dev client cannot show (findings H5 and H6
+of P8): no mixin may use an optional mod such as Iris, and Voxy's matrix
+writes must match JOML's on the Java 21 that players run.
 
 **Needs.**
 
@@ -266,7 +269,13 @@ mkdir -p ~/voxy-test-results
 grep -E 'buildMetalNative|dylib NOT found|BUILD (SUCCESSFUL|FAILED)' ~/voxy-test-results/P0-BUILD.txt
 ls build/libs
 otool -l src/main/resources/natives/macos-arm64/libvoxy_metal.dylib | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print "minos", $2; exit}'
+bash scripts/testing/check-mixin-optional-refs.sh | tee ~/voxy-test-results/P0-BUILD-mixins.txt
+./gradlew testJomlCompat -PtestJava=launcher 2>&1 | tee ~/voxy-test-results/P0-BUILD-joml.txt | grep -E 'java |mode =|== (PASS|FAIL)'
 ```
+
+`-PtestJava=launcher` runs the JOML check on the official launcher's Java 21.
+Without the official launcher, give the path of any Java 21 `java` instead:
+`-PtestJava=/path/to/bin/java`.
 
 **Steps.**
 
@@ -284,6 +293,15 @@ otool -l src/main/resources/natives/macos-arm64/libvoxy_metal.dylib | awk '/LC_B
    Xcode built a different binary. That is not a fail of this test, but your
    next build's jar will end in `-dirty`. Add the output of `clang --version`
    to your report.
+7. Read the mixin check. It must end with `== Result: PASS`. A `FAIL` line
+   names a mixin class that uses an optional mod (Iris, Nvidium, Flashback,
+   Chunky, Vivecraft or Mod Menu) outside that mod's own mixin package. Without
+   that mod, such a jar crashes on every world join, as P8 found with Iris
+   (H5). The dev client always has Iris, so it never shows this.
+8. Read the JOML check. The `java` line must say 21, and the last line must
+   say `== PASS`. It compares Voxy's matrix and vector writes with JOML's, byte
+   for byte, on the Java that players use. The dev client may run on a newer
+   Java where JOML behaves differently (H6).
 
 **Markers.**
 
@@ -294,16 +312,22 @@ otool -l src/main/resources/natives/macos-arm64/libvoxy_metal.dylib | awk '/LC_B
 dylib NOT found
 BUILD SUCCESSFUL
 minos 13.0
+== Result: PASS
+== PASS
 ```
 
 **Pass if.** BUILD SUCCESSFUL, with no `>>> buildMetalNative: FAILED` and no
 `dylib NOT found`. There is one `voxy-<version>-<commit>.jar` without
-`-dirty`, and the last line says `minos 13.0`.
+`-dirty`, and the `otool` line says `minos 13.0`. The mixin check ends with
+`== Result: PASS`, and the JOML check runs on Java 21 and ends with `== PASS`.
 
 **Fail if.** BUILD FAILED, `>>> buildMetalNative: FAILED`, a jar that ends in
-`-dirty`, or a minos above 13.0. To see the native error, run
+`-dirty`, a minos above 13.0, a `FAIL` from the mixin check, or `== FAIL` from
+the JOML check. To see the native error, run
 `bash native/metal/build.sh Release`. For `-dirty`, commit or stash your
-changes. For the minos, run `rm -rf native/metal/build` and build again.
+changes. For the minos, run `rm -rf native/metal/build` and build again. The
+same `rm -rf native/metal/build` fixes `CMakeCache.txt directory ... is
+different`, which appears after the repository folder was moved.
 
 **A/B switch.** None.
 
@@ -552,10 +576,14 @@ Executing had an error
 Tried executing on a dead service
 Critical error occurred in async processor
 OutOfMemoryError
+Force crashing due to exception during on game join
+Could not initialize class org.joml.MemUtil
+could not locate firstFboId
+failed to resolve MC mainRT FBO
 ```
 
 It also counts `[Metal-ATLASLIFE] model atlas CREATED` and `model atlas
-FREED`.
+FREED`, and prints the `[JomlCompat]` line as `JOML writes:`.
 
 **Pass if.** The last line says `== Result: PASS` and the exit status is 0.
 That means:
@@ -599,6 +627,16 @@ no `run/logs/latest.log` yet.
   - `was not alive`: chunks arrived for a world that was already closed.
   - `Section freed while marked as dirty`: a problem saving or freeing
     sections.
+  - The last four come from release-jar failures found in phase 8 (P8):
+    `Force crashing due to exception during on game join` is the crash on
+    world join, for example from a mixin that needs a missing mod (H5).
+    `Could not initialize class org.joml.MemUtil` is the JOML crash on the
+    launcher's Java 21 (H6). `could not locate firstFboId` and `failed to
+    resolve MC mainRT FBO` mean the LOD image did not reach Minecraft's
+    framebuffer, so no LODs were visible (H7). The dev client shows H5 only
+    without Iris and H6 only on Java 21 (see
+    [DEVELOPMENT.md](../DEVELOPMENT.md)). H7 shows only with the release
+    jar, because the dev client runs on Mojang's names.
 - Every world join builds the renderer twice (backlog item A20 in
   [BACKLOG.md](../BACKLOG.md)), so CREATED and FREED go up by 2 per join.
 - Reference: in the log of 2026-09-26 19:12 every count was 0, with
