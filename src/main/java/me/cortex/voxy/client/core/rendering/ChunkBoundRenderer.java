@@ -18,6 +18,7 @@ import me.cortex.voxy.client.core.rendering.util.MetalMvpUtil;
 import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
 import me.cortex.voxy.client.core.rendering.util.UploadStream;
 import me.cortex.voxy.common.Logger;
+import me.cortex.voxy.common.util.JomlCompat;
 import net.minecraft.client.Minecraft;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -494,7 +495,7 @@ public class ChunkBoundRenderer {
                 (float) (viewport.cameraX - sx),
                 (float) (viewport.cameraY - sy),
                 (float) (viewport.cameraZ - sz));
-        negInnerSec.getToAddress(ptr + 80);
+        JomlCompat.put(negInnerSec, ptr + 80);
         float renderDistance = Math.max(Minecraft.getInstance().gameRenderer.getRenderDistance(), 20 * 16);
         MemoryUtil.memPutFloat(ptr + 92, renderDistance);
 
@@ -502,7 +503,7 @@ public class ChunkBoundRenderer {
         if (metalNdcRemap && MetalMvpUtil.METAL_NDC_REMAP) {
             MetalMvpUtil.applyNdcRemap(mvp);
         }
-        mvp.getToAddress(ptr);
+        JomlCompat.put(mvp, ptr);
 
         UploadStream.INSTANCE.commit();
     }

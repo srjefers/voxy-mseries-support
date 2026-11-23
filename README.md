@@ -14,7 +14,9 @@ rates and for what smaller Macs need.
 
 ## Quick start (development environment)
 
-Requirements: macOS on Apple Silicon, JDK 21+, this repository.
+Requirements: macOS on Apple Silicon, a JDK 21 to 25 to run Gradle (Gradle 9.2.1 does not
+run on Java 26 or newer; see [Which Java runs what](docs/DEVELOPMENT.md#which-java-runs-what)),
+this repository.
 
 ```bash
 VOXY_FORCE_METAL=1 ./gradlew runClient
@@ -61,8 +63,18 @@ yet; everything else comes from the code or was measured on an Apple M4 Max
 | Minecraft | 1.21.11 |
 | Fabric Loader / Fabric API | 0.18.2 / 0.140.0+1.21.11 (tested versions) |
 | Sodium | exactly `mc1.21.11-0.8.1`, required |
-| Iris | 1.10.7, optional (only for shader packs); all testing so far had Iris installed |
+| Iris | `1.10.3+1.21.11-fabric`, optional (only for shader packs). Not 1.10.4 to 1.10.7: see below |
 | Incompatible | voxyworldgenv2 2.2.2 |
+
+**Iris with Sodium 0.8.1.** Iris 1.10.3 is the release built for Sodium 0.8.1:
+Modrinth lists Sodium `mc1.21.11-0.8.1` as its dependency. Iris 1.10.4 to 1.10.7 also
+install with Sodium 0.8.1, but each one changes Sodium's *Video Settings* screen for a
+newer Sodium (`renderIconWithSpacing` gained a parameter in Sodium 0.8.2). With Sodium
+0.8.1 that screen fails to load, so the button does nothing and Voxy's settings, which
+live there, cannot be opened. Sodium 0.8.1 refuses Iris 1.10.2 and older at launch.
+Iris 1.10.3 has passed a static check against Sodium 0.8.1 and against Voxy's own Iris
+code. It has not been tested in game with Voxy yet: the dev client and every test so far
+used Iris 1.10.7, where this failure does not show.
 
 ### Opting in and Java memory
 

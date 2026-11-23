@@ -108,7 +108,7 @@ body:
     id: shader-pack
     attributes:
       label: Shader pack
-      description: Shader packs need Iris 1.10.7. Name the pack version and the Iris version under What happened.
+      description: Shader packs need Iris 1.10.3 (1.10.4 to 1.10.7 break Video Settings with Sodium 0.8.1). Name the pack version and the Iris version under What happened.
       options:
         - None (no shader pack)
         - BSL

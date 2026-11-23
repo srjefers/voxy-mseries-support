@@ -59,8 +59,8 @@ VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G
 
 ### Shader pack, keys and screenshots
 
-- Iris is always loaded in the dev client. "No pack" means shaders turned off
-  with K.
+- Iris is loaded in the dev client unless you add `-PnoIris=true`, which these
+  tests do not use. "No pack" means shaders turned off with K.
 - K turns shaders on or off. The chat says "Toggled shaders to ...". O opens
   the pack list. R reloads shaders.
 - The BSL tests use BSL v10.1.3. Download it from its official page and put
@@ -2087,7 +2087,7 @@ checks and the developer details.
 | ID | Test | Priority | Min | Pack |
 |---|---|---|---|---|
 | `P8-LAUNCHER-CLEAN` | Release jar in a clean launcher profile, without Iris | Essential | 30 | None, no Iris |
-| `P8-LAUNCHER-WITH-PACK` | Release jar with Iris 1.10.7 and BSL in the launcher profile | Recommended | 15 | BSL |
+| `P8-LAUNCHER-WITH-PACK` | Release jar with Iris 1.10.3 and BSL in the launcher profile | Recommended | 15 | BSL |
 | `P8-MULTIPLAYER-SMOKE` | Quick multiplayer test against a local dedicated server | Optional | 20 | None |
 | `P8-OLDER-MACOS` | Release jar on macOS 13 to 15 and on a 16 GB Mac | Optional | 30 | None |
 
@@ -2256,7 +2256,7 @@ locate library`, `librocksdbjni`, `shaderc` or `spvc` error,
 available`. These mean the jar is missing a library. Also a fail: no LODs with
 the property, Voxy turning on without it, or a crash.
 
-### P8-LAUNCHER-WITH-PACK: Release jar with Iris 1.10.7 and BSL in the launcher profile
+### P8-LAUNCHER-WITH-PACK: Release jar with Iris 1.10.3 and BSL in the launcher profile
 
 **Priority:** Recommended. **Time:** 15 min. **Pack:** BSL.
 **Depends on:** `P8-LAUNCHER-CLEAN`.
@@ -2269,7 +2269,9 @@ jar itself.
 
 - `P8-LAUNCHER-CLEAN` passed, with `-Dvoxy.forceMetal=true` back in the JVM
   arguments.
-- Iris 1.10.7 for 1.21.11, Fabric version, in `"$GAME/mods"`.
+- Iris 1.10.3 for 1.21.11, Fabric version (`1.10.3+1.21.11-fabric`), in
+  `"$GAME/mods"`. Not 1.10.4 to 1.10.7: with Sodium 0.8.1 their *Video
+  Settings* button does nothing (H8).
 - `BSL_v10.1.3.zip` in `"$GAME/shaderpacks"`.
 
 **Settings.**

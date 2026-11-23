@@ -15,6 +15,7 @@ import me.cortex.voxy.client.core.gpu.VertexLayout;
 import me.cortex.voxy.client.core.metal.MetalTexture;
 import me.cortex.voxy.client.core.rendering.util.AtlasMirror;
 import me.cortex.voxy.client.core.rendering.util.UploadStream;
+import me.cortex.voxy.common.util.JomlCompat;
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
@@ -255,7 +256,7 @@ public final class MetalBudgetBufferRenderer {
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long addr = stack.nmalloc(64);
-            matrix.getToAddress(addr);
+            JomlCompat.put(matrix, addr);
             this.activeEncoder.setBytes(PUSH_BINDING, addr, 64);
         }
         this.activeEncoder.drawIndexed(

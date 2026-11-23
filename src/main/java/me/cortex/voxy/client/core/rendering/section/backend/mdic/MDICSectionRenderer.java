@@ -22,6 +22,7 @@ import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
 import me.cortex.voxy.client.core.rendering.util.UploadStream;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.world.WorldEngine;
+import me.cortex.voxy.common.util.JomlCompat;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.Direction;
 import org.joml.Matrix4f;
@@ -922,16 +923,16 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         if (MetalMvpUtil.METAL_NDC_REMAP && this.backend.getType() != BackendType.OPENGL) {
             MetalMvpUtil.applyNdcRemap(mat);
         }
-        mat.getToAddress(ptr); ptr += 4*4*4;
+        JomlCompat.put(mat, ptr); ptr += 4*4*4;
 
-        viewport.section.getToAddress(ptr); ptr += 4*3;
+        JomlCompat.put(viewport.section, ptr); ptr += 4*3;
 
         if (viewport.frameId<0) {
             Logger.error("Frame ID negative, this will cause things to break, wrapping around");
             viewport.frameId &= 0x7fffffff;
         }
         MemoryUtil.memPutInt(ptr, viewport.frameId&0x7fffffff); ptr += 4;
-        viewport.innerTranslation.getToAddress(ptr); ptr += 4*3;
+        JomlCompat.put(viewport.innerTranslation, ptr); ptr += 4*3;
 
         // std140 padding: cameraSubPos (vec3 at offset 80) consumes 12B; the
         // next vec4 must be 16B-aligned, so skip the 4B trailing pad before

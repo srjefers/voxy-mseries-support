@@ -5,6 +5,16 @@ plugins {
 
 def isInGHA = System.getenv("GITHUB_ACTIONS") == "true"
 
+// The Java 21 runtime the official Minecraft Launcher ships for 1.21.x on Apple Silicon (Microsoft
+// OpenJDK 21.0.7): the JVM players run Voxy on. runClient uses it by default (-PrunJava), and
+// testJomlCompat with -PtestJava=launcher.
+def launcherJava21 = file("${System.getProperty('user.home')}/Library/Application Support/minecraft/runtime/java-runtime-delta/mac-os-arm64/java-runtime-delta/jre.bundle/Contents/Home/bin/java")
+
+// -PnoIris=true: the dev client without Iris, like a player who did not install it (H5 crashed only
+// there). Drops Iris and its nested libraries from the dev runtime; Iris stays on the compile
+// classpath (modCompileOnly), and the built jar does not change.
+def noIris = project.findProperty("noIris") == "true"
+
 version = project.mod_version
 group = project.maven_group
 
@@ -121,6 +131,57 @@ loom {
     }
 }
 
+// The dev client's JVM. Players run 1.21.11 on the launcher's Java 21; runClient used to run on the
+// JVM that runs Gradle (JDK 27 on the reference Mac), and that hid H6 (JOML's getToAddress throws on
+// macOS Java 21 only).
+//   (unset)            the launcher's Java 21 (launcherJava21), or a JDK 21 toolchain if it is missing
+//   -PrunJava=<N>      an installed JDK N found by Gradle toolchains; 27 = the JDK runClient used before
+//   -PrunJava=<path>   any java binary
+def runJava = (project.findProperty("runJava") ?: "").toString().trim()
+tasks.named { it == 'runClient' }.configureEach { task ->
+    String jvm
+    if (runJava.isEmpty() && launcherJava21.canExecute()) {
+        task.executable = launcherJava21.absolutePath
+        jvm = "the official launcher's Java 21, ${launcherJava21}"
+    } else if (runJava.isEmpty() || runJava ==~ /\d+/) {
+        int version = runJava.isEmpty() ? 21 : (runJava as int)
+        task.javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(version) }
+        jvm = "a JDK ${version} toolchain"
+    } else {
+        def exe = file(runJava)
+        task.executable = exe.absolutePath
+        jvm = exe.absolutePath
+    }
+    def irisNote = noIris ? ", without Iris (-PnoIris=true)" : ""
+    task.doFirst { logger.lifecycle(">>> runClient JVM: ${jvm}${irisNote}") }
+}
+
+// The release jar, run the way a launcher runs it (Loom's ClientProductionRunTask): the vanilla
+// client on intermediary names through Fabric Loader's KnotClient, the remapped jar from remapJar,
+// Fabric API and Sodium 0.8.1 from productionRuntimeMods, no Iris, Java 21, -Dvoxy.forceMetal=true,
+// game folder run/. It shows what runClient cannot: code that looks up a Minecraft member by its
+// Mojang name works in runClient and fails here (H7). VOXY_QUICKPLAY and -PrunXmx work as for
+// runClient. Java 21 is found by Gradle toolchains: the JVM that runs Gradle when it is a 21.
+dependencies {
+    // Not transitive: the fabric-api jar nests its modules (jar-in-jar), as in a launcher's mods folder.
+    productionRuntimeMods("net.fabricmc.fabric-api:fabric-api:${project.fabric_version}") { transitive = false }
+    productionRuntimeMods("maven.modrinth:sodium:mc1.21.11-0.8.1-fabric") { transitive = false }
+}
+tasks.register('runProductionClient', net.fabricmc.loom.task.prod.ClientProductionRunTask) {
+    group = 'fabric'
+    description = 'Runs the release jar like a launcher: intermediary names, Fabric API, Sodium, no Iris, Java 21.'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+    jvmArgs.add("-Dvoxy.forceMetal=true")
+    def xmx = project.findProperty("runXmx") ?: System.getenv("VOXY_RUN_XMX")
+    if (xmx) {
+        jvmArgs.add("-Xmx${xmx}")
+    }
+    def world = System.getenv("VOXY_QUICKPLAY")
+    if (world) {
+        programArgs.addAll("--quickPlaySingleplayer", world)
+    }
+}
+
 def modRuntimeOnlyMsk = {arg->}
 if (!isInGHA) {
     modRuntimeOnlyMsk = { arg ->
@@ -160,10 +221,10 @@ dependencies {
 
     modCompileOnly("maven.modrinth:iris:1.10.7+1.21.11-fabric")
     // Iris in the dev runtime by default: this fork is being compat-tested
-    // alongside Iris + other mods. Note Voxy's Iris pipeline integration is
-    // GL-only — on Metal, LOD terrain is NOT shaded by packs; this tests
-    // coexistence (load order, mixins, GL state), not pack support.
-    modRuntimeOnlyMsk("maven.modrinth:iris:1.10.7+1.21.11-fabric")
+    // alongside Iris + other mods. -PnoIris=true leaves it out (see noIris).
+    if (!noIris) {
+        modRuntimeOnlyMsk("maven.modrinth:iris:1.10.7+1.21.11-fabric")
+    }
 
     //modCompileOnly("maven.modrinth:starlight:1.1.3+1.20.4")
 
@@ -190,8 +251,8 @@ dependencies {
 // org/anarres/cpp/LexerException). glsl-transformer 3.0.0-preX is not
 // published on a public maven, so extract the nested jars from the resolved
 // Iris jar itself — this stays automatically in sync when the Iris version
-// is bumped. Dev-runtime only; no effect on the built mod jar.
-if (!isInGHA) {
+// is bumped. Dev-runtime only; no effect on the built mod jar. Skipped with -PnoIris=true.
+if (!isInGHA && !noIris) {
     def irisJijConfig = configurations.detachedConfiguration(
             dependencies.create("maven.modrinth:iris:1.10.7+1.21.11-fabric"))
     irisJijConfig.transitive = false
@@ -457,6 +518,29 @@ tasks.register('testShaderCompiler', JavaExec) {
     workingDir = rootProject.projectDir
     standardOutput = System.out
     errorOutput = System.err
+}
+
+// H6 verification: JomlCompat's LWJGL writes against JOML's own get(ByteBuffer), byte for byte, and
+// getToAddress where it works. -PtestJava=launcher runs it on the launcher's Java 21 (where JOML's
+// getToAddress throws on macOS); -PtestJava=<path to bin/java> on any other JVM.
+tasks.register('testJomlCompat', JavaExec) {
+    group = 'verification'
+    description = 'Smoke-test JomlCompat: LWJGL writes vs JOML, byte for byte (H6).'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'me.cortex.voxy.tools.JomlCompatSmokeTest'
+    workingDir = rootProject.projectDir
+    standardOutput = System.out
+    errorOutput = System.err
+    def testJava = project.findProperty("testJava")
+    if (testJava) {
+        def exe = testJava == "launcher" ? launcherJava21 : file(testJava)
+        executable = exe.absolutePath
+        doFirst {
+            if (!exe.canExecute()) {
+                throw new GradleException("-PtestJava=${testJava}: no java executable at ${exe}")
+            }
+        }
+    }
 }
 
 // M3 verification: open a Metal render pass with clear-color load action and

@@ -101,6 +101,11 @@ else
     printf 'Voxy opt-in:  no opt-in line found\n'
 fi
 
+joml=$(LC_ALL=C grep -a -m1 -F '[JomlCompat]' "$L" | sed -E 's/.*\[JomlCompat\] //' | cut -c1-160)
+if [ -n "$joml" ]; then
+    printf 'JOML writes:  %s\n' "$joml"
+fi
+
 stopped=$(LC_ALL=C grep -a -c -E 'Stopping!$' "$L" 2>/dev/null)
 stopped=${stopped:-0}
 if [ "$stopped" -gt 0 ]; then
@@ -134,6 +139,11 @@ SIGNATURES=(
     'Tried executing on a dead service'
     'Critical error occurred in async processor'
     'OutOfMemoryError'
+    # Release-jar blockers found by P8 (HALLAZGOS H5-H7):
+    'Force crashing due to exception during on game join'
+    'Could not initialize class org.joml.MemUtil'
+    'could not locate firstFboId'
+    'failed to resolve MC mainRT FBO'
 )
 i=0
 while [ $i -lt ${#SIGNATURES[@]} ]; do

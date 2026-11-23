@@ -44,9 +44,9 @@ step, then lists 13 short tests. Start with `PT-01`. The basics:
    Minecraft 1.21.11 profile with Fabric Loader 0.18.2 or newer. Give it its
    own empty game folder.
 3. Put in its `mods` folder: Fabric API `0.140.0+1.21.11`, Sodium exactly
-   `mc1.21.11-0.8.1`, and the Voxy jar. Iris 1.10.7 and a shader pack such
-   as BSL are optional. Never add `voxyworldgenv2` 2.2.2, which is
-   incompatible.
+   `mc1.21.11-0.8.1`, and the Voxy jar. Iris 1.10.3 (not 1.10.4 to 1.10.7)
+   and a shader pack such as BSL are optional. Never add `voxyworldgenv2`
+   2.2.2, which is incompatible.
 4. Set the profile's JVM arguments to `-Xmx6G -Dvoxy.forceMetal=true`
    (`-Xmx4G` on a 16 GB Mac). Without the flag, Voxy turns itself off.
 5. Get the [testing scripts](player-track.md#5-get-the-test-scripts). They
