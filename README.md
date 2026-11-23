@@ -19,22 +19,24 @@ run on Java 26 or newer; see [Which Java runs what](docs/DEVELOPMENT.md#which-ja
 this repository.
 
 ```bash
-VOXY_FORCE_METAL=1 ./gradlew runClient
+./gradlew runClient
 ```
 
-`VOXY_FORCE_METAL=1` is the explicit opt-in for the Metal render path —
-without it Voxy disables itself on macOS and you get plain Sodium rendering.
+The Metal render path is on by default. `VOXY_FORCE_METAL=0` turns it off
+(Voxy disables itself and you get plain Sodium rendering). Older notes that
+start the client with `VOXY_FORCE_METAL=1` still work; the variable is no
+longer needed.
 
 A dev run uses Java's default heap limit (25% of RAM). To measure what a
 launcher profile with `-Xmx6G` would see, cap it the same way:
 
 ```bash
-VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G
+./gradlew runClient -PrunXmx=6G
 ```
 
 To use the mod in a launcher profile, build the jar and drop it in `mods/`
-together with the matching Sodium version, then add the JVM arguments from
-[Opting in](#opting-in-and-java-memory):
+together with the matching Sodium version. Voxy turns on by itself; see
+[Java memory](#java-memory-and-turning-voxy-off) for the recommended heap:
 
 ```bash
 ./gradlew build    # output: build/libs/voxy-<version>.jar
@@ -76,17 +78,20 @@ Iris 1.10.3 has passed a static check against Sodium 0.8.1 and against Voxy's ow
 code. It has not been tested in game with Voxy yet: the dev client and every test so far
 used Iris 1.10.7, where this failure does not show.
 
-### Opting in and Java memory
+### Java memory and turning Voxy off
 
-Add these JVM arguments to the launcher profile (adjust `-Xmx` with the
-table below):
+Voxy needs no JVM arguments: on an Apple Silicon Mac it turns on by itself.
+For the Java heap, change the launcher's default `-Xmx2G` in the profile's
+JVM arguments (pick the value from the table below):
 
 ```
--Xmx6G -Dvoxy.forceMetal=true
+-Xmx6G
 ```
 
-Without `-Dvoxy.forceMetal=true` (or the environment variable
-`VOXY_FORCE_METAL=1`) Voxy disables itself and you get plain Sodium.
+To turn Voxy off without removing the jar, add `-Dvoxy.forceMetal=false`
+(or set the environment variable `VOXY_FORCE_METAL=0`): Voxy disables itself
+and you get plain Sodium. Jars built before the on-by-default change still
+need `-Dvoxy.forceMetal=true`.
 
 ### Tiers
 

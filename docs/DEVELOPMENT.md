@@ -8,7 +8,7 @@ How to build, run, and debug the Apple M-series port. Architecture lives in
 
 ```bash
 ./gradlew build                          # full build incl. native dylib + remapped jar
-VOXY_FORCE_METAL=1 ./gradlew runClient   # dev client with the Metal path enabled
+./gradlew runClient   # dev client with the Metal path enabled
 ```
 
 - The Metal native library (`native/metal/src/*.mm`) is compiled by the
@@ -64,7 +64,7 @@ dev runtime only. Compiling and the built jar are unchanged.
 **The closest the dev client gets to a player:**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 \
+VOXY_QUICKPLAY="voxytest" \
   ./gradlew runClient -PnoIris=true -PrunXmx=6G
 ```
 
@@ -77,12 +77,15 @@ accessor instead.
 **The release jar itself: `runProductionClient`.** Loom's production run
 task starts the vanilla client on intermediary names through Fabric Loader,
 like a launcher. It loads the jar from `remapJar`, Fabric API and Sodium 0.8.1
-(`productionRuntimeMods`), and no Iris. It runs on Java 21 with
-`-Dvoxy.forceMetal=true`, in `run/`:
+(`productionRuntimeMods`), and no Iris. It runs on Java 21 with no Voxy JVM
+arguments, as a player's profile does, in `run/`:
 
 ```bash
 VOXY_QUICKPLAY="voxytest" ./gradlew runProductionClient -PrunXmx=6G
 ```
+
+`-PforceMetal=false` adds `-Dvoxy.forceMetal=false`, the kill switch: Voxy
+turns itself off and the game runs as plain Sodium.
 
 It is the only local run that shows H7-class bugs. Before a release, still
 test the built jar in the launcher (`P8-LAUNCHER-CLEAN` in the developer
@@ -126,7 +129,7 @@ development:
 
 | Variable | Use |
 |---|---|
-| `VOXY_FORCE_METAL=1` | Required opt-in for the Metal path |
+| `VOXY_FORCE_METAL=0` | Kill switch: turns the Metal path off (plain Sodium). Same as `-Dvoxy.forceMetal=false`. The path is on by default; `=1` from older notes is harmless |
 | `VOXY_BRIDGE_SOLID_TEST=1` | Solid-green bridge, no LOD draws — isolates bridge/composite/sync from content |
 | `VOXY_LOD_NO_CULL=1` | Disable frustum culling (slow; separates culling from drawing bugs) |
 | `VOXY_BOUND_DEBUG=1` | Tint chunk-bound-discarded fragments red (visualizes the depth mask) |

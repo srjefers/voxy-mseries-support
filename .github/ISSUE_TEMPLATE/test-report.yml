@@ -135,7 +135,7 @@ body:
         PT-01: Fail, see below
         PT-02: Pass
 
-        JVM arguments: -Xmx6G -Dvoxy.forceMetal=true
+        JVM arguments: -Xmx6G
         Settings: Minecraft render distance 12, Voxy render distance 512
         Memory of "java" in Activity Monitor: 9.8 GB
 

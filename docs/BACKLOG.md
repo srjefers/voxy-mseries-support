@@ -63,7 +63,7 @@ Every behavioural change ships an env kill switch (see `docs/DEVELOPMENT.md`). P
 
 | # | Item | Status | Notes |
 |---|---|---|---|
-| D1 | Metal enabled by default on macOS arm64 via config, replacing the `VOXY_FORCE_METAL` env opt-in | open | required for launcher users |
+| D1 | Metal enabled by default on macOS arm64, replacing the `VOXY_FORCE_METAL` env opt-in | done, pending on-device verify | `feature/metal-default-on`: on by default; `-Dvoxy.forceMetal=false` / `VOXY_FORCE_METAL=0` is the kill switch, *Enable Voxy* the in-game switch. Verify with a launcher profile left at its default JVM arguments |
 | D2 | Release jar must bundle the runtime natives (RocksDB osx-arm64 jnilib, LWJGL shaderc/spvc) | pending verify | fixed 2026-09-26 (15821316): osx-arm64 jnilib kept, shaderc/spvc class jars included; dylib deployment target fixed to macOS 13 (8f15d273; it was minos 26.0). Needs one clean launcher-profile test |
 | D10 | Release jar hygiene: nested org.lz4 1.8.0 duplicates MC 1.21.11's at.yawk lz4-java 1.8.1 (same packages, classpath order decides); libMoltenVK.dylib (5 MB) ships but nothing at runtime loads it | open (low) | compile against MC's lz4; exclude MoltenVK from release jars |
 | D3 | Version bump (`0.3.0-alpha`), release notes, tag, GitHub Release with the jar | open | after merging PR #17 and this branch into `dev` |

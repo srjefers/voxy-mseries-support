@@ -54,34 +54,34 @@ public class VoxyClient implements ClientModInitializer {
         boolean systemSupported = backend.hasCompute() && backend.hasIndirectParameters() && !Capabilities.INSTANCE.hasBrokenDepthSampler;
         final boolean capabilitiesSupported = systemSupported;//upstream 36964ee4 logs 'unsupported' only for this case
 
-        // M9 transitional: even though MetalRenderBackend reports compute=true and
-        // indirectParameters=true, Voxy's render path (MDICSectionRenderer,
-        // HiZBuffer2, HierarchicalOcclusionTraverser, ChunkBoundRenderer,
-        // bakery, AbstractRenderPipeline) is still raw OpenGL DSA and aborts
-        // the JVM the first time the GL driver hits an unsupported call on
-        // Apple's frozen GL 4.1. Until that work lands (M9-M11 migration to
-        // the encoder API + IOSurface bridge), force-disable Voxy on
-        // non-OpenGL backends so the mixins find VoxyRenderSystem == null
-        // and Sodium's chunk render runs unmodified — the user sees normal
-        // close-distance MC + Sodium rendering instead of a blue screen.
-        // Feature flag to opt into the Metal render path. The flag exists
-        // separately from regular env vars so opting in is intentional —
-        // until the full MDIC encoder migration lands, this path produces
-        // a clear color via the IOSurfaceBridge, not actual LOD chunks.
-        boolean forceMetal = "1".equals(System.getenv("VOXY_FORCE_METAL"))
-                || "true".equals(System.getenv("VOXY_FORCE_METAL"))
-                || "true".equals(System.getProperty("voxy.forceMetal", "false"));
+        // The Metal render path is on by default (BACKLOG D1). It used to be opt-in (M11, c64d1801)
+        // because back then it drew only a clear colour through the IOSurface bridge. Since MDIC draws
+        // real LOD geometry the opt-in only got in the way: launcher players cannot set environment
+        // variables, so the jar did nothing until they found -Dvoxy.forceMetal=true and added it to the
+        // JVM arguments.
+        // Kill switch: -Dvoxy.forceMetal=false or VOXY_FORCE_METAL=0 (or =false) turns it off, and Sodium
+        // renders unmodified because the mixins find VoxyRenderSystem == null. Macs that cannot run the
+        // Metal path never reach this branch: Intel Macs and Rosetta (x86_64) Java, and macOS older than
+        // 13 (the dylib fails to load), get the OpenGL backend, and Apple's GL 4.1 fails the compute and
+        // indirect check above. The OpenGL backend (Windows, Linux) skips this block and is unchanged.
+        String metalEnv = System.getenv("VOXY_FORCE_METAL");
+        boolean metalTurnedOff = "0".equals(metalEnv) || "false".equalsIgnoreCase(metalEnv)
+                || "false".equalsIgnoreCase(System.getProperty("voxy.forceMetal"));
 
         if (systemSupported && backend.getType() != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
-            if (forceMetal) {
+            if (!metalTurnedOff) {
+                //Log-check and collect-report key on the "[VOXY_FORCE_METAL] Voxy enabled on " prefix
                 Logger.info("[VOXY_FORCE_METAL] Voxy enabled on " + backend.getType()
-                        + " backend. Render output flows through the IOSurface bridge; "
+                        + " backend (on by default; -Dvoxy.forceMetal=false turns it off). "
+                        + "Render output flows through the IOSurface bridge; "
                         + "MDIC draws real LOD geometry with the Metal model atlas bakery. "
                         + "Remaining M13 gaps: depth import (real HiZ + cull stub) and SSAO. "
                         + "Set VOXY_BAKERY_OFF=1 for the hash-colour fallback.");
             } else {
-                Logger.warn("[M9 TRANSITIONAL] Voxy disabled on " + backend.getType()
-                        + " backend. Set VOXY_FORCE_METAL=1 to enable the Metal render path.");
+                //Log-check keys on "Voxy disabled on"; the old opt-in message said "Set VOXY_FORCE_METAL=1"
+                Logger.warn("[VOXY_FORCE_METAL] Voxy disabled on " + backend.getType()
+                        + " backend: turned off with -Dvoxy.forceMetal=false or VOXY_FORCE_METAL=0. "
+                        + "Remove it to use the Metal render path.");
                 systemSupported = false;
             }
         }

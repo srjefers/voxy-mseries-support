@@ -33,6 +33,9 @@ work + partial horizon-chunks fix staged locally; nothing pushed)
 VOXY_FORCE_METAL=1 ./gradlew runClient
 ```
 
+> **Update (feature/metal-default-on):** the Metal path is now on by default and
+> `VOXY_FORCE_METAL=0` is the kill switch. The paragraph below describes the old opt-in.
+
 `VOXY_FORCE_METAL=1` is mandatory on M-series. Without it Voxy detects the
 non-OpenGL backend at `VoxyClient.java:65-82` and disables itself entirely
 (log: `Not creating renderer due to disabled`) — you get vanilla MC, no LOD.

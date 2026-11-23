@@ -5,7 +5,7 @@ This part covers phases 3, 4 and 5 of the test plan:
 | Phase | Test IDs | Topic |
 |---|---|---|
 | 3 | `P3-*` | Lifecycle and memory: minimize, rejoin, option changes, reloads, dimensions and worlds |
-| 4 | `P4-*` | Failure paths: a simulated renderer failure, and no opt-in |
+| 4 | `P4-*` | Failure paths: a simulated renderer failure, and the off switch |
 | 5 | `P5-*` | Performance: fps, wait times and memory with a still camera |
 
 Phases 0 to 2 are in [part 1](developer-track-part1.md). Phases 6 to 8 are in
@@ -31,11 +31,12 @@ Phases 0 to 2 are in [part 1](developer-track-part1.md). Phases 6 to 8 are in
 The standard launch for all three phases:
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" ./gradlew runClient -PrunXmx=6G
 ```
 
-- `VOXY_FORCE_METAL=1` is required. Without it, Voxy turns itself off.
-  `P4-NO-OPTIN-FALLBACK` leaves it out on purpose.
+- Voxy turns on by itself. `P4-NO-OPTIN-FALLBACK` turns it off on purpose
+  with `VOXY_FORCE_METAL=0`. `VOXY_FORCE_METAL=1` from older notes is
+  harmless.
 - `VOXY_QUICKPLAY="<world folder>"` joins that world on launch.
 - `-PrunXmx=6G` caps the Java heap like a launcher profile with `-Xmx6G`.
   Every memory comparison needs the same cap, so always use it.
@@ -317,7 +318,7 @@ cap.
 **Launch.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_REJOIN=45 VOXY_AUTO_SCREENSHOT=20 VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_REJOIN=45 VOXY_AUTO_SCREENSHOT=20 VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 In a second tab, after the game window appears:
@@ -593,7 +594,7 @@ General*. Write down your value first. `settings-dump.sh` shows it as
 **Launch.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_AUTO_SCREENSHOT=15 ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_AUTO_SCREENSHOT=15 ./gradlew runClient -PrunXmx=6G
 ```
 
 In a second tab, after the game window appears:
@@ -676,7 +677,7 @@ pack's options.
 **Launch.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_AUTO_SCREENSHOT=10 VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_AUTO_SCREENSHOT=10 VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -752,7 +753,7 @@ with the game.
 **Launch.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_AUTO_SCREENSHOT=20 VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_AUTO_SCREENSHOT=20 VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -812,7 +813,7 @@ threads or memory behind. No other test covers it.
 **Launch.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 In a second tab, after the game window appears:
@@ -904,7 +905,7 @@ not grow with each hop.
 **Launch.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_AUTO_SCREENSHOT=20 VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_AUTO_SCREENSHOT=20 VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 In a second tab, after the game window appears:
@@ -983,7 +984,7 @@ not repeated.
 **Launch.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_AUTO_SCREENSHOT=20 VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_AUTO_SCREENSHOT=20 VOXY_DEBUG_CMD='5:time set noon;6:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1051,7 +1052,7 @@ the thread pool Voxy shares with Sodium.
 **Launch.** The same command for both rounds:
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_REJOIN=45 VOXY_FRAME_TIMING=1 ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_REJOIN=45 VOXY_FRAME_TIMING=1 ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1123,9 +1124,9 @@ same view in two rounds.
 
 ```bash
 # Round A: granule 128, the default
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_CMD='5:time set noon;8:tp @p X Y Z YAW PITCH' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_CMD='5:time set noon;8:tp @p X Y Z YAW PITCH' ./gradlew runClient -PrunXmx=6G
 # Round B: granule 1024
-VOXY_GEOMETRY_ALLOC_ALIGN=1024 VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_CMD='5:time set noon;8:tp @p X Y Z YAW PITCH' ./gradlew runClient -PrunXmx=6G
+VOXY_GEOMETRY_ALLOC_ALIGN=1024 VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_CMD='5:time set noon;8:tp @p X Y Z YAW PITCH' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1177,13 +1178,13 @@ sections.
 
 This phase causes failures on purpose, to check that Voxy fails safely: no
 crash, and no change to your settings. Both tests use the `voxytest` world.
-The first needs BSL on. The second runs without `VOXY_FORCE_METAL`, with the
+The first needs BSL on. The second runs with `VOXY_FORCE_METAL=0`, with the
 pack in whatever state you left it.
 
 | ID | Test | Priority | Min | Pack |
 |---|---|---|---|---|
 | `P4-CTOR-FAIL-WITH-PACK` | Simulated renderer failure with BSL on: cleanup, shaders off for this session only | Essential | 10 | BSL |
-| `P4-NO-OPTIN-FALLBACK` | Without the opt-in, Voxy turns off and the game runs as plain Sodium | Recommended | 4 | Any |
+| `P4-NO-OPTIN-FALLBACK` | With the off switch, Voxy turns off and the game runs as plain Sodium | Recommended | 4 | Any |
 
 ### P4-CTOR-FAIL-WITH-PACK: Simulated renderer failure with BSL on
 
@@ -1213,9 +1214,9 @@ crashes on purpose.
 
 ```bash
 # Launch 1: simulated failure
-VOXY_CTOR_FAIL_ONCE=1 VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G
+VOXY_CTOR_FAIL_ONCE=1 VOXY_QUICKPLAY="voxytest" ./gradlew runClient -PrunXmx=6G
 # Launch 2: normal
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1302,22 +1303,22 @@ are doubled, or `Error releasing a partially built renderer component`,
 `Could not restore enableShaders in iris.properties` or
 `Cannot have multiple renderers` appears.
 
-### P4-NO-OPTIN-FALLBACK: Without the opt-in, Voxy turns off and the game runs as plain Sodium
+### P4-NO-OPTIN-FALLBACK: With the off switch, Voxy turns off and the game runs as plain Sodium
 
 **Priority:** Recommended. **Time:** 4 min. **Pack:** any.
 **Owner status:** Verified. **Depends on:** `P0-BUILD`.
 
-**Goal.** Check the safety net. Without the explicit opt-in, Voxy turns itself
+**Goal.** Check the off switch. With `VOXY_FORCE_METAL=0`, Voxy turns itself
 off, and the player sees plain Sodium instead of a crash. A player whose
-launcher profile lacks `-Dvoxy.forceMetal=true` gets the same path.
+launcher profile has `-Dvoxy.forceMetal=false` gets the same path. (The test
+ID dates from when Voxy needed an opt-in; leaving it out took this path.)
 
-**You need.** The game closed. `env | grep VOXY_` must not list
-`VOXY_FORCE_METAL`. If it does, run `unset VOXY_FORCE_METAL` in this tab.
+**You need.** The game closed.
 
-**Launch.** Note that `VOXY_FORCE_METAL` is NOT set:
+**Launch.** Note `VOXY_FORCE_METAL=0`:
 
 ```bash
-VOXY_QUICKPLAY="voxytest" ./gradlew runClient -PrunXmx=6G
+VOXY_FORCE_METAL=0 VOXY_QUICKPLAY="voxytest" ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1331,11 +1332,12 @@ VOXY_QUICKPLAY="voxytest" ./gradlew runClient -PrunXmx=6G
 5. Check the log:
 
    ```bash
-   grep -F -e 'M9 TRANSITIONAL' -e 'Voxy render system created' run/logs/latest.log
+   grep -F -e 'Voxy disabled on' -e 'Voxy render system created' run/logs/latest.log
    ```
 
 6. Do the steps in [After every test](#after-every-test). Here `log-check.sh`
-   shows `Voxy opt-in:  WARN: Voxy disabled itself`, and the result is a PASS
+   shows `Voxy Metal:   WARN: turned off with -Dvoxy.forceMetal=false or
+   VOXY_FORCE_METAL=0`, and the result is a PASS
    with a warning. That is expected for this test.
 
 **Look for.**
@@ -1343,17 +1345,17 @@ VOXY_QUICKPLAY="voxytest" ./gradlew runClient -PrunXmx=6G
 - In F3, Voxy's version line can show in red. It means Voxy is installed but
   not available, which is expected.
 - The `/voxy` commands do not exist in this session.
-- After this test, always launch with `VOXY_FORCE_METAL=1` again.
+- After this test, launch without `VOXY_FORCE_METAL=0` again.
 
 **Log lines.**
 
 ```
-[M9 TRANSITIONAL] Voxy disabled on METAL backend. Set VOXY_FORCE_METAL=1 to enable the Metal render path.
+[VOXY_FORCE_METAL] Voxy disabled on METAL backend: turned off with -Dvoxy.forceMetal=false or VOXY_FORCE_METAL=0. Remove it to use the Metal render path.
 Voxy render system created
 ```
 
-**Pass.** The log has `[M9 TRANSITIONAL] Voxy disabled on METAL backend. Set
-VOXY_FORCE_METAL=1 to enable the Metal render path.` and no
+**Pass.** The log has `[VOXY_FORCE_METAL] Voxy disabled on METAL backend:
+turned off with -Dvoxy.forceMetal=false or VOXY_FORCE_METAL=0.` and no
 `Voxy render system created`. There are no LODs and no *Voxy* menu entry, and
 the game runs normally without a crash.
 
@@ -1430,7 +1432,7 @@ you take any phase 5 measurement.
 **Launch.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='5:gamerule advance_time false;6:gamerule advance_weather false;7:time set noon;8:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='5:gamerule advance_time false;6:gamerule advance_weather false;7:time set noon;8:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1500,7 +1502,7 @@ that the new GPU timing probe (`A1`) works.
 **Launch.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='5:gamerule advance_time false;6:gamerule advance_weather false;7:time set noon;8:weather clear;9:tp @p X Y Z YAW PITCH' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='5:gamerule advance_time false;6:gamerule advance_weather false;7:time set noon;8:weather clear;9:tp @p X Y Z YAW PITCH' ./gradlew runClient -PrunXmx=6G
 ```
 
 In a second tab, after the game window appears:
@@ -1590,11 +1592,11 @@ batch (`A4`) and the GPU timing probe (`A1`).
 
 ```bash
 # Run A: levers on, the defaults
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='5:gamerule advance_time false;6:gamerule advance_weather false;7:time set noon;8:weather clear;9:tp @p X Y Z YAW PITCH' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='5:gamerule advance_time false;6:gamerule advance_weather false;7:time set noon;8:weather clear;9:tp @p X Y Z YAW PITCH' ./gradlew runClient -PrunXmx=6G
 # Run B: levers A2, A3 and A4 off
-VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1 VOXY_BRIDGE_RESYNC=every VOXY_METAL_DRAW_BATCH=0 VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='5:gamerule advance_time false;6:gamerule advance_weather false;7:time set noon;8:weather clear;9:tp @p X Y Z YAW PITCH' ./gradlew runClient -PrunXmx=6G
+VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1 VOXY_BRIDGE_RESYNC=every VOXY_METAL_DRAW_BATCH=0 VOXY_QUICKPLAY="voxytest" VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='5:gamerule advance_time false;6:gamerule advance_weather false;7:time set noon;8:weather clear;9:tp @p X Y Z YAW PITCH' ./gradlew runClient -PrunXmx=6G
 # Run C, optional: without the A1 probe
-VOXY_VX_TIMING=0 VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='5:gamerule advance_time false;6:gamerule advance_weather false;7:time set noon;8:weather clear;9:tp @p X Y Z YAW PITCH' ./gradlew runClient -PrunXmx=6G
+VOXY_VX_TIMING=0 VOXY_QUICKPLAY="voxytest" VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='5:gamerule advance_time false;6:gamerule advance_weather false;7:time set noon;8:weather clear;9:tp @p X Y Z YAW PITCH' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1692,7 +1694,7 @@ could drag behind the camera.
 **Launch.**
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_DEBUG_CMD='5:time set midnight;6:weather clear' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_DEBUG_CMD='5:time set midnight;6:weather clear' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1761,7 +1763,7 @@ heats up, and no difference at all.
 **Launch.** The game switches the time every 180 s on its own:
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='5:gamerule advance_time false;6:gamerule advance_weather false;7:weather clear;8:time set noon;9:tp @p X Y Z YAW PITCH;190:time set midnight;370:time set noon;550:time set midnight' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_FRAME_TIMING=1 VOXY_DEBUG_CMD='5:gamerule advance_time false;6:gamerule advance_weather false;7:weather clear;8:time set noon;9:tp @p X Y Z YAW PITCH;190:time set midnight;370:time set noon;550:time set midnight' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**
@@ -1838,7 +1840,7 @@ washed out in rain or at night.
 and takes a screenshot every 45 s:
 
 ```bash
-VOXY_QUICKPLAY="voxytest" VOXY_FORCE_METAL=1 VOXY_FRAME_TIMING=1 VOXY_AUTO_SCREENSHOT=45 VOXY_DEBUG_CMD='5:gamerule advance_time false;6:gamerule advance_weather false;10:time set noon;12:weather clear;13:tp @p X Y Z YAW PITCH;100:weather rain;190:weather thunder;280:time set midnight;370:weather clear;460:time set noon' ./gradlew runClient -PrunXmx=6G
+VOXY_QUICKPLAY="voxytest" VOXY_FRAME_TIMING=1 VOXY_AUTO_SCREENSHOT=45 VOXY_DEBUG_CMD='5:gamerule advance_time false;6:gamerule advance_weather false;10:time set noon;12:weather clear;13:tp @p X Y Z YAW PITCH;100:weather rain;190:weather thunder;280:time set midnight;370:weather clear;460:time set noon' ./gradlew runClient -PrunXmx=6G
 ```
 
 **Steps.**

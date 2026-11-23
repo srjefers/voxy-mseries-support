@@ -158,10 +158,11 @@ tasks.named { it == 'runClient' }.configureEach { task ->
 
 // The release jar, run the way a launcher runs it (Loom's ClientProductionRunTask): the vanilla
 // client on intermediary names through Fabric Loader's KnotClient, the remapped jar from remapJar,
-// Fabric API and Sodium 0.8.1 from productionRuntimeMods, no Iris, Java 21, -Dvoxy.forceMetal=true,
-// game folder run/. It shows what runClient cannot: code that looks up a Minecraft member by its
-// Mojang name works in runClient and fails here (H7). VOXY_QUICKPLAY and -PrunXmx work as for
-// runClient. Java 21 is found by Gradle toolchains: the JVM that runs Gradle when it is a 21.
+// Fabric API and Sodium 0.8.1 from productionRuntimeMods, no Iris, Java 21, no Voxy JVM arguments
+// (Metal is on by default), game folder run/. It shows what runClient cannot: code that looks up a
+// Minecraft member by its Mojang name works in runClient and fails here (H7). VOXY_QUICKPLAY and
+// -PrunXmx work as for runClient; -PforceMetal=false passes -Dvoxy.forceMetal=false (the kill switch).
+// Java 21 is found by Gradle toolchains: the JVM that runs Gradle when it is a 21.
 dependencies {
     // Not transitive: the fabric-api jar nests its modules (jar-in-jar), as in a launcher's mods folder.
     productionRuntimeMods("net.fabricmc.fabric-api:fabric-api:${project.fabric_version}") { transitive = false }
@@ -171,7 +172,10 @@ tasks.register('runProductionClient', net.fabricmc.loom.task.prod.ClientProducti
     group = 'fabric'
     description = 'Runs the release jar like a launcher: intermediary names, Fabric API, Sodium, no Iris, Java 21.'
     javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
-    jvmArgs.add("-Dvoxy.forceMetal=true")
+    def forceMetal = project.findProperty("forceMetal")
+    if (forceMetal) {
+        jvmArgs.add("-Dvoxy.forceMetal=${forceMetal}")
+    }
     def xmx = project.findProperty("runXmx") ?: System.getenv("VOXY_RUN_XMX")
     if (xmx) {
         jvmArgs.add("-Xmx${xmx}")

@@ -47,15 +47,15 @@ step, then lists 13 short tests. Start with `PT-01`. The basics:
    `mc1.21.11-0.8.1`, and the Voxy jar. Iris 1.10.3 (not 1.10.4 to 1.10.7)
    and a shader pack such as BSL are optional. Never add `voxyworldgenv2`
    2.2.2, which is incompatible.
-4. Set the profile's JVM arguments to `-Xmx6G -Dvoxy.forceMetal=true`
-   (`-Xmx4G` on a 16 GB Mac). Without the flag, Voxy turns itself off.
+4. Set the profile's memory to `-Xmx6G` (`-Xmx4G` on a 16 GB Mac). Voxy
+   needs no other JVM argument: it turns on by itself.
 5. Get the [testing scripts](player-track.md#5-get-the-test-scripts). They
    check your log and pack everything into one zip.
 
 | Test ID | Test | Time |
 |---|---|---|
 | `PT-01` | Clean start without shaders | 20 min |
-| `PT-02` | F3 lines and the opt-in | 10 min |
+| `PT-02` | F3 lines and the off switch | 10 min |
 | `PT-03` | Iris and BSL (optional) | 15 min |
 | `PT-04` | Far terrain: edge, grass, water and horizon | 25 min |
 | `PT-05` | Rejoin five times: memory and threads | 20 min |
@@ -76,7 +76,7 @@ Voxy's lines in F3, press F3+F6 and set the row `debug` to *In Overlay*.
 ```bash
 git clone https://github.com/srjefers/voxy-mseries-support.git
 cd voxy-mseries-support
-VOXY_FORCE_METAL=1 ./gradlew runClient -PrunXmx=6G
+./gradlew runClient -PrunXmx=6G
 ```
 
 - The game folder is `run/`. The testing scripts find it on their own.
@@ -140,8 +140,10 @@ These are expected. Do not report them as failures.
   [Log messages checked during testing](../../README.md#log-messages-checked-during-testing).
 - `Viewport width or height was zero`: one per minimize.
 - `Voxy section saving still in progress`: saves that finish at quit.
-- `[M9 TRANSITIONAL] Voxy disabled on METAL backend`: the opt-in flag is
-  missing, as in the second half of `PT-02`.
+- `Voxy disabled on METAL backend: turned off with -Dvoxy.forceMetal=false`:
+  the off switch is set, as in the second half of `PT-02`. With an older
+  jar the line is `[M9 TRANSITIONAL] Voxy disabled on METAL backend` and
+  means `-Dvoxy.forceMetal=true` is missing.
 - A slow first launch with a new jar: Voxy compiles shaders into
   `~/.voxy/shader-cache`.
 - 30 fps after an idle minute: set *Video Settings > Sodium > Performance >
