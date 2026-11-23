@@ -99,7 +99,8 @@ launcher profile and back up your worlds.
 
 **Requirements:** Apple Silicon Mac, macOS 13 or newer, Minecraft 1.21.11,
 Fabric Loader 0.18.2, Fabric API 0.140.0+1.21.11, Sodium mc1.21.11-0.8.1
-(exactly). Iris 1.10.7 is optional. Do not use voxyworldgenv2 2.2.2.
+(exactly). Iris 1.10.3 is optional (1.10.4 to 1.10.7 break *Video Settings*
+with Sodium 0.8.1). Do not use voxyworldgenv2 2.2.2.
 
 **JVM arguments:** `-Xmx6G -Dvoxy.forceMetal=true` (`-Xmx4G` on a 16 GB
 Mac). Without `-Dvoxy.forceMetal=true`, Voxy turns itself off.

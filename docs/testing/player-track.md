@@ -49,7 +49,7 @@ maintainers' full test plan, so your result lands in the right place.
 | Fabric API | `0.140.0+1.21.11` | All tests | <https://modrinth.com/mod/fabric-api> |
 | Sodium | `mc1.21.11-0.8.1`, file `sodium-fabric-0.8.1+mc1.21.11.jar` | All tests | <https://modrinth.com/mod/sodium> |
 | Voxy for Apple Silicon | The newest pre-release, file `voxy-0.2.8-alpha-<commit>.jar` | All tests | <https://github.com/srjefers/voxy-mseries-support/releases> |
-| Iris | `1.10.7+1.21.11-fabric`, file `iris-fabric-1.10.7+mc1.21.11.jar` | Optional: PT-03 and the shader steps | <https://modrinth.com/mod/iris> |
+| Iris | `1.10.3+1.21.11-fabric`, file `iris-fabric-1.10.3+mc1.21.11.jar` | Optional: PT-03 and the shader steps | <https://modrinth.com/mod/iris> |
 | BSL Shaders | 10.1.3, file `BSL_v10.1.3.zip` | Optional, with Iris | <https://modrinth.com/shader/bsl-shaders> |
 | Chunky | 1.4.55, file `Chunky-Fabric-1.4.55.jar` | Optional: PT-11 | <https://modrinth.com/plugin/chunky> |
 
@@ -62,8 +62,12 @@ Read these before you download:
 - If you add Iris from the mod browser inside Prism or the Modrinth App,
   the launcher may also install a newer Sodium for it. Check the mods list
   afterwards. Keep only Sodium `0.8.1` and remove the other one.
-- Use the Fabric API and Iris versions above. They are the tested ones.
-  A newer Iris may need a newer Sodium.
+- Use the Fabric API version above. It is the tested one.
+- **Iris must be 1.10.3.** Modrinth lists newer Iris builds first: open the
+  *Versions* tab and pick `1.10.3+1.21.11-fabric`. Iris 1.10.4 to 1.10.7 are
+  made for a newer Sodium. They start, but with Sodium 0.8.1 the *Video
+  Settings* button does nothing, so you cannot open Voxy's settings. Iris
+  1.10.3 is new to this test plan: PT-03 is where it gets tested.
 - BSL 10.1.3 is the tested shader pack. Other packs are welcome too: say
   which one and its version in your report.
 - Do not install voxyworldgenv2 2.2.2. It is incompatible.
@@ -599,7 +603,7 @@ running. Green means Voxy is rendering.
 **Before you start**
 
 - PT-01 passed.
-- Iris 1.10.7 is in `mods`. Launch once with it, so Iris creates the
+- Iris 1.10.3 is in `mods`. Launch once with it, so Iris creates the
   `shaderpacks` folder.
 - `BSL_v10.1.3.zip` is in the `shaderpacks` folder of your game folder.
   Open it with `open "$VOXY_GAME_DIR/shaderpacks"`.
@@ -1345,6 +1349,7 @@ title.
 | The first launch is slow | Voxy compiles its shaders once and caches them in `~/.voxy/shader-cache`. |
 | BSL makes far terrain white | Set BSL's *LOD Density* to 0.25 (PT-03 step 2). |
 | The shader pack turned itself off | Iris turns the pack off when Voxy cannot build its renderer. Report it with the log. K or R tries again. |
+| *Video Settings* does nothing when you click it | Your Iris is 1.10.4 to 1.10.7, made for a newer Sodium. Use Iris 1.10.3. The log shows `MixinSodiumGameOptions` and `renderIconWithSpacing`. |
 | The game pauses when you click Terminal | Press F3+P until the chat says "Pause on lost focus: disabled". |
 | fps sits at 30 after a minute | Set *Reduce FPS when* to *Minimized*. |
 | fps jumps between 60, 40 and 30 | VSync is on. Turn it off for PT-12. |

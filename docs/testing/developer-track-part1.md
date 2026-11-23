@@ -96,6 +96,11 @@ Fabric API, Lithium, Mod Menu, Chunky and spark. You do not install mods by
 hand. Iris is loaded unless you add `-PnoIris=true`, so in these tests "no
 pack" means shaders turned off with K.
 
+Players use Iris 1.10.3, not 1.10.7 (see the README's hard requirements).
+With Sodium 0.8.1, Iris 1.10.4 to 1.10.7 break the *Video Settings* button in
+a launcher, but not in the dev client, so check that button in the launcher
+tests (P8).
+
 The dev client runs on the official launcher's Java 21, the Java players use,
 when the launcher is installed. Gradle prints `>>> runClient JVM: ...` and
 the log says `- java 21`. `-PrunJava=27` or `-PrunJava=<path to java>` picks
