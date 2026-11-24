@@ -10,6 +10,11 @@ OpenGL 4.6; macOS ships a frozen OpenGL 4.1, so this fork runs Voxy's entire
 LOD renderer on **Metal** while Minecraft itself keeps rendering on GL, and
 bridges the two worlds every frame through an IOSurface.
 
+![Minecraft on a Mac: a lake in front, then forests, a cherry grove and snowy mountains drawn all the way to the horizon](docs/images/voxy-lod-horizon.jpg)
+
+*Far terrain to the horizon on Apple Silicon: Voxy's LODs drawn with Metal
+(Minecraft 1.21.11, with a shader pack).*
+
 Tested on an Apple M4 Max (48 GB) with LOD terrain to the horizon; see
 [System requirements](#system-requirements) for measured memory and frame
 rates and for what smaller Macs need.
