@@ -419,6 +419,28 @@ public class ChunkBoundRenderer {
     private float loggedRadius = -1f;
     private int radiusLogFrame = 120;
 
+    /** H1 kill switch: VOXY_BOUND_RESET_QUEUES=0 leaves the add/removal queues alone in {@link #reset}. */
+    private static final boolean RESET_QUEUES = !"0".equals(
+            String.valueOf(System.getenv("VOXY_BOUND_RESET_QUEUES")).trim());
+    /** H1 queue drop: Metal only, the GL backend keeps its reset. */
+    private final boolean resetQueues = RESET_QUEUES && RenderBackendFactory.get().getType()
+            != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+
+    /** H2 kill switch: VOXY_BOUND_MIRROR_ALWAYS=0 stops mirror tracking while no Voxy renderer exists. */
+    private static final boolean MIRROR_ALWAYS = !"0".equals(
+            String.valueOf(System.getenv("VOXY_BOUND_MIRROR_ALWAYS")).trim());
+    /**
+     * H2: set once a Metal mask renderer has existed. From then on MixinRenderSectionManager keeps the
+     * static mirror in step with Sodium even while no Voxy renderer exists ('Enable Voxy' OFF): the
+     * mirror is only read to seed the next renderer, so it must not freeze half-built when the renderer
+     * goes away. Never set on GL, where the old behaviour stays byte-identical.
+     */
+    private static volatile boolean mirrorTracksWithoutRenderer = false;
+
+    public static boolean mirrorTracksWithoutRenderer() {
+        return mirrorTracksWithoutRenderer;
+    }
+
     /** Kill switch for the deferred add of newly uploaded sections (see addSection). */
     private static final boolean ADD_DEFER = !"0".equals(
             String.valueOf(System.getenv("VOXY_BOUND_ADD_DEFER")).trim());
@@ -447,6 +469,11 @@ public class ChunkBoundRenderer {
         }
         this.seedFromMirror();
         if (RenderBackendFactory.get().getType() != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+            if (MIRROR_ALWAYS && !mirrorTracksWithoutRenderer) {
+                mirrorTracksWithoutRenderer = true;
+                Logger.info("[Metal-LODTEST] bound-mask mirror tracks Sodium even with Voxy off (H2);"
+                        + " VOXY_BOUND_MIRROR_ALWAYS=0 reverts");
+            }
             Logger.info("[Metal-LODTEST] bound-mask new sections join " + (this.deferAdds
                     ? "when Sodium lists them (at once if it presents them in their upload frame, else at its"
                             + " next render-list build); VOXY_BOUND_ADD_DEFER=0 reverts"
@@ -714,7 +741,9 @@ public class ChunkBoundRenderer {
             this.promotedNow = 0;
             this.promotedAtBuild = 0;
         }
-        if (this.epsSet != null && this.splitLogCountdown-- <= 0) {
+        // Also without the trans split (no pack): transOnly=0. vx_mascara and the H1/H2
+        // checks read the mask size from this line.
+        if (this.splitLogCountdown-- <= 0) {
             this.splitLogCountdown = 600; // ~10s at 60fps
             Logger.info("[Metal-LODTEST] bound-mask split counts: opaque=" + count
                     + " transOnly=" + epsCount);
@@ -809,6 +838,37 @@ public class ChunkBoundRenderer {
     public void reset() {
         this.primary.chunk2idx.clear();
         if (this.epsSet != null) this.epsSet.chunk2idx.clear();
+        if (this.resetQueues) {
+            // H1 (Metal): reset() runs when Sodium builds a NEW RenderSectionManager
+            // (renderer reload: Apply with REQUIRES_RENDERER_RELOAD, F3+A, shader
+            // toggle, RD change, world join), which then re-announces every section
+            // it builds. LevelRenderer.allChanged runs Voxy's reload (order 900)
+            // BEFORE Sodium's (1000), so the fresh Voxy renderer had already queued
+            // its mirror seed, which survived this reset: every re-announced section
+            // hit "Chunk already in map" (~10 000 warnings per Apply), and after an RD
+            // drop the seed kept the old, wider ring in the mask over terrain Sodium
+            // no longer draws. Drop every queue with the resident set: Sodium's own
+            // announcements rebuild the mask. Without a Sodium reload (/voxy reload,
+            // 'Enable Voxy') reset() is not called and the seed stays, which is what
+            // Round 23 built it for. VOXY_BOUND_RESET_QUEUES=0 reverts.
+            int dropped = this.primary.addQueue.size() + this.primary.deferQueue.size();
+            int droppedRem = this.primary.remQueue.size();
+            this.primary.addQueue.clear();
+            this.primary.deferQueue.clear();
+            this.primary.remQueue.clear();
+            if (this.epsSet != null) {
+                dropped += this.epsSet.addQueue.size() + this.epsSet.deferQueue.size();
+                droppedRem += this.epsSet.remQueue.size();
+                this.epsSet.addQueue.clear();
+                this.epsSet.deferQueue.clear();
+                this.epsSet.remQueue.clear();
+            }
+            if (dropped + droppedRem > 0) {
+                Logger.info("[Metal-LODTEST] bound-mask reset by a new Sodium section manager: dropped " + dropped
+                        + " queued adds (mirror seed) and " + droppedRem + " removals; Sodium re-announces its"
+                        + " sections (H1); VOXY_BOUND_RESET_QUEUES=0 reverts");
+            }
+        }
     }
 
     public void free() {
