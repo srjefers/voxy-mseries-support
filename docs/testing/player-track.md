@@ -1,8 +1,12 @@
 # Player test track
 
 This guide is for players who want to help test Voxy for Apple Silicon.
-You use a normal launcher and the release jar. You do not need Gradle, a
-JDK or a copy of the source code.
+You use a normal launcher and a jar that you build once on your Mac. That
+sounds harder than it is: you paste one block of text into Terminal and wait
+a few minutes, or an AI assistant does it with you (see
+[Build the jar](../../README.md#build-the-jar)). There is no download because
+the Voxy team asked that jar builds not be shared, and building your own is
+also the safer way to get a mod. You do not need to know how to code.
 
 Each test has an ID that starts with `PT-`. Start with PT-01. After that, do
 as many tests as you like, in any order. Most take 10 to 30 minutes.
@@ -38,8 +42,10 @@ maintainers' full test plan, so your result lands in the right place.
   Modrinth App. CurseForge also works (see [Other launchers](#other-launchers)).
 - Terminal, in *Applications > Utilities*. The scripts use the `bash` that
   ships with macOS. You do not need Homebrew.
+- Git and a Java 21, to build the jar. [Build the jar](../../README.md#build-the-jar)
+  says where to get them, and how an AI assistant can do the build with you.
 - A GitHub account, to post reports.
-- About 2 GB of free disk space.
+- About 4 GB of free disk space, including about 1.6 GB for the jar build.
 
 ### Mods
 
@@ -48,7 +54,7 @@ maintainers' full test plan, so your result lands in the right place.
 | Fabric Loader | 0.18.2 | All tests | The Fabric Installer or your launcher |
 | Fabric API | `0.140.0+1.21.11` | All tests | <https://modrinth.com/mod/fabric-api> |
 | Sodium | `mc1.21.11-0.8.1`, file `sodium-fabric-0.8.1+mc1.21.11.jar` | All tests | <https://modrinth.com/mod/sodium> |
-| Voxy for Apple Silicon | The newest pre-release, file `voxy-0.2.8-alpha-metal.<n>-<commit>.jar` | All tests | <https://github.com/srjefers/voxy-mseries-support/releases> |
+| Voxy for Apple Silicon | The newest pre-release, file `voxy-0.2.8-alpha-metal.<n>-<commit>.jar` | All tests | You build it: [Build the jar](../../README.md#build-the-jar) |
 | Iris | `1.10.3+1.21.11-fabric`, file `iris-fabric-1.10.3+mc1.21.11.jar` | Optional: PT-03 and the shader steps | <https://modrinth.com/mod/iris> |
 | BSL Shaders | 10.1.3, file `BSL_v10.1.3.zip` | Optional, with Iris | <https://modrinth.com/shader/bsl-shaders> |
 | Chunky | 1.4.55, file `Chunky-Fabric-1.4.55.jar` | Optional: PT-11 | <https://modrinth.com/plugin/chunky> |
@@ -73,9 +79,9 @@ Read these before you download:
 - Do not install voxyworldgenv2 2.2.2. It is incompatible.
 - Keep the test profile small: only the mods in this table. Other mods make
   results hard to compare.
-- Use the jar from the Releases page only, not a patched or rebuilt one.
-  Keep its file name. The part after `alpha-` is the commit, and every
-  report needs it.
+- Build the jar from the pre-release tag, as [Build the jar](../../README.md#build-the-jar)
+  shows, without changing the code. Keep its file name. The part after
+  `alpha-` is the commit, and every report needs it.
 
 Use a separate profile and game folder for testing. The tests change
 settings and create test worlds. Keep your normal worlds out of it.

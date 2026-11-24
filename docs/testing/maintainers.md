@@ -7,7 +7,7 @@ are required, in this order. Steps 5 and 6 are optional.
 |---|---|---|---|
 | 1 | Create the `testing` label | Yes | Yes |
 | 2 | Merge the code of PR #21 into `dev` | Yes | Yes (PR) |
-| 3 | Publish a pre-release with the jar | Yes | Yes |
+| 3 | Publish a source-only pre-release (no jar) | Yes | Yes |
 | 4 | Post the call for testers and pin it | Yes | Yes |
 | 5 | Turn on Discussions with a Testing category | Optional | Partly |
 | 6 | Track coverage in a public Project | Optional | Partly |
@@ -68,16 +68,19 @@ gh pr merge 21 -R srjefers/voxy-mseries-support --merge
 
 Web UI: open PR #21 and use *Merge pull request*.
 
-## 3. Publish a pre-release with the jar (required)
+## 3. Publish a source-only pre-release (required)
 
-Players need a public download. Actions artifacts need repo access and
-expire after 90 days, so use a GitHub Release marked as a pre-release.
+**No jar, ever.** Upstream Voxy is "All rights reserved. Do not
+redistribute.", and on 2026-11-24 the Voxy team confirmed it for this fork:
+the source can be on GitHub, but jar builds must not be shared. A
+pre-release is therefore a tag and its notes. Never attach a jar, never send
+one to a tester, and keep the `manual-artifact` workflow disabled: its
+artifact is a download too. Players build the jar with
+[Build the jar](../../README.md#build-the-jar).
 
-Build from `dev` after step 2. It then holds the code of #21 and the kit.
-The kit adds only docs and scripts, so it does not change the mod's code.
-
-Build from a clean commit that is already on GitHub. Otherwise the jar name
-ends in `-dirty` and the tag points at a commit testers cannot see.
+Tag a clean commit of `dev` that is already on GitHub, after step 2. A
+player's jar is named after that commit, so the jar name in a report tells
+you which code they ran. Build it once yourself to check the name:
 
 ```bash
 git switch dev
@@ -85,56 +88,34 @@ git pull                                  # the commit must be on GitHub
 git status --short --untracked-files=no   # must print nothing
 rm -f build/libs/voxy-*.jar              # old jars keep other names
 ./gradlew build
-JAR=$(ls build/libs/voxy-*.jar)
-echo "$JAR"                               # one file, no -dirty
-shasum -a 256 "$JAR"                      # paste into the notes below
+ls build/libs/                            # one voxy-<version>-<commit>.jar, no -dirty
 ```
 
-Save the release notes to a file outside the repo, for example
-`~/voxy-release-notes.md`:
+Write the notes to a file outside the repo, for example
+`~/voxy-release-notes.md`. Start from the notes of the latest pre-release,
+which open with *Build the jar*, the copy-paste block and the AI-assistant
+prompt. Change the tag in both `git clone` lines, the jar name and the list
+of changes.
 
-```markdown
-Test build for the public testing round. Alpha software: use a separate
-launcher profile and back up your worlds.
-
-**Requirements:** Apple Silicon Mac, macOS 13 or newer, Minecraft 1.21.11,
-Fabric Loader 0.18.2, Fabric API 0.140.0+1.21.11, Sodium mc1.21.11-0.8.1
-(exactly). Iris 1.10.3 is optional (1.10.4 to 1.10.7 break *Video Settings*
-with Sodium 0.8.1). Do not use voxyworldgenv2 2.2.2.
-
-**Install:** put the jar in `mods/`. Voxy turns on by itself; no JVM
-argument is needed for it. Raise the launcher's default memory to `-Xmx6G`
-(`-Xmx4G` on a 16 GB Mac). `-Dvoxy.forceMetal=false` turns Voxy off.
-
-**How to test:** [testing guide](https://github.com/srjefers/voxy-mseries-support/blob/dev/docs/testing/README.md).
-**Report results:** [test report form](https://github.com/srjefers/voxy-mseries-support/issues/new?template=test-report.yml).
-
-SHA-256: <paste the shasum output>
-```
-
-Create it as a draft, check it, then publish:
+Create the release as a draft, check it, then publish:
 
 ```bash
-TAG=v0.2.8-alpha-metal.1
-gh release create "$TAG" "$JAR" -R srjefers/voxy-mseries-support \
+TAG=v0.2.8-alpha-metal.<n>
+gh release create "$TAG" -R srjefers/voxy-mseries-support \
   --target "$(git rev-parse HEAD)" \
   --prerelease --draft \
-  --title "Voxy for Apple Silicon 0.2.8-alpha-metal.1 (Minecraft 1.21.11)" \
+  --title "Voxy (unofficial Apple Silicon port) <version> for Minecraft 1.21.11 — source only" \
   --notes-file ~/voxy-release-notes.md
-gh release view "$TAG" -R srjefers/voxy-mseries-support --web   # review
+gh release view "$TAG" -R srjefers/voxy-mseries-support --web   # review: no jar under Assets
 gh release edit "$TAG" -R srjefers/voxy-mseries-support --draft=false
 ```
 
 Web UI: *Code > Releases > Draft a new release*. Type the new tag, pick the
-commit as *Target*, add the title and notes, drag the jar in, tick *Set as a
-pre-release*, then *Save draft* and later *Publish release*.
+commit as *Target*, add the title and notes, tick *Set as a pre-release*,
+then *Save draft* and later *Publish release*. Do not drag a jar in.
 
-Then put the release URL in place of "link to be added" in
-`docs/testing/call-for-testers.md`. The guides link to the Releases page, so
-they need no change.
-
-The reporter of issue #18 hand-patched an old jar. You can point them to
-this release.
+Then change the tag in the README's *Build the jar* block and AI-assistant
+prompt, and the release link in `docs/testing/call-for-testers.md`.
 
 ## 4. Post the call for testers and pin it (required)
 

@@ -28,7 +28,7 @@ Intel Macs cannot run the Metal path. These Macs help the most right now:
 | | Player track | Developer track |
 |---|---|---|
 | Guide | [player-track.md](player-track.md) | [Part 1](developer-track-part1.md), [part 2](developer-track-part2.md), [part 3](developer-track-part3.md) |
-| You need | A launcher and the release jar | Git, JDK 21 (arm64), Terminal |
+| You need | A launcher, plus Git, Java 21 and Terminal to build the jar once | Git, JDK 21 (arm64), Terminal |
 | Time | 30 to 90 minutes, no programming | 1 to 3 hours per phase |
 | Tests | `PT-01` to `PT-13` | `P0-*` to `P8-*`, `UC-*`, `7.1` to `7.7` |
 
@@ -37,9 +37,10 @@ Intel Macs cannot run the Metal path. These Macs help the most right now:
 Follow the [player guide](player-track.md). It shows each launcher step by
 step, then lists 13 short tests. Start with `PT-01`. The basics:
 
-1. Download the Voxy jar from
-   [Releases](https://github.com/srjefers/voxy-mseries-support/releases).
-   Keep its file name, for example `voxy-0.2.8-alpha-metal.1-<commit>.jar`.
+1. Build the Voxy jar as in [Build the jar](../../README.md#build-the-jar):
+   one block of text pasted into Terminal and a few minutes, or an AI
+   assistant does it with you. There is no download. Keep the file name, for
+   example `voxy-0.2.8-alpha-metal.1-<commit>.jar`.
 2. In your launcher (official, Prism, Modrinth App or CurseForge), create a
    Minecraft 1.21.11 profile with Fabric Loader 0.18.2 or newer. Give it its
    own empty game folder.
