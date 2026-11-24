@@ -2093,8 +2093,7 @@ checks and the developer details.
 
 ### Phase 8 setup
 
-1. Build the jar, or download it from
-   [Releases](https://github.com/srjefers/voxy-mseries-support/releases):
+1. Build the jar (this fork publishes no prebuilt jar):
 
    ```bash
    ./gradlew build

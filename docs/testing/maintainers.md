@@ -7,7 +7,7 @@ are required, in this order. Steps 5 and 6 are optional.
 |---|---|---|---|
 | 1 | Create the `testing` label | Yes | Yes |
 | 2 | Merge the code of PR #21 into `dev` | Yes | Yes (PR) |
-| 3 | Publish a pre-release with the jar | Yes | Yes |
+| 3 | Publish a pre-release (the jar only with upstream's written OK) | Yes | Yes |
 | 4 | Post the call for testers and pin it | Yes | Yes |
 | 5 | Turn on Discussions with a Testing category | Optional | Partly |
 | 6 | Track coverage in a public Project | Optional | Partly |
@@ -70,8 +70,17 @@ Web UI: open PR #21 and use *Merge pull request*.
 
 ## 3. Publish a pre-release with the jar (required)
 
-Players need a public download. Actions artifacts need repo access and
-expire after 90 days, so use a GitHub Release marked as a pre-release.
+**The jar needs the Voxy developers' written permission.** Upstream Voxy is
+"All rights reserved. Do not redistribute.", and a public jar is
+redistribution. Without an explicit written OK, publish the pre-release
+with its tag and notes only, and point players at
+[Build the jar](../../README.md#build-the-jar). The 0.2.8-alpha-metal.1 jar
+was withdrawn on 2026-11-24 for this reason. The same goes for the
+`manual-artifact` workflow: its artifact is a download too.
+
+With that permission, players need a public download. Actions artifacts
+need repo access and expire after 90 days, so use a GitHub Release marked
+as a pre-release.
 
 Build from `dev` after step 2. It then holds the code of #21 and the kit.
 The kit adds only docs and scripts, so it does not change the mod's code.

@@ -6,12 +6,14 @@
     "commit": "${commit}",
     "buildtime": "${buildtime}"
   },
-  "name": "Voxy",
+  "name": "Voxy (unofficial Apple Silicon port)",
   "description": "Far distance rendering mod utilising LoDs",
   "authors": [
     "Cortex"
   ],
   "contact": {
+    "sources": "https://github.com/srjefers/voxy-mseries-support",
+    "issues": "https://github.com/srjefers/voxy-mseries-support/issues"
   },
   "license": "All-Rights-Reserved",
   "icon": "assets/voxy/icon.png",
