@@ -13,6 +13,7 @@ import me.cortex.voxy.client.core.metal.MetalBuffer;
 import me.cortex.voxy.client.core.rendering.Viewport;
 import me.cortex.voxy.client.core.rendering.util.MetalMvpUtil;
 import me.cortex.voxy.common.util.JomlCompat;
+import net.minecraft.util.Mth;
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
@@ -35,8 +36,15 @@ public final class LodCloudLayer {
     private static final int GL_RGBA8 = 0x8058;
     private static final int PARAMS_BINDING = 0;
     private static final int CELLS_BINDING = 1;
+    private static final int COVERAGE_BINDING = 2;
     /** std140 size of {@code LodCloudParams} (lod_clouds_params.glsl). */
-    private static final int PARAMS_SIZE = 144;
+    private static final int PARAMS_SIZE = 160;
+    /** Size of a LOD column (a top-level node) in blocks. */
+    private static final int COLUMN_BLOCKS = 512;
+    /** Largest coverage grid side (columns); 257 columns span ±65 km. */
+    private static final int MAX_COVERAGE_SIZE = 257;
+    /** Coverage grid uploads at most 4 times a second. */
+    private static final long COVERAGE_UPLOAD_INTERVAL_NS = 250_000_000L;
     /** Cells marched per pixel before a grazing ray counts as a cloud wall. */
     private static final int MAX_MARCH_CELLS = 48;
 
@@ -52,11 +60,22 @@ public final class LodCloudLayer {
     private IGpuBuffer cellBuffer;
     private int cellGeneration = Integer.MIN_VALUE;
 
+    // Where the LOD terrain is around the camera: a grid of 512-block columns, 32 words
+    // of 32 bits per column, one bit per 16-block cell (see LodTerrainCoverage.fill).
+    private IGpuBuffer coverageBuffer;
+    private int[] coverageWords;
+    private int coverageSize;
+    private int coverageVersion = Integer.MIN_VALUE;
+    private int coverageCentreX;
+    private int coverageCentreZ;
+    private long coverageUploadNanos;
+
     /**
      * Encode the layer into the open LOD render pass, if it runs this frame. Must be
      * called after the LOD terrain draws, inside the same encoder (needs their depth).
+     * {@code coverage} limits the clouds to LOD terrain; null = no limit.
      */
-    public void render(RenderBackend backend, RenderEncoder enc, Viewport<?> viewport) {
+    public void render(RenderBackend backend, RenderEncoder enc, Viewport<?> viewport, LodTerrainCoverage coverage) {
         LodClouds.Frame f = LodClouds.consumeFrame();
         if (f == null) return;
         try {
@@ -78,6 +97,22 @@ public final class LodCloudLayer {
             return;
         }
 
+        // The coverage grid is centred on the camera's LOD column (512 blocks,
+        // RenderDistanceTracker's >> 9) as of its last upload; the shader gets the camera
+        // position relative to that column's corner.
+        boolean limited = false;
+        if (coverage != null) {
+            try {
+                limited = this.uploadCoverage(backend, coverage,
+                        Mth.floor(viewport.cameraX) >> 9, Mth.floor(viewport.cameraZ) >> 9);
+            } catch (Throwable t) {
+                LodClouds.markBroken(t);
+                return;
+            }
+        }
+        float inColumnX = (float) (viewport.cameraX - this.coverageCentreX * (double) COLUMN_BLOCKS);
+        float inColumnZ = (float) (viewport.cameraZ - this.coverageCentreZ * (double) COLUMN_BLOCKS);
+
         var mvp = new Matrix4f(viewport.MVP);
         // Same depth convention as the LOD terrain (MDICSectionRenderer.uploadUniformBuffer).
         if (MetalMvpUtil.METAL_NDC_REMAP && backend.getType() != BackendType.OPENGL) {
@@ -87,9 +122,15 @@ public final class LodCloudLayer {
         try (var stack = MemoryStack.stackPush()) {
             long addr = stack.nmalloc(16, PARAMS_SIZE);
             writeParams(addr, mvp, f);
+            MemoryUtil.memPutFloat(addr + 144, inColumnX);           // 144: coverage
+            MemoryUtil.memPutFloat(addr + 148, inColumnZ);
+            MemoryUtil.memPutFloat(addr + 152, limited ? this.coverageSize : 0.0f);
+            MemoryUtil.memPutFloat(addr + 156, limited ? 1.0f : 0.0f);
             enc.setPipeline(this.pipeline);
             enc.setBytes(PARAMS_BINDING, addr, PARAMS_SIZE);
             enc.setBuffer(CELLS_BINDING, this.cellBuffer, 0);
+            // Bound even when unused (the shader skips it): keeps every declared slot valid.
+            enc.setBuffer(COVERAGE_BINDING, limited ? this.coverageBuffer : this.cellBuffer, 0);
             enc.draw(RenderEncoder.PRIMITIVE_TRIANGLE_STRIP, 0, 4, 1, 0);
         }
         LodClouds.onDrawn(f);
@@ -117,6 +158,52 @@ public final class LodCloudLayer {
             MemoryUtil.memPutInt(ptr + (long) i * 4L, bits[i]);
         }
         this.cellGeneration = generation;
+        return true;
+    }
+
+    /**
+     * Rebuild the coverage grid around the camera's column when the LOD terrain or the
+     * camera's column changed, at most every {@link #COVERAGE_UPLOAD_INTERVAL_NS} (the
+     * grid is ~2 MB at 63 LOD distance, and the terrain changes every frame while LODs
+     * stream in). Between uploads the shader keeps reading the last grid, positioned
+     * by its own centre, so it stays correct, only a little behind.
+     */
+    private boolean uploadCoverage(RenderBackend backend, LodTerrainCoverage coverage, int centreX, int centreZ) {
+        int size = Math.min(2 * (int) Math.ceil(LodClouds.lodRadiusBlocks() / COLUMN_BLOCKS) + 3, MAX_COVERAGE_SIZE);
+        int version = coverage.version();
+        long now = System.nanoTime();
+        if (this.coverageBuffer != null && size == this.coverageSize) {
+            boolean changed = version != this.coverageVersion
+                    || centreX != this.coverageCentreX || centreZ != this.coverageCentreZ;
+            if (!changed || now - this.coverageUploadNanos < COVERAGE_UPLOAD_INTERVAL_NS) {
+                return true;
+            }
+        }
+        int words = size * size * LodTerrainCoverage.CELLS;
+        if (this.coverageWords == null || this.coverageWords.length != words) {
+            this.coverageWords = new int[words];
+        }
+        coverage.fill(this.coverageWords, centreX, centreZ, size);
+        long bytes = (long) words * 4L;
+        if (this.coverageBuffer == null || this.coverageBuffer.size() != bytes) {
+            if (this.coverageBuffer != null) this.coverageBuffer.free();
+            this.coverageBuffer = backend.createBuffer(bytes).name("LodCloudLayer.coverage");
+        }
+        if (!(this.coverageBuffer instanceof MetalBuffer mb) || mb.getContentsPtr() == 0) {
+            throw new IllegalStateException("cloud coverage buffer is not CPU-visible: " + this.coverageBuffer);
+        }
+        // Shared storage, synchronous Metal frame: nothing reads it right now (see uploadCells).
+        MemoryUtil.memIntBuffer(mb.getContentsPtr(), words).put(this.coverageWords);
+        if (this.coverageVersion == Integer.MIN_VALUE) {
+            me.cortex.voxy.common.Logger.info("[Metal-CLOUDS] clouds only over LOD terrain: grid of "
+                    + size + "x" + size + " LOD columns, 16-block cells, "
+                    + coverage.sectionCount() + " top-level sections with terrain so far");
+        }
+        this.coverageSize = size;
+        this.coverageVersion = version;
+        this.coverageCentreX = centreX;
+        this.coverageCentreZ = centreZ;
+        this.coverageUploadNanos = now;
         return true;
     }
 
@@ -155,5 +242,10 @@ public final class LodCloudLayer {
             this.cellBuffer = null;
         }
         this.cellGeneration = Integer.MIN_VALUE;
+        if (this.coverageBuffer != null) {
+            this.coverageBuffer.free();
+            this.coverageBuffer = null;
+        }
+        this.coverageVersion = Integer.MIN_VALUE;
     }
 }

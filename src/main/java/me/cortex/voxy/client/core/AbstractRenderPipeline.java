@@ -910,7 +910,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                 if (this.lodCloudLayer == null) {
                     this.lodCloudLayer = new me.cortex.voxy.client.core.rendering.clouds.LodCloudLayer();
                 }
-                this.lodCloudLayer.render(backend, enc, viewport);
+                this.lodCloudLayer.render(backend, enc, viewport, this.nodeManager.lodCoverage());
             }
         }
         // Iris gbuffer injection: export the LOD pass's depth into the R32F

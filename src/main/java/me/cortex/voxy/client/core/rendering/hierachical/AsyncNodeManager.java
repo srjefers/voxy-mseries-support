@@ -76,6 +76,8 @@ public class AsyncNodeManager {
     }
 
     private final NodeManager manager;
+    /** Where the LOD terrain is, for the LOD cloud layer: the render service's (null on GL or with VOXY_LOD_CLOUDS=0). */
+    private final me.cortex.voxy.client.core.rendering.clouds.LodTerrainCoverage lodCoverage;
     private final BasicAsyncGeometryManager geometryManager;
     private final IGeometryData geometryData;
     private final SectionUpdateRouter router;
@@ -102,6 +104,7 @@ public class AsyncNodeManager {
         // AsyncNodeManager will use an AsyncGeometryManager as the manager for the data store, and sync the results on the render thread
         this.geometryData = geometryData;
         this.geometryCapacity = ((BasicSectionGeometryData)geometryData).getGeometryCapacityBytes();
+        this.lodCoverage = renderService.lodCoverage();
 
         this.maxNodeCount = maxNodeCount;
 
@@ -770,6 +773,11 @@ public class AsyncNodeManager {
     public void submitRemoveBatch(MemoryBuffer batch) {//Only called from render thread
         this.removeBatchQueue.add(batch);
         this.addWork();
+    }
+
+    /** Where the LOD terrain is (LOD cloud layer); null on GL or with VOXY_LOD_CLOUDS=0. */
+    public me.cortex.voxy.client.core.rendering.clouds.LodTerrainCoverage lodCoverage() {
+        return this.lodCoverage;
     }
 
     public void addTopLevel(long section) {//Only called from render thread
