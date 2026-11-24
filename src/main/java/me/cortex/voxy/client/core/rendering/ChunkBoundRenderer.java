@@ -320,6 +320,76 @@ public class ChunkBoundRenderer {
         }
     }
 
+    /**
+     * Kill switch for the Sodium-matched mask radius (Metal). VOXY_BOUND_SODIUM_RADIUS=0 restores
+     * max(render distance, 320 blocks), the radius M9 Phase 4 copied from upstream's LOD fog code.
+     */
+    private static final boolean SODIUM_RADIUS = !"0".equals(
+            String.valueOf(System.getenv("VOXY_BOUND_SODIUM_RADIUS")).trim());
+
+    /**
+     * The distance Sodium culled its sections at in its last render-list build
+     * (RenderSectionManager.getSearchDistance, captured by MixinRenderSectionManager); -1 until the
+     * first build. Render thread only; volatile for safety.
+     */
+    private static volatile float sodiumSearchDistance = -1f;
+
+    public static void noteSodiumSearchDistance(float blocks) {
+        sodiumSearchDistance = blocks;
+    }
+
+    /**
+     * Radius (blocks) of outline.vsh's shouldRender cull on the GL path, kept as it was: the GL
+     * backend stays byte-identical.
+     */
+    private static float legacyMaskRadius() {
+        return Math.max(Minecraft.getInstance().gameRenderer.getRenderDistance(), 20 * 16);
+    }
+
+    /**
+     * Radius (blocks) of the mask's per-section distance cull on Metal. It has to be the distance
+     * Sodium culls its own sections at: outline.vsh's shouldRender already mirrors Sodium's
+     * OcclusionCuller.isWithinRenderDistance test (the same 1-block pad, the same cylinder), only the
+     * radius differed.
+     *
+     * The old radius, max(render distance, 320), covered built sections Sodium does not draw whenever
+     * the render distance is under 20 chunks: sections stay built after the camera moves away, until
+     * their chunk unloads at about RD + 1 chunks. At RD 16 (the launcher setup) the ring from 256 to
+     * ~290 blocks was masked, so the LODs were discarded and Sodium drew nothing: holes with no
+     * texture on the ground at the vanilla/LOD border, behind the player and to the sides, and the
+     * grey wall plus sky-coloured strip seen over the ocean (H9). Sodium also shortens its search
+     * distance to the fog end when fog occlusion is on and the fog is opaque (under water, nether,
+     * blindness); the captured value covers that too. Upstream's BoundRenderer uses
+     * getEffectiveRenderDistance()*16, which is the fallback before Sodium's first build.
+     */
+    private float metalMaskRadius() {
+        float rdBlocks = Minecraft.getInstance().options.getEffectiveRenderDistance() * 16f;
+        float radius;
+        String source;
+        if (!SODIUM_RADIUS) {
+            radius = legacyMaskRadius();
+            source = "legacy max(RD, 320), VOXY_BOUND_SODIUM_RADIUS=0";
+        } else if (sodiumSearchDistance > 0f) {
+            radius = sodiumSearchDistance;
+            source = "Sodium search distance";
+        } else {
+            radius = rdBlocks;
+            source = "render distance (no Sodium build yet)";
+        }
+        this.radiusLogFrame++;
+        if (Math.abs(radius - this.loggedRadius) > 1f && this.radiusLogFrame >= 120) {
+            this.radiusLogFrame = 0;
+            this.loggedRadius = radius;
+            Logger.info("[Metal-LODTEST] bound-mask radius=" + radius + " blocks (" + source
+                    + "; RD " + rdBlocks + ", old max(RD, 320)=" + legacyMaskRadius() + ")");
+        }
+        return radius;
+    }
+
+    /** Last radius logged by {@link #metalMaskRadius} and the frames since (throttle: one line per ~2s). */
+    private float loggedRadius = -1f;
+    private int radiusLogFrame = 120;
+
     /** Throttle for the split-counts diagnostic log (~10s at 60fps). */
     private int splitLogCountdown = 0;
 
@@ -415,7 +485,7 @@ public class ChunkBoundRenderer {
     public void render(Viewport<?> viewport) {
         this.primary.drainRemovals();
 
-        this.uploadSceneUniform(this.uniformBuffer, viewport, false, this.primary.chunk2idx.size());
+        this.uploadSceneUniform(this.uniformBuffer, viewport, false, this.primary.chunk2idx.size(), legacyMaskRadius());
 
 
         {
@@ -478,8 +548,11 @@ public class ChunkBoundRenderer {
      *        pass true ONLY from the Metal path so this pass and the LOD
      *        terrain pass keep the same depth convention (both gate on
      *        {@link MetalMvpUtil#METAL_NDC_REMAP}).
+     * @param maskRadius shouldRender's cull radius in blocks (negInnerSec.w):
+     *        {@link #legacyMaskRadius} on GL, {@link #metalMaskRadius} on Metal.
      */
-    private void uploadSceneUniform(IGpuBuffer target, Viewport<?> viewport, boolean metalNdcRemap, int count) {
+    private void uploadSceneUniform(IGpuBuffer target, Viewport<?> viewport, boolean metalNdcRemap, int count,
+                                    float maskRadius) {
         long ptr = UploadStream.INSTANCE.upload(target, 0, 128);
         MemoryUtil.memSet(ptr, 0, 128);
 
@@ -496,8 +569,7 @@ public class ChunkBoundRenderer {
                 (float) (viewport.cameraY - sy),
                 (float) (viewport.cameraZ - sz));
         JomlCompat.put(negInnerSec, ptr + 80);
-        float renderDistance = Math.max(Minecraft.getInstance().gameRenderer.getRenderDistance(), 20 * 16);
-        MemoryUtil.memPutFloat(ptr + 92, renderDistance);
+        MemoryUtil.memPutFloat(ptr + 92, maskRadius);
 
         var mvp = viewport.MVP.translate(negInnerSec.negate(), new Matrix4f());
         if (metalNdcRemap && MetalMvpUtil.METAL_NDC_REMAP) {
@@ -549,9 +621,10 @@ public class ChunkBoundRenderer {
             Logger.info("[Metal-LODTEST] bound-mask split counts: opaque=" + count
                     + " transOnly=" + epsCount);
         }
-        this.uploadSceneUniform(this.uniformBuffer, viewport, true, count);
+        float maskRadius = this.metalMaskRadius();
+        this.uploadSceneUniform(this.uniformBuffer, viewport, true, count, maskRadius);
         if (epsCount > 0) {
-            this.uploadSceneUniform(this.epsUniformBuffer, viewport, true, epsCount);
+            this.uploadSceneUniform(this.epsUniformBuffer, viewport, true, epsCount, maskRadius);
         }
 
         try (RenderEncoder encoder = backend.beginRenderPass(boundDepthPass(viewport))) {
