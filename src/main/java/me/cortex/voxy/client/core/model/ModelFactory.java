@@ -27,6 +27,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.BlockAndTintGetter;
 import net.minecraft.world.level.ColorResolver;
+import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
@@ -34,11 +35,14 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.world.level.block.SnowLayerBlock;
 import net.minecraft.world.level.block.VegetationBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.lighting.LevelLightEngine;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import org.jetbrains.annotations.Nullable;
 import org.lwjgl.system.MemoryUtil;
 
@@ -85,6 +89,58 @@ public class ModelFactory {
     public static final boolean PLANT_CROSS = !"0".equals(System.getenv("VOXY_LOD_PLANT_CROSS"));
     private static final java.util.concurrent.atomic.AtomicBoolean PLANT_CROSS_LOGGED =
             new java.util.concurrent.atomic.AtomicBoolean();
+
+    /**
+     * H16 (Metal only): "flat" blocks, whose shape is ONE box covering the whole footprint from the
+     * floor up to less than a block (snow layers 1-7, carpets, bottom slabs, farmland, dirt path...).
+     * The Metal bake writes no depth (MetalViewCapture.emitToStream), so their top face came out at
+     * offset 0, on the cell top, and the bake fill turned their short side faces into full opaque
+     * tiles: the LOD drew a snow layer as a full snow cube, 0.875 blocks above vanilla. At the
+     * vanilla/LOD seam that left a camera-facing step (the dark "stair" line on snow, seen through the
+     * spyglass), and the LOD inside the vanilla ring stood above the real snow (a red band under
+     * VOXY_BOUND_DEBUG, only on snow). For these blocks the bakery keeps the real side coverage (no
+     * fill), the top face gets its real indent (1 - height, what the GL bake measures), and model flag
+     * 32 keeps that indent scaled with the cell at every level (quad_util), so a coarse flat voxel stays
+     * a closed slab. VOXY_LOD_FLAT_HEIGHT=0 reverts. Read from the bakery too. GL is unchanged.
+     */
+    public static final boolean FLAT_HEIGHT =
+            !"0".equals(String.valueOf(System.getenv("VOXY_LOD_FLAT_HEIGHT")).trim())
+            && me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                    != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+    private static final java.util.concurrent.atomic.AtomicInteger FLAT_LOGGED =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /**
+     * Height in (0, 1) of a {@link #FLAT_HEIGHT} block's shape, or -1 for every other state (fluids,
+     * waterlogged states, full or empty shapes, several boxes, an inset footprint) and when the
+     * switch is off.
+     */
+    public static double metalFlatHeight(BlockState state) {
+        if (!FLAT_HEIGHT || state.getBlock() instanceof LiquidBlock || !state.getFluidState().isEmpty()) {
+            return -1;
+        }
+        VoxelShape shape;
+        try {
+            shape = state.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
+        } catch (RuntimeException e) {
+            return -1;// a shape that needs a real level: leave the bake as it was
+        }
+        if (shape.isEmpty()) {
+            return -1;
+        }
+        var boxes = shape.toAabbs();
+        if (boxes.size() != 1) {
+            return -1;
+        }
+        AABB box = boxes.get(0);
+        final double eps = 1.0e-4;
+        if (box.minX > eps || box.minZ > eps || box.minY > eps
+                || box.maxX < 1 - eps || box.maxZ < 1 - eps
+                || box.maxY <= eps || box.maxY >= 1 - eps) {
+            return -1;
+        }
+        return box.maxY;
+    }
 
     public static final int MODEL_TEXTURE_SIZE = 16;
     public static final int LAYERS = Integer.numberOfTrailingZeros(MODEL_TEXTURE_SIZE);
@@ -637,6 +693,25 @@ public class ModelFactory {
             }
         }
 
+        // H16 flat blocks (see FLAT_HEIGHT): the top face gets its real indent. The bakery already
+        // skipped the fill for them, so the side faces keep their real height (computeBounds below).
+        boolean flatModel = false;
+        if (!isFluid && !plantCrossModel) {
+            double flatHeight = metalFlatHeight(blockState);
+            int up = Direction.UP.get3DDataValue();
+            if (flatHeight > 0 && sizes[up] >= 0.0f && sizes[up] < 0.01f) {
+                sizes[up] = (float) (1.0 - flatHeight);
+                flatModel = true; // GPU model flag bit 32 (quad_util keeps the indent scaled), Metal only
+                boolean snow = blockState.getBlock() instanceof SnowLayerBlock;
+                if (snow || FLAT_LOGGED.getAndIncrement() < 3) {
+                    int[] north = TextureUtils.computeBounds(textureData[Direction.NORTH.get3DDataValue()], checkMode);
+                    Logger.info("[Metal-LODTEST] H16 flat block " + blockState + ": height " + flatHeight
+                            + ", top indent " + sizes[up] + ", north face rows " + north[2] + ".." + north[3]
+                            + " of 0..15 (VOXY_LOD_FLAT_HEIGHT=0 reverts)");
+                }
+            }
+        }
+
         //TODO: THIS, note this can be tested for in 2 ways, re render the model with quad culling disabled and see if the result
         // is the same, (if yes then needs double sided quads)
         // another way to test it is if e.g. up and down havent got anything rendered but the sides do (e.g. all plants etc)
@@ -801,6 +876,7 @@ public class ModelFactory {
         //TODO: THIS
         modelFlags |= isShaded?8:0;//model has AO and shade
         modelFlags |= plantCrossModel?16:0;//Metal plant cross (see quads.frag VOXY_LOD_PLANT_EDGEFADE); never set on GL
+        modelFlags |= flatModel?32:0;//Metal flat block, H16 (see quad_util VOXY_LOD_ABS_INDENT); never set on GL
 
         //modelFlags |= blockRenderLayer == RenderLayer.getSolid()?0:1;// should discard alpha
         MemoryUtil.memPutInt(uploadPtr, modelFlags); uploadPtr += 4;

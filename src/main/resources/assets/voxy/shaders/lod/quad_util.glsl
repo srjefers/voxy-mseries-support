@@ -200,7 +200,16 @@ void setupQuad(out QuadData quad, const in Quad rawQuad, uvec2 sPos, bool genera
     // at the wrong world height. Divide by lodScale so the indent stays
     // ABSOLUTE (in blocks) at every level. Metal-only define
     // (VOXY_LOD_ABS_INDENT, kill switch =0); GL keeps upstream scaling.
-    depthOffset /= lodScale;
+    // H16: except flat blocks (snow layers, carpets, bottom slabs; model
+    // flag 32, set only with VOXY_LOD_FLAT_HEIGHT on). Their side faces are
+    // only as tall as the block (face bounds scale with the cell), so an
+    // absolute top indent would leave a see-through slit of 0.875*(2^L - 1)
+    // blocks between a coarse snow cell's short sides and its top. Keeping
+    // the upstream scaling keeps that voxel a closed slab. Water is not flat
+    // (fluids never get the flag) and stays absolute.
+    if (!modelIsFlat(model)) {
+        depthOffset /= lodScale;
+    }
     #endif
     quadStart += swizzelDataAxis(face>>1, vec3(faceSize.xz, mix(depthOffset, 1-depthOffset, float(face&1u))));
 

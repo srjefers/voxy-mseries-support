@@ -44,6 +44,12 @@ bool modelIsPlantCross(BlockModel model) {
     return ((model.flagsA)&16u) != 0;
 }
 
+//Metal-only flat block, H16 (ModelFactory.FLAT_HEIGHT sets bit 32 only on non-GL backends):
+// snow layers, carpets, bottom slabs... whose top face is indented by 1 - height
+bool modelIsFlat(BlockModel model) {
+    return ((model.flagsA)&32u) != 0;
+}
+
 bool modelIsShaded(BlockModel model) {
     return ((model.flagsA)&8u) != 0;
 }
