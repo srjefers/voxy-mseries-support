@@ -83,10 +83,13 @@ public final class LodClouds {
     static final int MODE_BELOW = 3;
 
     // ---- cloud texture, from CloudRenderer.apply (resource reload) ----
+    /** Vanilla's own TextureData (CloudRenderer keeps it too); bits built on first use. */
+    private static CloudRenderer.TextureData texture;
+    private static int texGeneration;
     private static int[] occupancy;
+    private static int occupancyGeneration = -1;
     private static int texWidth;
     private static int texHeight;
-    private static int texGeneration;
     private static int texFilledCells;
 
     // ---- this frame's clouds pass arguments, from LevelRenderer.addCloudsPass ----
@@ -156,12 +159,25 @@ public final class LodClouds {
     // Hooks
     // ------------------------------------------------------------------
 
-    /** {@code CloudRenderer.apply}: the cloud texture was (re)loaded. {@code null} = no clouds texture. */
+    /**
+     * {@code CloudRenderer.apply}: the cloud texture was (re)loaded ({@code null}: no
+     * texture). Only keeps the reference: this runs at startup, before any backend
+     * exists, and on GL too; the bits are built by {@link #occupancy} on first use.
+     */
     public static void onTextureReloaded(CloudRenderer.TextureData data) {
-        if (data == null || data.cells() == null || data.width() <= 0 || data.height() <= 0) {
+        boolean valid = data != null && data.cells() != null && data.width() > 0 && data.height() > 0;
+        texture = valid ? data : null;
+        texGeneration++;
+    }
+
+    /** One bit per texture cell, row-major ({@code x + z * width}): 1 = cloud. Null without a texture. */
+    static int[] occupancy() {
+        if (occupancyGeneration == texGeneration) return occupancy;
+        occupancyGeneration = texGeneration;
+        CloudRenderer.TextureData data = texture;
+        if (data == null) {
             occupancy = null;
-            texGeneration++;
-            return;
+            return null;
         }
         long[] cells = data.cells();
         int w = data.width();
@@ -180,7 +196,7 @@ public final class LodClouds {
         texWidth = w;
         texHeight = h;
         texFilledCells = filled;
-        texGeneration++;
+        return bits;
     }
 
     /** {@code LevelRenderer.addCloudsPass} HEAD: the arguments vanilla will draw this frame's clouds with. */
@@ -229,7 +245,7 @@ public final class LodClouds {
     /** Null when the layer should run this frame, else why not. */
     private static String decide(FogData data) {
         if (broken) return "disabled after an error (see above)";
-        if (occupancy == null) return "no cloud texture";
+        if (texture == null) return "no cloud texture";
         if (!VoxyConfig.CONFIG.isRenderingEnabled()) return "Voxy is not rendering";
         // The layer is drawn into the LOD colour bridge, which only the blit composite
         // shows as is. With a shader pack the bridge is pack input (the pack draws its own
@@ -309,7 +325,7 @@ public final class LodClouds {
             return null;
         }
         int mode = mode(snapStatus, snapHeight, snapCamY);
-        if (mode == MODE_NONE || occupancy == null) return null;
+        if (mode == MODE_NONE || occupancy() == null) return null;
         if (((snapColor >>> 24) & 0xFF) == 0) return null;
 
         Frame f = FRAME;
@@ -352,10 +368,6 @@ public final class LodClouds {
         f.green = ((snapColor >>> 8) & 0xFF) / 255.0f;
         f.blue = (snapColor & 0xFF) / 255.0f;
         return f;
-    }
-
-    static int[] occupancy() {
-        return occupancy;
     }
 
     static int textureGeneration() {
