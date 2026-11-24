@@ -319,6 +319,7 @@ public final class ShaderCompilerSmokeTest {
         translucent.put("TRANSLUCENT", "");
         translucent.put("VOXY_WATER_FAR_ALPHA", "");
         translucent.put("VOXY_WATER_DEPTH_BIAS", "0");
+        translucent.put("VOXY_LOD_WATER_STEP", "");
         // The near-cull is only compiled under the vx contract (MDICSectionRenderer).
         Map<String, String> translucentContract = new java.util.LinkedHashMap<>(translucent);
         translucentContract.put("VOXY_TRANS_NEAR_CULL", "");
@@ -346,6 +347,9 @@ public final class ShaderCompilerSmokeTest {
                 with(opaque, "PATCHED_SHADER", "", "VOXY_VX_GBUFFER", "", "VOXY_DEBUG_MAGENTA_MISSING", ""), true, true, true));
         out.add(new MdicLayer("contract pack + magenta-missing debug, translucent",
                 with(translucentContract, "PATCHED_SHADER", "", "VOXY_VX_GBUFFER", "", "VOXY_DEBUG_MAGENTA_MISSING", ""), false, true, true));
+        // LOD level tint (VOXY_LOD_LEVEL_TINT=all), no pack.
+        out.add(new MdicLayer("no pack + level tint, opaque", with(opaque, "USE_ENV_FOG", "", "VOXY_LOD_LEVEL_TINT", ""), true, false, false));
+        out.add(new MdicLayer("no pack + level tint, translucent", with(translucent, "USE_ENV_FOG", "", "VOXY_LOD_LEVEL_TINT", ""), false, false, false));
         // Border-ownership tint (VOXY_LOD_MAGENTA=1) with the red bound debug, on the pack path.
         out.add(new MdicLayer("contract pack + magenta owner tint, opaque",
                 with(opaque, "PATCHED_SHADER", "", "VOXY_VX_GBUFFER", "", "VOXY_LOD_MAGENTA", "", "VOXY_BOUND_DEBUG", ""), true, true, true));

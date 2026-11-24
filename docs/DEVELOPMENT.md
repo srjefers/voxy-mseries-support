@@ -136,9 +136,11 @@ development:
 | `VOXY_LOD_NO_CULL=1` | Disable frustum culling (slow; separates culling from drawing bugs) |
 | `VOXY_BOUND_DEBUG=1` | Tint chunk-bound-discarded fragments red (visualizes the depth mask) |
 | `VOXY_LOD_MAGENTA=1` | Paint every LOD fragment that draws solid magenta: texture = Sodium, magenta = LOD, anything else = nobody draws. With `VOXY_BOUND_DEBUG=1`, red = LOD the mask removed |
+| `VOXY_LOD_LEVEL_TINT=1` / `=all` | Colour LOD water (`=1`) or every LOD fragment (`=all`) by LOD level: 0 cyan, 1 yellow, 2 green, 3 orange, 4 blue, 5+ white (plain path, alpha kept) |
 | `VOXY_LOD_WATER_DEBUG=1` | Magenta water, depth-test off (water geometry coverage) |
 | `VOXY_NO_DEPTH_BOUND=1` | Kill switch: disable the chunk-bound depth mask |
 | `VOXY_BOUND_SODIUM_RADIUS=0` | Kill switch: the chunk-bound mask culls sections at max(render distance, 320 blocks) again instead of Sodium's own search distance (the old radius masked a ring Sodium does not draw at Render Distance < 20: holes at the vanilla/LOD border) |
+| `VOXY_LOD_WATER_STEP=0` | Kill switch: LOD water of levels >= 1 back at its cell top (63.89 for the sea instead of 62.89). Its 1-block step up at the level-0/level-1 ring showed the dark seafloor as a thin zigzag line on far water (H10) |
 | `VOXY_WATER_ANIMATE=0` | Kill switch: freeze LOD water animation |
 | `VOXY_LOD_CLOUDS=0` | Kill switch: vanilla clouds only (no clouds over the LODs); with BSL, the pack's clouds as the pack ships them |
 | `VOXY_LOD_CLOUDS_DEBUG=1` | Magenta LOD cloud layer (shows where the vanilla cloud mesh hands over); with BSL, a solid cloud slab over the LOD terrain coverage |

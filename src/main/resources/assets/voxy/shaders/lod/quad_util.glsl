@@ -207,6 +207,23 @@ void setupQuad(out QuadData quad, const in Quad rawQuad, uvec2 sPos, bool genera
     quad.lodScale = lodScale;
     quad.axis = face>>1;
     quad.basePoint = (quadStart*lodScale)+vec3(baseSection*32);//Metal fix: baseSection can be negative, see screenspace.glsl
+    #if defined(VOXY_LOD_WATER_STEP) && defined(VOXY_LOD_ABS_INDENT) && defined(TRANSLUCENT)
+    // Metal fix (H10, 2026-11-24): a water cell at level L >= 1 puts its
+    // surface at its cell top minus the absolute indent, and coarse cells end
+    // on multiples of 2^L. The sea (top block y = 62) sits at 62.89 at level 0
+    // and in vanilla but at 63.89 at every level >= 1: a 1-block step up away
+    // from the camera at the level-0/level-1 ring (and at the vanilla edge
+    // where level 1 starts). Its riser is never meshed, so the step showed a
+    // 1-pixel line of the unlit seafloor following the ring's section edges.
+    // Drop indented (fluid) top faces of levels >= 1 by one block: the sea
+    // lands on its real height at every level, and elsewhere the coarser,
+    // farther level is never higher than the finer one, so any remaining
+    // step faces away from the camera and hides nothing.
+    // VOXY_LOD_WATER_STEP=0 reverts.
+    if (face == 1u && lodLevel != 0u && depthOffset > 0.0) {
+        quad.basePoint.y -= 1.0;
+    }
+    #endif
     #ifdef USE_SINGLE_TRI
     quad.quadSizeAddin = (faceSize.yw + (quadSize - 1)*2);
     #else

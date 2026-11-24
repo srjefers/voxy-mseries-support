@@ -661,6 +661,22 @@ void main() {
     outColour = vec4(float(hash&15u)/15, float((hash>>4)&15u)/15, float((hash>>8)&15u)/15, 0);
     #endif
 
+    #if defined(VOXY_LOD_LEVEL_TINT) && defined(VOXY_LOD_DIST_MIP)
+    // Diagnostic (VOXY_LOD_LEVEL_TINT=1 translucent only, =all every layer;
+    // Metal, plain path): colour by LOD level, alpha kept, no fog.
+    // 0 cyan, 1 yellow, 2 green, 3 orange, 4 blue, 5+ white. The level rides
+    // in interData.w bits 16-18 (quad_util, under VOXY_LOD_DIST_MIP).
+    {
+        uint voxyLvl = (interData.w >> 16) & 7u;
+        outColour.rgb = voxyLvl == 0u ? vec3(0.0, 1.0, 1.0)
+                      : voxyLvl == 1u ? vec3(1.0, 1.0, 0.0)
+                      : voxyLvl == 2u ? vec3(0.0, 1.0, 0.0)
+                      : voxyLvl == 3u ? vec3(1.0, 0.5, 0.0)
+                      : voxyLvl == 4u ? vec3(0.0, 0.0, 1.0)
+                      : vec3(1.0);
+    }
+    #endif
+
     #ifdef VOXY_LOD_MAGENTA
     // Diagnostic (VOXY_LOD_MAGENTA=1, Metal only): every LOD fragment that
     // survives the chunk-bound mask, the cutout discard and the near-cull
