@@ -575,11 +575,28 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                     //   like level 0 and vanilla. Without it, the 1-block step up
                     //   at the level-0/level-1 ring showed the dark seafloor as a
                     //   thin zigzag line on far water (quad_util.glsl).
+                    // VOXY_LOD_STEP (2026-11-24), DEFAULT "all": the same step
+                    //   exists on land (the owner saw it on snow), so every face
+                    //   of levels >= 1, opaque and translucent, drops one block
+                    //   (VOXY_LOD_STEP_ALL; the water rule is then implied).
+                    //   =water keeps only the water rule, =0 or
+                    //   VOXY_LOD_WATER_STEP=0 disables both.
                     String waterStepEnv = System.getenv("VOXY_LOD_WATER_STEP");
-                    if (waterStepEnv == null || !"0".equals(waterStepEnv.trim())) {
+                    String stepEnv = System.getenv("VOXY_LOD_STEP");
+                    String stepMode = stepEnv == null || stepEnv.isBlank() ? "all" : stepEnv.trim().toLowerCase(java.util.Locale.ROOT);
+                    if (waterStepEnv != null && "0".equals(waterStepEnv.trim())) stepMode = "0";
+                    if ("all".equals(stepMode)) {
+                        opaqueDefines.put("VOXY_LOD_STEP_ALL", "");
+                        translucentDefines.put("VOXY_LOD_STEP_ALL", "");
+                        Logger.info("[Metal-LODTEST] LOD step fix ON: all geometry of levels >= 1 one block lower"
+                                + " (no step up at the level-0/level-1 and vanilla edges); VOXY_LOD_STEP=water"
+                                + " keeps only the water rule, =0 disables");
+                    } else if ("water".equals(stepMode)) {
                         translucentDefines.put("VOXY_LOD_WATER_STEP", "");
                         Logger.info("[Metal-LODTEST] LOD water step fix ON (level >= 1 water surface"
-                                + " one block lower, level-0 height); VOXY_LOD_WATER_STEP=0 reverts");
+                                + " one block lower, level-0 height); VOXY_LOD_STEP=water");
+                    } else {
+                        Logger.info("[Metal-LODTEST] LOD step fix OFF (VOXY_LOD_STEP=0 / VOXY_LOD_WATER_STEP=0)");
                     }
                 }
                 // VOXY_TRANS_NEAR_CULL — vx contract only (2026-07-03),

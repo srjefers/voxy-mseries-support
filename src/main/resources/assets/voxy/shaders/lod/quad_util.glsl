@@ -207,7 +207,30 @@ void setupQuad(out QuadData quad, const in Quad rawQuad, uvec2 sPos, bool genera
     quad.lodScale = lodScale;
     quad.axis = face>>1;
     quad.basePoint = (quadStart*lodScale)+vec3(baseSection*32);//Metal fix: baseSection can be negative, see screenspace.glsl
-    #if defined(VOXY_LOD_WATER_STEP) && defined(VOXY_LOD_ABS_INDENT) && defined(TRANSLUCENT)
+    #if defined(VOXY_LOD_STEP_ALL) && defined(VOXY_LOD_ABS_INDENT)
+    // Metal fix (2026-11-24, generalises the H10 water rule below to all
+    // geometry): a cell at level L >= 1 ends on a multiple of 2^L, so its top
+    // face sits 0..2^L-1 blocks above the real surface inside it (the Mipper
+    // keeps the most opaque child, the cell top is the cell's top). Where the
+    // level-0 ring or the vanilla edge meets level 1, the farther surface is
+    // then 0-1 block HIGHER than the nearer one: a step up facing the camera
+    // whose riser nobody meshes (each level culls its border faces against its
+    // own same-level neighbour), so the gap showed what lies behind as a thin
+    // "stair" line along the ring's section edges — on the sea (H10: the unlit
+    // seafloor) and on land (the owner saw it on snow). Shift every face of
+    // levels >= 1 down one block, opaque and translucent alike, so the cell
+    // stays closed: at the level-0/level-1 and vanilla/level-1 borders the
+    // farther side is now never higher (excess 0..1 becomes -1..0), so any step
+    // faces away from the camera and hides nothing; the sea lands on 62.89 at
+    // every level, as with the water-only rule. Cost: level >= 1 terrain is
+    // 0-1 block low instead of 0-1 block high (2^L - 2 at most above level 1),
+    // at distances where a block is a pixel or less. Steps between two coarse
+    // levels (1/2, 2/3...) are unchanged. VOXY_LOD_STEP=water keeps only the
+    // H10 water rule, =0 (or VOXY_LOD_WATER_STEP=0) disables both.
+    if (lodLevel != 0u) {
+        quad.basePoint.y -= 1.0;
+    }
+    #elif defined(VOXY_LOD_WATER_STEP) && defined(VOXY_LOD_ABS_INDENT) && defined(TRANSLUCENT)
     // Metal fix (H10, 2026-11-24): a water cell at level L >= 1 puts its
     // surface at its cell top minus the absolute indent, and coarse cells end
     // on multiples of 2^L. The sea (top block y = 62) sits at 62.89 at level 0
