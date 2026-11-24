@@ -22,6 +22,7 @@
     "minecraft.MixinClientCommonPacketListenerImpl",
     "minecraft.MixinClientLevel",
     "minecraft.MixinClientPacketListener",
+    "minecraft.MixinCloudRenderer",
     "minecraft.MixinDebugScreenEntryList",
     "minecraft.MixinFogRenderer",
     "minecraft.MixinGlDebug",

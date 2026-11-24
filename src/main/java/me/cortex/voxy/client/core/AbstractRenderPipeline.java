@@ -125,6 +125,8 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
     private int metalDepthBridgeHeight;
     /** Fullscreen depth→bridge export pass for {@link #metalDepthBridge}. Lazy like the bridge. */
     private me.cortex.voxy.client.core.interop.MetalDepthExport metalDepthExport;
+    /** Clouds over the LOD terrain, drawn inside the LOD pass (blit composite only). Lazy. */
+    private me.cortex.voxy.client.core.rendering.clouds.LodCloudLayer lodCloudLayer;
     // --- Phase D translucent split (vx contract; all lazy) ---
     private me.cortex.voxy.client.core.interop.IOSurfaceBridge metalTransBridge;
     private int metalTransBridgeWidth, metalTransBridgeHeight;
@@ -551,6 +553,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         if (this.metalDepthTransTex != null) { this.metalDepthTransTex.free(); this.metalDepthTransTex = null; }
         if (this.metalTransReadBuffer != null) { this.metalTransReadBuffer.free(); this.metalTransReadBuffer = null; }
         if (this.metalDepthRestore != null) { this.metalDepthRestore.close(); this.metalDepthRestore = null; }
+        if (this.lodCloudLayer != null) { this.lodCloudLayer.close(); this.lodCloudLayer = null; }
         if (this.metalVxOpaque0 != null) { this.metalVxOpaque0.close(); this.metalVxOpaque0 = null; }
         if (this.metalVxOpaque1 != null) { this.metalVxOpaque1.close(); this.metalVxOpaque1 = null; }
         if (this.metalVxOpaque2 != null) { this.metalVxOpaque2.close(); this.metalVxOpaque2 = null; }
@@ -896,6 +899,18 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                         && !me.cortex.voxy.client.core.util.IrisUtil.vxContractActive()) {
                     mdic.renderTranslucentMetal(enc, mv);
                 }
+            }
+            // LOD cloud layer: vanilla's clouds continued over the LOD terrain, after
+            // the LOD draws so their depth hides clouds behind LOD mountains. Only on
+            // the plain blit composite: with a pack the bridge is pack input (the pack
+            // draws its own clouds). VOXY_LOD_CLOUDS=0 is the kill switch (LodClouds).
+            if (me.cortex.voxy.client.core.rendering.clouds.LodClouds.ENABLED
+                    && !bridgeSolidTest && !submersionSkip && !irisGbufferInject && !vxOpaqueMat
+                    && IOSurfaceBridgeCompositor.USE_BLIT) {
+                if (this.lodCloudLayer == null) {
+                    this.lodCloudLayer = new me.cortex.voxy.client.core.rendering.clouds.LodCloudLayer();
+                }
+                this.lodCloudLayer.render(backend, enc, viewport, this.nodeManager.lodCoverage());
             }
         }
         // Iris gbuffer injection: export the LOD pass's depth into the R32F
@@ -1281,6 +1296,11 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
     /** Opaque LOD uses the material g-buffer + resolve only when explicitly opted in. */
     public boolean vxOpaqueMaterialMode() {
         return vxMaterialMode() && VX_MATERIAL_OPAQUE;
+    }
+
+    /** Where the LOD terrain is, for the cloud layer and the packs' clouds; null on GL or with VOXY_LOD_CLOUDS=0. */
+    public me.cortex.voxy.client.core.rendering.clouds.LodTerrainCoverage lodCoverage() {
+        return this.nodeManager.lodCoverage();
     }
 
     //null means dont transform the shader

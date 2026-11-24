@@ -59,6 +59,22 @@ public class RenderGenerationService {
     private Consumer<BuiltSection> resultConsumer;
     private final boolean emitMeshlets;
 
+    /**
+     * Where the LOD terrain is (16-block columns), for the LOD cloud layer: clouds only
+     * over LOD terrain. Fed from every top-level section this service meshes. Metal
+     * only; null on GL or with VOXY_LOD_CLOUDS=0.
+     */
+    private final me.cortex.voxy.client.core.rendering.clouds.LodTerrainCoverage lodCoverage =
+            me.cortex.voxy.client.core.rendering.clouds.LodClouds.ENABLED
+                    && me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                            != me.cortex.voxy.client.core.gpu.BackendType.OPENGL
+                    ? new me.cortex.voxy.client.core.rendering.clouds.LodTerrainCoverage() : null;
+
+    /** LOD terrain coverage for the LOD cloud layer; null on GL or with VOXY_LOD_CLOUDS=0. */
+    public me.cortex.voxy.client.core.rendering.clouds.LodTerrainCoverage lodCoverage() {
+        return this.lodCoverage;
+    }
+
     private final Service service;
 
 
@@ -159,6 +175,9 @@ public class RenderGenerationService {
             return;
         }
         section.assertNotFree();
+        if (this.lodCoverage != null) {
+            this.lodCoverage.onTopLevelSection(task.position, section);
+        }
         BuiltSection mesh = null;
 
 

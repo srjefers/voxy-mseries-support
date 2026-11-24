@@ -158,6 +158,13 @@ public abstract class MixinDefaultChunkRenderer extends ShaderChunkRenderer {
                 // viewport == null: setupViewport skipped a 0x0 frame (minimised window, Iris resize).
                 // The resolve passes below dereference it, and the bridges hold the previous frame.
                 if (viewport != null && pipeline != null && pipeline.metalBridge() != null) {
+                    // H12: the pack's clouds only over LOD terrain — upload where the LOD
+                    // terrain is for the vxLodCoverage sampler (VxLodCloudDistance). A
+                    // no-op unless the terrain or the camera's LOD column changed.
+                    if (IrisUtil.irisShaderPackEnabled()) {
+                        me.cortex.voxy.client.core.rendering.clouds.LodCoverageGlTexture.update(
+                                pipeline.lodCoverage(), viewport.cameraX, viewport.cameraZ);
+                    }
                     // The two vx material branches name Iris types, so their bodies live in
                     // MetalVxResolveHooks: a mixin body that references an optional mod's class
                     // fails to apply when that mod is missing (H5). Keep Iris types out of here.

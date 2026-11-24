@@ -4,13 +4,17 @@ import me.cortex.voxy.client.VoxyClientInstance;
 import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.client.core.IGetVoxyRenderSystem;
 import me.cortex.voxy.client.core.VoxyRenderSystem;
+import me.cortex.voxy.client.core.rendering.clouds.LodClouds;
 import me.cortex.voxy.client.core.util.IrisUtil;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.world.WorldEngine;
 import me.cortex.voxy.commonImpl.VoxyCommon;
 import me.cortex.voxy.commonImpl.WorldIdentifier;
+import com.mojang.blaze3d.framegraph.FrameGraphBuilder;
+import net.minecraft.client.CloudStatus;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -96,5 +100,18 @@ public abstract class MixinLevelRenderer implements IGetVoxyRenderSystem {
             }
         }
         instance.updateDedicatedThreads();
+    }
+
+    /**
+     * LOD cloud layer: the arguments vanilla draws this frame's clouds with. The
+     * clouds pass is added while the frame graph is built, so this runs before the
+     * graph executes Sodium's SOLID pass, where the Metal LOD frame draws the layer.
+     * Only stores values; nothing is drawn differently here.
+     */
+    @Inject(method = "addCloudsPass", at = @At("HEAD"))
+    private void voxy$captureCloudsPass(FrameGraphBuilder frameGraphBuilder, CloudStatus status, Vec3 cameraPos,
+                                        long gameTime, float partialTick, int cloudColor, float cloudHeight,
+                                        CallbackInfo ci) {
+        LodClouds.captureFrame(status, cameraPos, gameTime, partialTick, cloudColor, cloudHeight);
     }
 }

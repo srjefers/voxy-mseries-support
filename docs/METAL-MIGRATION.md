@@ -115,6 +115,8 @@ real translucent biome-tinted water, full texture detail, ~111 FPS.
 | `VOXY_NO_DEPTH_BOUND=1` | off | Kill switch: skip the chunk-bound depth test (restores the pre-mask Metal behaviour) |
 | `VOXY_BOUND_DEBUG=1` | off | Tint bound-discarded LOD fragments red instead of discarding (mask verification) |
 | `VOXY_WATER_ANIMATE=0` | off | Kill switch: freeze LOD water (disables the `water_still` model-atlas cell re-upload that animates LOD water in step with MC) |
+| `VOXY_LOD_CLOUDS=0` | off (layer on) | Kill switch: vanilla clouds untouched (they stop at the Cloud Distance and fade from the camera, no clouds over the LODs). Default: `LodCloudLayer` continues the vanilla cloud mesh over the LOD terrain (only where there is LOD terrain, in 16-block columns: `LodTerrainCoverage`), the vanilla mesh stops fading and grows to cover the vanilla terrain. With BSL, its volumetric clouds reach the LOD distance and form only over LOD terrain (`VxLodCloudDistance` pack-text patch + `vxLodCoverage` texture). Marker `[Metal-CLOUDS]` |
+| `VOXY_LOD_CLOUDS_DEBUG=1` | off | Paint the LOD cloud layer's clouds magenta, to see where the vanilla mesh hands over. With BSL: replace the volumetric clouds by a solid slab exactly where `vxLodCoverage` says there is LOD terrain (checks the coverage mapping; the whole sky if the texture never arrived) |
 | `VOXY_IRIS_GBUFFER_INJECT=0` | off | Kill switch: disable the Iris gbuffer injection (LODs stay hidden while a pack is active, the pre-injection behaviour) |
 | `VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1` | off | Kill switch: `glGetTexImage` MC's lightmap every frame (pre-throttle behaviour) instead of only on frames where `LightTexture.updateLightTexture` rewrote it (client tick, ~20 Hz). Marker `[Metal] lightmap sync throttled to <mode>`; `[Metal-LayerB] … lightmapSync=<run>/<skipped>` |
 | `VOXY_BRIDGE_RESYNC=every` | `once` | Kill switch: CGLTexImageIOSurface2D re-specification on every GL acquire (the pre-lever-C behaviour; 7+ per frame). Default re-specifies each bridge once per Metal frame (marker `[Metal-RESYNC]`, counts on `[Metal-TIMING]`) |
@@ -165,6 +167,26 @@ Useful log markers: `[Metal-DEFINES]` (shader variant), `[Metal-WATERBAKE]`
   when Voxy composites, so the bridge's fog-coloured clear acts as the far
   sky and the alpha-discard composite cannot be enabled yet. Fixing this
   requires hooking the composite after MC's sky pass.
+- **Clouds over the LODs** (`LodCloudLayer`, kill switch `VOXY_LOD_CLOUDS=0`):
+  without a shader pack, the vanilla cloud mesh covers the vanilla terrain
+  and a cell-marching cloud slab drawn in the LOD frame continues it out to
+  the LOD distance (same cells, drift, height and face shades), only over
+  LOD terrain: the mesher records which 16-block columns of each top-level
+  section hold any non-air voxel (`LodTerrainCoverage`), so ground that was
+  never generated gets no clouds. Seen from above at a shallow angle, the
+  clouds over the last terrain still show against the void behind it
+  (parallax: they float ~130 blocks above the ground). Shader packs draw
+  their own clouds; for BSL's volumetric clouds (`DrawCloudVolumetric`,
+  `lib/atmospherics/clouds.glsl`) a pack-text patch (`VxLodCloudDistance`,
+  through `MixinIncludeProcessor`) does the same: the clouds reach the LOD
+  distance instead of stopping ~1 750 blocks out (the pack's `fadeEnd`),
+  and they form only over LOD terrain, sampling `vxLodCoverage`, a
+  toroidal R8 texture of the same coverage at 32 blocks per texel
+  (`LodCoverageGlTexture`, uniform `vxLodCoverageInfo`). Water reflections
+  keep the pack's fade. Other packs' clouds are untouched (the patch is
+  anchored on BSL's text and logs if it drifts). Not done: the camera
+  inside the 4-block cloud layer without a pack (vanilla clouds only
+  there).
 - **Synchronous GPU model**: 3 × `waitUntilCompleted` per frame. The fence
   machinery added in `abcf14b3` is the building block for going async
   (estimated to push well past the current ~111 FPS).
