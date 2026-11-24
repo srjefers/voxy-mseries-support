@@ -119,10 +119,15 @@ public final class VxLodCloudDistance {
             // Global declarations on the function's own line (line count kept). Bound by
             // VoxySamplers / VoxyUniforms; info.w stays 0 until the texture is uploaded.
             out.set(fn, "uniform sampler2D vxLodCoverage; uniform vec4 vxLodCoverageInfo; " + lines.get(fn));
-            out.set(cut, lines.get(cut)
-                    + " if (!fadeFaster && vxLodCoverageInfo.w > 0.5) noise *= texture2D(vxLodCoverage,"
-                    + " (samplePos.xz - cameraPos.xz + vxLodCoverageInfo.xy) * vxLodCoverageInfo.z).r;"
-                    + " /* voxy: clouds only over LOD terrain */");
+            String coverage = "texture2D(vxLodCoverage, (samplePos.xz - cameraPos.xz + vxLodCoverageInfo.xy)"
+                    + " * vxLodCoverageInfo.z).r";
+            out.set(cut, lines.get(cut) + (LodClouds.DEBUG_TINT
+                    // VOXY_LOD_CLOUDS_DEBUG=1: a solid slab exactly where the texture says there is
+                    // LOD terrain (the whole sky if the uniform never arrived), to check the mapping.
+                    ? " if (!fadeFaster) noise = (vxLodCoverageInfo.w > 0.5 ? " + coverage + " : 1.0)"
+                            + " * step(lowerY, samplePos.y) * step(samplePos.y, upperY); /* voxy: coverage DEBUG slab */"
+                    : " if (!fadeFaster && vxLodCoverageInfo.w > 0.5) noise *= " + coverage + ";"
+                            + " /* voxy: clouds only over LOD terrain */"));
         } else if (!loggedNoCut) {
             loggedNoCut = true;
             Logger.warn("[Metal-CLOUDS] pack clouds over LOD terrain only: '" + DISTANCE_CUT + "' not found in '"

@@ -67,6 +67,7 @@ public final class LodCoverageGlTexture {
     private static boolean valid;
     private static float invSpan;
     private static boolean logged;
+    private static boolean loggedInfo;
 
     private LodCoverageGlTexture() {}
 
@@ -161,6 +162,12 @@ public final class LodCoverageGlTexture {
         double span = 1.0 / invSpan;
         float x = (float) (camera.x - span * Math.floor(camera.x / span));
         float z = (float) (camera.z - span * Math.floor(camera.z / span));
+        if (!loggedInfo) {
+            loggedInfo = true;
+            Logger.info(String.format(java.util.Locale.ROOT,
+                    "[Metal-CLOUDS] vxLodCoverageInfo first valid read by the pack: (%.1f, %.1f, 1/%.0f, 1), texture %d",
+                    x, z, span, textureId));
+        }
         return new Vector4f(x, z, invSpan, 1.0f);
     }
 }
