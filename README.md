@@ -12,8 +12,8 @@ bridges the two worlds every frame through an IOSurface.
 
 ![Minecraft on a Mac: a lake in front, then forests, a cherry grove and snowy mountains drawn all the way to the horizon](docs/images/voxy-lod-horizon.jpg)
 
-*Far terrain to the horizon on Apple Silicon: Voxy's LODs drawn with Metal
-(Minecraft 1.21.11, with a shader pack).*
+*Far terrain to the horizon on an Apple M4 Max: Voxy's LODs drawn with Metal
+(Minecraft 1.21.11, BSL shaders).*
 
 Tested on an Apple M4 Max (48 GB) with LOD terrain to the horizon; see
 [System requirements](#system-requirements) for measured memory and frame
