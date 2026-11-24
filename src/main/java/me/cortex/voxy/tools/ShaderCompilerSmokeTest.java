@@ -310,6 +310,7 @@ public final class ShaderCompilerSmokeTest {
 
         Map<String, String> opaque = new java.util.LinkedHashMap<>(common);
         opaque.put("VOXY_FORCE_OPAQUE_ALPHA", "");
+        opaque.put("VOXY_LOD_STEP_ALL", "");
         opaque.put("VOXY_LOD_MIP_DISCARD", "");
         opaque.put("VOXY_LOD_MIP_DISCARD_ALPHA", "0.5000");
         opaque.put("VOXY_LOD_PLANT_EDGEFADE", "");
@@ -319,7 +320,7 @@ public final class ShaderCompilerSmokeTest {
         translucent.put("TRANSLUCENT", "");
         translucent.put("VOXY_WATER_FAR_ALPHA", "");
         translucent.put("VOXY_WATER_DEPTH_BIAS", "0");
-        translucent.put("VOXY_LOD_WATER_STEP", "");
+        translucent.put("VOXY_LOD_STEP_ALL", "");
         // The near-cull is only compiled under the vx contract (MDICSectionRenderer).
         Map<String, String> translucentContract = new java.util.LinkedHashMap<>(translucent);
         translucentContract.put("VOXY_TRANS_NEAR_CULL", "");
@@ -347,6 +348,8 @@ public final class ShaderCompilerSmokeTest {
                 with(opaque, "PATCHED_SHADER", "", "VOXY_VX_GBUFFER", "", "VOXY_DEBUG_MAGENTA_MISSING", ""), true, true, true));
         out.add(new MdicLayer("contract pack + magenta-missing debug, translucent",
                 with(translucentContract, "PATCHED_SHADER", "", "VOXY_VX_GBUFFER", "", "VOXY_DEBUG_MAGENTA_MISSING", ""), false, true, true));
+        // The water-only step rule (VOXY_LOD_STEP=water).
+        out.add(new MdicLayer("no pack, VOXY_LOD_STEP=water, translucent", with(translucent, "USE_ENV_FOG", "", "VOXY_LOD_WATER_STEP", ""), false, false, false));
         // LOD level tint (VOXY_LOD_LEVEL_TINT=all), no pack.
         out.add(new MdicLayer("no pack + level tint, opaque", with(opaque, "USE_ENV_FOG", "", "VOXY_LOD_LEVEL_TINT", ""), true, false, false));
         out.add(new MdicLayer("no pack + level tint, translucent", with(translucent, "USE_ENV_FOG", "", "VOXY_LOD_LEVEL_TINT", ""), false, false, false));
