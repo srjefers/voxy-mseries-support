@@ -407,6 +407,24 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                     opaqueDefines.put("VOXY_BOUND_DEBUG", "");
                     translucentDefines.put("VOXY_BOUND_DEBUG", "");
                 }
+                // VOXY_LOD_MAGENTA=1 (diagnostic, inert otherwise): every LOD
+                // fragment that draws is solid magenta, so the vanilla/LOD
+                // border shows who owns each pixel — texture = Sodium,
+                // magenta = LOD, anything else = nobody draws there.
+                String levelTint = System.getenv("VOXY_LOD_LEVEL_TINT");
+                if ("1".equals(levelTint) || "all".equalsIgnoreCase(levelTint)) {
+                    translucentDefines.put("VOXY_LOD_LEVEL_TINT", "");
+                    if ("all".equalsIgnoreCase(levelTint)) opaqueDefines.put("VOXY_LOD_LEVEL_TINT", "");
+                    Logger.info("[Metal-LODTEST] VOXY_LOD_LEVEL_TINT=" + levelTint + ": LOD "
+                            + ("all".equalsIgnoreCase(levelTint) ? "fragments" : "water")
+                            + " coloured by level (0 cyan, 1 yellow, 2 green, 3 orange, 4 blue, 5+ white)");
+                }
+                if ("1".equals(System.getenv("VOXY_LOD_MAGENTA"))) {
+                    opaqueDefines.put("VOXY_LOD_MAGENTA", "");
+                    translucentDefines.put("VOXY_LOD_MAGENTA", "");
+                    Logger.info("[Metal-LODTEST] VOXY_LOD_MAGENTA: every LOD fragment that draws is solid magenta"
+                            + (boundDebug ? "; mask-removed LOD fragments are red (VOXY_BOUND_DEBUG)" : ""));
+                }
                 opaqueDefines.put("VOXY_FORCE_OPAQUE_ALPHA", "");
 
                 // 2026-07-16 round-15 pane probe: orange-tint in-ring OPAQUE-layer
@@ -551,6 +569,18 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                     translucentDefines.put("VOXY_LOD_ABS_INDENT", "");
                     Logger.info("[Metal-LODTEST] absolute face indent ON (water plane height "
                             + "lodScale-invariant); VOXY_LOD_ABS_INDENT=0 reverts");
+                    // VOXY_LOD_WATER_STEP (H10, 2026-11-24), DEFAULT ON, needs
+                    //   the absolute indent: water top faces of LOD levels >= 1
+                    //   drop one block, so the sea sits at 62.89 at every level
+                    //   like level 0 and vanilla. Without it, the 1-block step up
+                    //   at the level-0/level-1 ring showed the dark seafloor as a
+                    //   thin zigzag line on far water (quad_util.glsl).
+                    String waterStepEnv = System.getenv("VOXY_LOD_WATER_STEP");
+                    if (waterStepEnv == null || !"0".equals(waterStepEnv.trim())) {
+                        translucentDefines.put("VOXY_LOD_WATER_STEP", "");
+                        Logger.info("[Metal-LODTEST] LOD water step fix ON (level >= 1 water surface"
+                                + " one block lower, level-0 height); VOXY_LOD_WATER_STEP=0 reverts");
+                    }
                 }
                 // VOXY_TRANS_NEAR_CULL — vx contract only (2026-07-03),
                 //   DEFAULT ON. BSL composites the injected LOD water AND

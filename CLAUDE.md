@@ -136,6 +136,10 @@ These are non-obvious and were each paid for with a crash or invisible-render bu
   negative ints (use multiplication), no `(v<<L)>>R` sign-extension (use
   `bitfieldExtract`), no boolean-select `mix()` overloads (use ternaries) in any
   shader live on the Metal path.
+- **The chunk-bound mask must cover exactly what Sodium draws.** Any section the mask covers
+  but Sodium skips is a hole: the LOD is discarded and nothing replaces it. Its radius is
+  Sodium's own search distance (`ChunkBoundRenderer.metalMaskRadius`). A `max(RD, 320)` copied
+  from the fog code made holes at Render Distance < 20 (H14).
 - **Don't trust GL state at the Sodium SOLID hook.** The viewport can be polluted
   (16×16 lightmap pass) and MC's main RT does not contain the sky at composite
   time. Size/target from `Minecraft.getMainRenderTarget()`.
