@@ -407,6 +407,16 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                     opaqueDefines.put("VOXY_BOUND_DEBUG", "");
                     translucentDefines.put("VOXY_BOUND_DEBUG", "");
                 }
+                // VOXY_LOD_MAGENTA=1 (diagnostic, inert otherwise): every LOD
+                // fragment that draws is solid magenta, so the vanilla/LOD
+                // border shows who owns each pixel — texture = Sodium,
+                // magenta = LOD, anything else = nobody draws there.
+                if ("1".equals(System.getenv("VOXY_LOD_MAGENTA"))) {
+                    opaqueDefines.put("VOXY_LOD_MAGENTA", "");
+                    translucentDefines.put("VOXY_LOD_MAGENTA", "");
+                    Logger.info("[Metal-LODTEST] VOXY_LOD_MAGENTA: every LOD fragment that draws is solid magenta"
+                            + (boundDebug ? "; mask-removed LOD fragments are red (VOXY_BOUND_DEBUG)" : ""));
+                }
                 opaqueDefines.put("VOXY_FORCE_OPAQUE_ALPHA", "");
 
                 // 2026-07-16 round-15 pane probe: orange-tint in-ring OPAQUE-layer

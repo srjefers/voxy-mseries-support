@@ -661,6 +661,16 @@ void main() {
     outColour = vec4(float(hash&15u)/15, float((hash>>4)&15u)/15, float((hash>>8)&15u)/15, 0);
     #endif
 
+    #ifdef VOXY_LOD_MAGENTA
+    // Diagnostic (VOXY_LOD_MAGENTA=1, Metal only): every LOD fragment that
+    // survives the chunk-bound mask, the cutout discard and the near-cull
+    // paints solid magenta, no fog, no blend. One screenshot then says who
+    // owns each pixel at the vanilla/LOD border: texture = Sodium, magenta =
+    // LOD, anything else = nobody draws there. With VOXY_BOUND_DEBUG=1 too,
+    // red = LOD the mask removed (that arm returns before this one).
+    outColour = vec4(1.0, 0.0, 1.0, 1.0);
+    #endif
+
     #else
     uint modelId = getModelId();
     BlockModel model = modelData[modelId];
@@ -686,6 +696,14 @@ void main() {
         colour = vec4(1.0, 0.0, 1.0, 1.0);
         tint = vec4(1.0);
     }
+    #endif
+
+    #ifdef VOXY_LOD_MAGENTA
+    // PATCHED half of the magenta owner tint (see the plain path above). The
+    // pack still lights it, so it reads as shaded magenta; the bound-debug
+    // red below overrides it on mask hits.
+    colour = vec4(1.0, 0.0, 1.0, 1.0);
+    tint = vec4(1.0);
     #endif
 
     #ifdef VOXY_BOUND_DEBUG

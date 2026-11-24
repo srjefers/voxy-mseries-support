@@ -166,6 +166,10 @@ public final class ShaderCompilerSmokeTest {
                 new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT,
                         Map.of("VOXY_FORCE_OPAQUE_ALPHA", "", "USE_ENV_FOG", "", "VOXY_BOUND_DEBUG", ""),
                         "lod/gl46/quads.frag (Metal — depth-bound VOXY_BOUND_DEBUG red tint)"),
+                new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT,
+                        Map.of("VOXY_FORCE_OPAQUE_ALPHA", "", "USE_ENV_FOG", "", "VOXY_BOUND_DEBUG", "",
+                                "VOXY_LOD_MAGENTA", ""),
+                        "lod/gl46/quads.frag (Metal — VOXY_LOD_MAGENTA owner tint + red bound debug)"),
                 // M9 — MDIC's compute pipelines (cmdgen already covered above).
                 new ShaderCase("util/prefixsum/simple.comp", RuntimeShaderCompiler.Stage.COMPUTE,
                         Map.of("IO_BUFFER", "0"),
@@ -342,6 +346,11 @@ public final class ShaderCompilerSmokeTest {
                 with(opaque, "PATCHED_SHADER", "", "VOXY_VX_GBUFFER", "", "VOXY_DEBUG_MAGENTA_MISSING", ""), true, true, true));
         out.add(new MdicLayer("contract pack + magenta-missing debug, translucent",
                 with(translucentContract, "PATCHED_SHADER", "", "VOXY_VX_GBUFFER", "", "VOXY_DEBUG_MAGENTA_MISSING", ""), false, true, true));
+        // Border-ownership tint (VOXY_LOD_MAGENTA=1) with the red bound debug, on the pack path.
+        out.add(new MdicLayer("contract pack + magenta owner tint, opaque",
+                with(opaque, "PATCHED_SHADER", "", "VOXY_VX_GBUFFER", "", "VOXY_LOD_MAGENTA", "", "VOXY_BOUND_DEBUG", ""), true, true, true));
+        out.add(new MdicLayer("contract pack + magenta owner tint, translucent",
+                with(translucentContract, "PATCHED_SHADER", "", "VOXY_VX_GBUFFER", "", "VOXY_LOD_MAGENTA", "", "VOXY_BOUND_DEBUG", ""), false, true, true));
         return out;
     }
 
