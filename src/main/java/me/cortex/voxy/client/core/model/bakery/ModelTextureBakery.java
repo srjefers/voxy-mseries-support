@@ -548,6 +548,10 @@ public class ModelTextureBakery {
                 && me.cortex.voxy.client.core.model.ModelFactory.PLANT_CROSS
                 && state.getFluidState().isEmpty()
                 && state.getBlock() instanceof VegetationBlock;
+        // H16 flat blocks (snow layers, carpets, bottom slabs...; ModelFactory.FLAT_HEIGHT) keep their
+        // real side coverage too: the fill would turn a 1/8-tall snow side into a full opaque tile.
+        boolean flatBlock = isBlock
+                && me.cortex.voxy.client.core.model.ModelFactory.metalFlatHeight(state) > 0;
 
         // Always clear at the start of the bake — fluid path appends with
         // LoadAction.LOAD so all faces accumulate cleanly into the same target.
@@ -621,7 +625,7 @@ public class ModelTextureBakery {
             }
         }
 
-        this.metalCapture.emitToStream(destAddr, plantCross);
+        this.metalCapture.emitToStream(destAddr, plantCross || flatBlock);
         if (!isBlock) {
             maybeLogWaterBakeDiag(state, destAddr);
         }

@@ -176,6 +176,9 @@ public final class MetalViewCapture {
      *   that, plus the zero depth metadata below, is what made every plant a
      *   hollow green box at LOD 0. Plants keep their blade alpha instead;
      *   ModelFactory centres their side faces (VOXY_LOD_PLANT_CROSS=0 reverts).
+     *   Also true for H16 flat blocks (snow layers, carpets, bottom slabs...;
+     *   ModelFactory.FLAT_HEIGHT): the fill made a 1/8-tall snow side a full
+     *   opaque tile, so the LOD drew the layer as a full cube.
      */
     public void emitToStream(long destAddr, boolean skipDilate) {
         // CPU read from Shared storage. Backend.submit() in endBake() already
