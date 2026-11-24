@@ -2,11 +2,14 @@
 
 > **Status: ALPHA** — playable on Apple Silicon, under active development.
 > **Unofficial port**, not supported by the Voxy developers: report problems
-> here, not upstream. **Source only:** upstream Voxy is "All rights reserved.
-> Do not redistribute.", so this fork publishes no jar. To play,
-> [build the jar](#build-the-jar) of the first pre-release,
-> **0.2.8-alpha-metal.1** (Minecraft 1.21.11). New to Terminal? An
-> [AI assistant can do it with you](#build-the-jar-with-an-ai-assistant).
+> here, not upstream.
+>
+> **No download: you build the jar yourself. It is easier than it sounds,
+> and safer.** The Voxy team is fine with this source on GitHub but asked
+> that jar builds not be shared. [Build the jar](#build-the-jar) of the first
+> pre-release, **0.2.8-alpha-metal.1** (Minecraft 1.21.11), by pasting one
+> block of text into Terminal, or let an
+> [AI assistant do it with you](#build-the-jar-with-an-ai-assistant).
 
 A fork of [Voxy](https://github.com/MCRcortex/voxy) (the LOD rendering mod for
 Minecraft) ported to run on **Apple M-series GPUs**. Upstream Voxy requires
@@ -42,34 +45,68 @@ launcher profile with `-Xmx6G` would see, cap it the same way:
 
 ### Build the jar
 
-This fork publishes no prebuilt jar: upstream Voxy is "All rights reserved.
-Do not redistribute.", and a public jar would be redistribution. To use the
-mod in a launcher profile, build the jar on your Mac and drop it in `mods/`
-together with the matching Sodium version. Voxy turns on by itself; see
-[Java memory](#java-memory-and-turning-voxy-off) for the recommended heap.
+There is no download button, on purpose: the Voxy team is fine with this
+source being on GitHub, but asked that jar builds of it not be shared
+(upstream Voxy is "All rights reserved. Do not redistribute."). So you make
+the jar on your own Mac. It is easier than it sounds: no coding, one block
+of text to copy and paste, and a few minutes of waiting. An AI assistant can
+also [do it with you](#build-the-jar-with-an-ai-assistant).
 
-You need Git and a Java 21. macOS offers to install Git, with the command
-line developer tools, the first time you type `git`. The official Minecraft
-launcher brings its own Java 21 once it has started Minecraft 1.21.11, and
-the `export` line below uses it. With another launcher, install a JDK 21 and
-use `export JAVA_HOME=$(/usr/libexec/java_home -v 21)` instead. In Terminal:
+It is also the safer way to get a mod:
 
-```bash
-git clone --branch v0.2.8-alpha-metal.1 https://github.com/srjefers/voxy-mseries-support.git
-cd voxy-mseries-support
-export JAVA_HOME="$HOME/Library/Application Support/minecraft/runtime/java-runtime-delta/mac-os-arm64/java-runtime-delta/jre.bundle/Contents/Home"
-./gradlew build    # output: build/libs/voxy-<version>-<commit>.jar
-```
+- Your jar comes straight from the public source code, which anyone can
+  read, together with every change made to it.
+- Nothing can be added to it on the way to you. Mod jars passed around on
+  Discord or re-upload sites have carried malware before.
+- So if someone offers you a ready-made jar of this port, do not run it: it
+  does not come from this project.
 
-- `buildMetalNative: FAILED` in the output is expected without CMake and
-  Xcode: the jar keeps the Metal library that comes with the source. To
-  rebuild that library, see [Which Java runs what](docs/DEVELOPMENT.md#which-java-runs-what).
-- The first build downloads Gradle, Minecraft and the libraries: it needs
-  about 1.6 GB of disk space and took 3 minutes on an M4 Max. Later builds
-  take under a minute.
-- `--branch` picks the pre-release tag. Leave it out to build the newest
-  `dev` code.
-- The jar you build is for you: sharing it is redistribution too.
+**Step by step**
+
+1. Start Minecraft 1.21.11 once with the official launcher, then quit. That
+   installs the Java 21 that the build uses. Another launcher? See the table
+   at the end of this section.
+2. Open Terminal: press Command-Space, type `Terminal` and press Return.
+3. Copy this whole block, paste it into Terminal and press Return:
+
+   ```bash
+   git clone -c advice.detachedHead=false --branch v0.2.8-alpha-metal.1 https://github.com/srjefers/voxy-mseries-support.git ~/voxy-mseries-support &&
+   cd ~/voxy-mseries-support &&
+   export JAVA_HOME="$HOME/Library/Application Support/minecraft/runtime/java-runtime-delta/mac-os-arm64/java-runtime-delta/jre.bundle/Contents/Home" &&
+   ./gradlew build &&
+   open build/libs
+   ```
+
+4. Wait for `BUILD SUCCESSFUL`. A lot of text scrolls by, including warnings
+   such as `buildMetalNative: FAILED` or `Deprecated Gradle features`: they
+   are normal. The first build downloads what it needs (about 1.6 GB of disk
+   space) and took 3 minutes on an M4 Max.
+5. A Finder window opens with your jar, for example
+   `voxy-0.2.8-alpha-metal.1-e68957b8.jar`. Put it in the `mods` folder of a
+   Fabric profile with the versions below. The
+   [player guide](docs/testing/player-track.md) shows each launcher step.
+
+| Component | Version |
+|---|---|
+| Minecraft | 1.21.11 |
+| Fabric Loader | 0.18.2+ |
+| Fabric API | 0.140.0+ |
+| Sodium (required) | mc1.21.11-0.8.1 |
+
+Voxy turns on by itself; see [Java memory](#java-memory-and-turning-voxy-off)
+for the recommended memory. Keep the jar for yourself: the Voxy team asked
+that builds not be shared, and anyone can build their own the same way.
+
+| If Terminal shows | Do this |
+|---|---|
+| A window asking to install the command line developer tools | Click *Install*, wait until it finishes, then paste the block again. |
+| `ERROR: JAVA_HOME is set to an invalid directory` | The Java 21 is missing. Do step 1, then paste the block again without its first line. With another launcher, install a JDK 21 (for example Temurin 21 from adoptium.net) and use `export JAVA_HOME="$(/usr/libexec/java_home -v 21 --failfast)" &&` as the third line. |
+| `already exists and is not an empty directory` | You downloaded it before. Paste the block again without its first line. |
+
+Developers: `--branch` picks the pre-release tag; leave it out to build the
+newest `dev` code. `buildMetalNative` rebuilds the Metal library only when
+CMake and Xcode are installed; otherwise the jar keeps the copy that comes
+with the source. See [Which Java runs what](docs/DEVELOPMENT.md#which-java-runs-what).
 
 ### Build the jar with an AI assistant
 
@@ -90,8 +127,8 @@ does before you run it.
    "$HOME/Library/Application Support/minecraft/runtime/java-runtime-delta/mac-os-arm64/java-runtime-delta/jre.bundle/Contents/Home".
    If it is not there, help me install a JDK 21.
 3. Run these commands. A "buildMetalNative: FAILED" warning is expected:
-   git clone --branch v0.2.8-alpha-metal.1 https://github.com/srjefers/voxy-mseries-support.git
-   cd voxy-mseries-support
+   git clone --branch v0.2.8-alpha-metal.1 https://github.com/srjefers/voxy-mseries-support.git ~/voxy-mseries-support
+   cd ~/voxy-mseries-support
    export JAVA_HOME="<the Java 21 folder>"
    ./gradlew build
 4. Show me the jar in build/libs. Then explain how to add it to the mods folder
@@ -102,13 +139,6 @@ does before you run it.
 You stay in charge: read each command before you allow it. The build needs
 neither `sudo` (your password in Terminal) nor a jar from another site; if
 the assistant asks for either, stop it.
-
-| Component | Version |
-|---|---|
-| Minecraft | 1.21.11 |
-| Fabric Loader | 0.18.2+ |
-| Fabric API | 0.140.0+ |
-| Sodium (required) | mc1.21.11-0.8.1 |
 
 ## System requirements
 

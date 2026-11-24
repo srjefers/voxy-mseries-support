@@ -1,11 +1,12 @@
 # Player test track
 
 This guide is for players who want to help test Voxy for Apple Silicon.
-You use a normal launcher and a jar that you build once from the source
-code: this fork publishes no prebuilt jar, because upstream Voxy does not
-allow redistribution. The build is a few Terminal commands (see
-[Build the jar](../../README.md#build-the-jar)). You do not need to know how
-to code.
+You use a normal launcher and a jar that you build once on your Mac. That
+sounds harder than it is: you paste one block of text into Terminal and wait
+a few minutes, or an AI assistant does it with you (see
+[Build the jar](../../README.md#build-the-jar)). There is no download because
+the Voxy team asked that jar builds not be shared, and building your own is
+also the safer way to get a mod. You do not need to know how to code.
 
 Each test has an ID that starts with `PT-`. Start with PT-01. After that, do
 as many tests as you like, in any order. Most take 10 to 30 minutes.
