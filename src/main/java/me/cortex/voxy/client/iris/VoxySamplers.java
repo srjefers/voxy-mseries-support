@@ -6,6 +6,15 @@ import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 
 public class VoxySamplers {
     public static void addSamplers(IrisRenderingPipeline pipeline, SamplerHolder samplers) {
+        // H12: where the LOD terrain is, for the pack-text cloud patch
+        // (VxLodCloudDistance declares and samples it). Metal only; registered for
+        // every pack, so the declared sampler is always bound. 0 until uploaded,
+        // and the patch ignores it until vxLodCoverageInfo.w says it is valid.
+        if (VxLodCloudDistance.enabled()) {
+            samplers.addDynamicSampler(TextureType.TEXTURE_2D,
+                    me.cortex.voxy.client.core.rendering.clouds.LodCoverageGlTexture::textureId,
+                    null, "vxLodCoverage");
+        }
         var patchData = ((IGetVoxyPatchData)pipeline).voxy$getPatchData();
         if (patchData != null) {
             String[] opaqueNames = new String[]{"vxDepthTexOpaque"};

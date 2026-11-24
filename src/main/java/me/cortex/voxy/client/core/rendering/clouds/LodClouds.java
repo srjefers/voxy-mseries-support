@@ -69,8 +69,11 @@ public final class LodClouds {
     private static final int MAX_MESH_CHUNKS = 128;
     /** {@code FogCloudsEnd} while the layer is on: the vanilla mesh keeps its full alpha. */
     private static final float NO_FADE_CLOUD_END = 1.0e7f;
-    /** The layer starts fading at this fraction of the LOD distance and is gone at the LOD edge. */
-    private static final float FADE_START_FRACTION = 0.8f;
+    /**
+     * The layer starts fading at this fraction of the LOD distance and is gone at the LOD
+     * edge. Also used by the shader-pack patch ({@code VxLodCloudDistance}).
+     */
+    public static final float FADE_START_FRACTION = 0.8f;
     /** The LOD projection's far plane is 48 000 blocks (VoxyRenderSystem.computeProjectionMat). */
     private static final float MAX_FADE_END = 40_000.0f;
 

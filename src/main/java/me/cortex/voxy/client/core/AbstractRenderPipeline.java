@@ -1298,6 +1298,11 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         return vxMaterialMode() && VX_MATERIAL_OPAQUE;
     }
 
+    /** Where the LOD terrain is, for the cloud layer and the packs' clouds; null on GL or with VOXY_LOD_CLOUDS=0. */
+    public me.cortex.voxy.client.core.rendering.clouds.LodTerrainCoverage lodCoverage() {
+        return this.nodeManager.lodCoverage();
+    }
+
     //null means dont transform the shader
     public String patchOpaqueShader(AbstractSectionRenderer<?,?> renderer, String input) {
         return null;

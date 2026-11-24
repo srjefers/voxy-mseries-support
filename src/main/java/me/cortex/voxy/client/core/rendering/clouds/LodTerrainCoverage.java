@@ -72,6 +72,39 @@ public final class LodTerrainCoverage {
     }
 
     /**
+     * Render thread: the columns of the {@code size} x {@code size} grid centred on column
+     * ({@code centreX}, {@code centreZ}) as an R8 texture of 32-block texels, 16 per LOD
+     * column, {@code size * 16} per side, row-major (z rows): 255 where any of the texel's
+     * four 16-block cells has terrain. Toroidal: a texel sits at its world position modulo
+     * the side, so the texture needs no origin and a shader samples it with
+     * {@code worldXZ / span} and REPEAT. {@code texels} is cleared first.
+     */
+    public void fillTexels(java.nio.ByteBuffer texels, int centreX, int centreZ, int size) {
+        int perColumn = CELLS / 2;
+        int side = size * perColumn;
+        for (int i = 0, n = side * side; i < n; i++) texels.put(i, (byte) 0);
+        int half = size / 2;
+        for (var e : this.sections.entrySet()) {
+            long pos = e.getKey();
+            int sx = WorldEngine.getX(pos);
+            int sz = WorldEngine.getZ(pos);
+            if (Math.abs(sx - centreX) > half || Math.abs(sz - centreZ) > half) continue;
+            int[] rows = e.getValue();
+            for (int z = 0; z < CELLS; z++) {
+                int row = rows[z];
+                if (row == 0) continue;
+                int tz = Math.floorMod(sz * perColumn + (z >> 1), side);
+                for (int x = 0; x < CELLS; x++) {
+                    if ((row & (1 << x)) != 0) {
+                        int tx = Math.floorMod(sx * perColumn + (x >> 1), side);
+                        texels.put(tz * side + tx, (byte) 0xFF);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Render thread: lay the 16-block columns out in a {@code size} x {@code size} grid of
      * 512-block columns centred on column ({@code centreX}, {@code centreZ}). Column
      * (gx, gz) of the grid owns words {@code (gx + gz * size) * 32 .. +31}, one per row

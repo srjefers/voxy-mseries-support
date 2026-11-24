@@ -56,5 +56,14 @@ public class MixinIncludeProcessor {
                 cir.setReturnValue(ao);
             }
         }
+        // H12: the pack's volumetric clouds reach the LOD distance (see
+        // VxLodCloudDistance). Own line target (clouds.glsl's DrawCloudVolumetric).
+        if (me.cortex.voxy.client.iris.VxLodCloudDistance.enabled()) {
+            ImmutableList<String> clouds = me.cortex.voxy.client.iris.VxLodCloudDistance.patch(
+                    cir.getReturnValue(), String.valueOf(path));
+            if (clouds != null) {
+                cir.setReturnValue(clouds);
+            }
+        }
     }
 }

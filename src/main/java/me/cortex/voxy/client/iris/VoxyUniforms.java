@@ -57,6 +57,14 @@ public class VoxyUniforms {
                 .uniformMatrix(PER_FRAME, "vxProjInv", new Inverted(VoxyUniforms::getProjection))
                 .uniformMatrix(PER_FRAME, "vxProjPrev", new PreviousMat(VoxyUniforms::getProjection));
 
+        // H12: the vxLodCoverage texture's mapping for the pack-text cloud patch
+        // (VxLodCloudDistance). Constant once valid (the texture is toroidal), so the
+        // start-of-frame update never lags the texture. Metal only.
+        if (VxLodCloudDistance.enabled()) {
+            uniforms.uniform4f(PER_FRAME, "vxLodCoverageInfo",
+                    me.cortex.voxy.client.core.rendering.clouds.LodCoverageGlTexture::info);
+        }
+
         if (IrisShaderPatch.IMPERSONATE_DISTANT_HORIZONS) {
             uniforms
                     .uniform1f(PER_FRAME, "dhNearPlane", ()->16)//Presently hardcoded in voxy
