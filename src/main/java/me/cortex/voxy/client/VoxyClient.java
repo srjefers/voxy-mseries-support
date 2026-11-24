@@ -296,6 +296,67 @@ public class VoxyClient implements ClientModInitializer {
             Logger.info("VOXY_DEBUG_CMD active: " + cmds.size() + " scheduled commands");
         }
 
+        // VOXY_DEBUG_RELOAD=<seconds> and VOXY_DEBUG_TOGGLE="<s>:off;<s>:on" (diagnostic only,
+        // for the H1/H2 bound-mask checks; nothing is saved to the config):
+        // - RELOAD calls LevelRenderer.allChanged() once, <seconds> after joining: the same
+        //   renderer reload as Apply on an option with REQUIRES_RENDERER_RELOAD, F3+A or a
+        //   shader toggle (Voxy renderer + Sodium RenderSectionManager rebuilt).
+        // - TOGGLE runs the 'Enable Voxy' (General) switch at fixed seconds after joining,
+        //   exactly as VoxyConfigMenu's runner does (no renderer reload).
+        String dbgReload = System.getenv("VOXY_DEBUG_RELOAD");
+        String dbgToggle = System.getenv("VOXY_DEBUG_TOGGLE");
+        if ((dbgReload != null && !dbgReload.isBlank()) || (dbgToggle != null && !dbgToggle.isBlank())) {
+            record TimedAction(long delayNanos, String action) {}
+            java.util.List<TimedAction> actions = new java.util.ArrayList<>();
+            if (dbgReload != null && !dbgReload.isBlank()) {
+                try {
+                    actions.add(new TimedAction(Long.parseLong(dbgReload.trim()) * 1_000_000_000L, "reload"));
+                } catch (NumberFormatException ignored) {}
+            }
+            if (dbgToggle != null) {
+                for (String part : dbgToggle.split(";")) {
+                    int colon = part.indexOf(':');
+                    if (colon <= 0) continue;
+                    try {
+                        actions.add(new TimedAction(Long.parseLong(part.substring(0, colon).trim()) * 1_000_000_000L,
+                                part.substring(colon + 1).trim().toLowerCase(java.util.Locale.ROOT)));
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+            final long[] joinedAt = {-1};
+            final boolean[] fired = new boolean[actions.size()];
+            net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(client -> {
+                if (client.level == null) { joinedAt[0] = -1; return; }
+                if (joinedAt[0] < 0) joinedAt[0] = System.nanoTime();
+                long elapsed = System.nanoTime() - joinedAt[0];
+                for (int i = 0; i < actions.size(); i++) {
+                    if (fired[i] || elapsed < actions.get(i).delayNanos()) continue;
+                    fired[i] = true;
+                    String action = actions.get(i).action();
+                    Logger.info("[VOXY_DEBUG_ACTION] " + action);
+                    var vrsh = (IGetVoxyRenderSystem) client.levelRenderer;
+                    var cfg = me.cortex.voxy.client.config.VoxyConfig.CONFIG;
+                    switch (action) {
+                        case "reload" -> client.levelRenderer.allChanged();
+                        case "off" -> {
+                            cfg.enabled = false;
+                            if (vrsh != null) vrsh.shutdownRenderer();
+                            VoxyCommon.shutdownInstance();
+                        }
+                        case "on" -> {
+                            cfg.enabled = true;
+                            if (VoxyClientInstance.isInGame) {
+                                VoxyCommon.createInstance();
+                                if (vrsh != null && cfg.enableRendering) vrsh.createRenderer();
+                            }
+                        }
+                        default -> Logger.warn("[VOXY_DEBUG_ACTION] unknown action: " + action);
+                    }
+                }
+            });
+            Logger.info("VOXY_DEBUG_RELOAD/TOGGLE active: " + actions.size() + " scheduled actions");
+        }
+
         FabricLoader.getInstance()
                 .getEntrypoints("frex_flawless_frames", Consumer.class)
                 .forEach(api -> ((Consumer<Function<String,Consumer<Boolean>>>)api).accept(name->active->{if (active) {

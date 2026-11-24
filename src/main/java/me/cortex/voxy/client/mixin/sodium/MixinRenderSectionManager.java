@@ -129,6 +129,22 @@ public class MixinRenderSectionManager {
 
         VoxyRenderSystem system = ((IGetVoxyRenderSystem)(this.level.levelRenderer)).getVoxyRenderSystem();
         if (system == null) {
+            // H2 (Metal): the mirror exists to seed the NEXT renderer, so it must keep
+            // following Sodium while no renderer is up ('Enable Voxy' OFF). This return
+            // used to come before mirrorAdd/mirrorRemove: switching Voxy off during a
+            // Sodium rebuild froze the mirror at ~60 % of the sections, and moving while
+            // off kept the old area in it. 'Enable Voxy' ON (no renderer reload, so
+            // Sodium re-announces nothing) then seeded that stale set: LOD inside the
+            // vanilla ring where sections were missing, and a masked square of LOD hole
+            // where the player had been. VOXY_BOUND_MIRROR_ALWAYS=0 reverts.
+            if (me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorTracksWithoutRenderer()) {
+                long mpos = voxy$boundPos(instance.getChunkX(), instance.getChunkY(), instance.getChunkZ());
+                if (wasBuilt) {
+                    me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorRemove(mpos);
+                } else {
+                    me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorAdd(mpos, voxy$hasOpaque(info));
+                }
+            }
             return true;
         }
         int x = instance.getChunkX(), y = instance.getChunkY(), z = instance.getChunkZ();
