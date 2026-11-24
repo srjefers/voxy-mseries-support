@@ -1,5 +1,7 @@
 package me.cortex.voxy.client.mixin.sodium;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import me.cortex.voxy.client.ICheekyClientChunkCache;
 import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.client.core.IGetVoxyRenderSystem;
@@ -11,6 +13,7 @@ import net.caffeinemc.mods.sodium.client.render.chunk.RenderSection;
 import net.caffeinemc.mods.sodium.client.render.chunk.RenderSectionManager;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.executor.ChunkBuilder;
 import net.caffeinemc.mods.sodium.client.render.chunk.data.BuiltSectionInfo;
+import net.caffeinemc.mods.sodium.client.render.chunk.lists.SectionCollector;
 import net.caffeinemc.mods.sodium.client.render.chunk.map.ChunkTrackerHolder;
 import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.SortBehavior;
 import net.caffeinemc.mods.sodium.client.util.FogParameters;
@@ -169,9 +172,53 @@ public class MixinRenderSectionManager {
         } else {//Add
             boolean hasOpaque = voxy$hasOpaque(info);
             me.cortex.voxy.client.core.rendering.ChunkBoundRenderer.mirrorAdd(pos, hasOpaque);
-            system.chunkBoundRenderer.addSection(pos, hasOpaque);
+            // Built during uploadChunks: Sodium may not draw it until its next
+            // list build, so the mask waits for it (ChunkBoundRenderer.addSection).
+            system.chunkBoundRenderer.addSection(pos, hasOpaque, voxy$inBuildResults);
         }
         return true;
+    }
+
+    /** True while Sodium processes build results (uploadChunks), render thread only. */
+    @Unique private static boolean voxy$inBuildResults;
+
+    @Inject(method = "processChunkBuildResults", at = @At("HEAD"))
+    private void voxy$enterBuildResults(CallbackInfoReturnable<Boolean> cir) {
+        voxy$inBuildResults = true;
+    }
+
+    @Inject(method = "processChunkBuildResults", at = @At("RETURN"))
+    private void voxy$leaveBuildResults(CallbackInfoReturnable<Boolean> cir) {
+        voxy$inBuildResults = false;
+    }
+
+    /**
+     * Sodium presents a freshly uploaded section in the current frame (blocking job, or within
+     * 64 blocks and visible): the mask must cover it this frame too.
+     */
+    @WrapOperation(method = "processChunkBuildResults", at = @At(value = "INVOKE",
+            target = "Lnet/caffeinemc/mods/sodium/client/render/chunk/lists/SectionCollector;visit(Lnet/caffeinemc/mods/sodium/client/render/chunk/RenderSection;)V"))
+    private void voxy$promoteOnPresent(SectionCollector collector, RenderSection section, Operation<Void> original) {
+        original.call(collector, section);
+        if (this.level.levelRenderer == null) return;
+        VoxyRenderSystem system = ((IGetVoxyRenderSystem)(this.level.levelRenderer)).getVoxyRenderSystem();
+        if (system != null) {
+            system.chunkBoundRenderer.promoteSection(
+                    voxy$boundPos(section.getChunkX(), section.getChunkY(), section.getChunkZ()));
+        }
+    }
+
+    /**
+     * Sodium is about to build a render list (update -> createTerrainRenderList): every section
+     * uploaded before it is in that list, so the mask takes all deferred adds.
+     */
+    @Inject(method = "update", at = @At("HEAD"))
+    private void voxy$promoteBeforeListBuild(CallbackInfo ci) {
+        if (this.level.levelRenderer == null) return;
+        VoxyRenderSystem system = ((IGetVoxyRenderSystem)(this.level.levelRenderer)).getVoxyRenderSystem();
+        if (system != null) {
+            system.chunkBoundRenderer.promoteAllSections();
+        }
     }
 
     /**

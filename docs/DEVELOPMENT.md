@@ -112,6 +112,7 @@ The loop that produced every fix in this port:
 | `[Metal-FLICKER]` | Render-list variance over ~600-frame windows — with a static camera, `min != max` means nondeterministic section selection |
 | `[Metal-DIAG]` | Section/geometry totals + camera position |
 | `[Metal-LODTEST] bound-mask radius=` | Radius the chunk-bound mask culls sections at, and where it came from (`Sodium search distance`, `render distance (no Sodium build yet)`, or `legacy max(RD, 320)` under `VOXY_BOUND_SODIUM_RADIUS=0`). One line when it changes, at most every ~2 s |
+| `[Metal-LODTEST] bound-mask new sections join` / `bound-mask deferred adds:` | One line per mask renderer with the add order (`when Sodium lists them` by default, `in their upload frame` under `VOXY_BOUND_ADD_DEFER=0`); then every ~10 s while sections build, how many deferred adds Sodium presented at once and how many joined at its next list build. Both must be non-zero while flying, or a Sodium hook did not apply |
 | `[Metal-FRUSTUM]` | Projection/viewport dump (every 600 frames) — catches FOV/viewport anomalies |
 | `[Metal-WATERBAKE]` | Per-face alpha coverage of the fluid bake (one-shot) |
 | `[Metal-WATERANIM]` | Water animator registration (frames, frametime, faces) |
@@ -140,6 +141,7 @@ development:
 | `VOXY_LOD_WATER_DEBUG=1` | Magenta water, depth-test off (water geometry coverage) |
 | `VOXY_NO_DEPTH_BOUND=1` | Kill switch: disable the chunk-bound depth mask |
 | `VOXY_BOUND_SODIUM_RADIUS=0` | Kill switch: the chunk-bound mask culls sections at max(render distance, 320 blocks) again instead of Sodium's own search distance (the old radius masked a ring Sodium does not draw at Render Distance < 20: holes at the vanilla/LOD border) |
+| `VOXY_BOUND_ADD_DEFER=0` | Kill switch: a newly built section joins the chunk-bound mask in its upload frame again (Round 23). Default: when Sodium lists it — at once if Sodium presents it in that frame (within 64 blocks or a blocking job), else at Sodium's next render-list build. The old order masked far new sections one frame before Sodium drew them: grey squares on water and ice along the loading front |
 | `VOXY_LOD_WATER_STEP=0` | Kill switch: LOD water of levels >= 1 back at its cell top (63.89 for the sea instead of 62.89). Its 1-block step up at the level-0/level-1 ring showed the dark seafloor as a thin zigzag line on far water (H10) |
 | `VOXY_WATER_ANIMATE=0` | Kill switch: freeze LOD water animation |
 | `VOXY_LOD_CLOUDS=0` | Kill switch: vanilla clouds only (no clouds over the LODs); with BSL, the pack's clouds as the pack ships them |

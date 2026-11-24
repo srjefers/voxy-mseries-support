@@ -127,6 +127,12 @@ public class ChunkBoundRenderer {
 
         final LongOpenHashSet addQueue = new LongOpenHashSet();
         final LongOpenHashSet remQueue = new LongOpenHashSet();
+        /**
+         * Newly built sections Sodium has not put in a render list yet (Metal, see
+         * {@link ChunkBoundRenderer#addSection(long, boolean, boolean)}). Never drained into
+         * the mask directly: {@link #promote} / {@link #promoteAll} move them to addQueue.
+         */
+        final LongOpenHashSet deferQueue = new LongOpenHashSet();
 
         InstanceSet() {
             this.chunk2idx.defaultReturnValue(-1);
@@ -138,15 +144,38 @@ public class ChunkBoundRenderer {
             }
         }
 
+        void addDeferred(long pos) {
+            if (!this.remQueue.remove(pos)) {
+                this.deferQueue.add(pos);
+            }
+        }
+
+        boolean promote(long pos) {
+            if (this.deferQueue.remove(pos)) {
+                this.addQueue.add(pos);
+                return true;
+            }
+            return false;
+        }
+
+        int promoteAll() {
+            int n = this.deferQueue.size();
+            if (n != 0) {
+                this.addQueue.addAll(this.deferQueue);
+                this.deferQueue.clear();
+            }
+            return n;
+        }
+
         void remove(long pos) {
-            if (!this.addQueue.remove(pos)) {
+            if (!this.addQueue.remove(pos) && !this.deferQueue.remove(pos)) {
                 this.remQueue.add(pos);
             }
         }
 
-        /** Queued for add or already resident — used to route removals/reclassifies. */
+        /** Queued for add (now or deferred) or already resident — used to route removals/reclassifies. */
         boolean tracks(long pos) {
-            return this.addQueue.contains(pos) || this.chunk2idx.containsKey(pos);
+            return this.addQueue.contains(pos) || this.deferQueue.contains(pos) || this.chunk2idx.containsKey(pos);
         }
 
         void drainRemovals() {
@@ -390,6 +419,18 @@ public class ChunkBoundRenderer {
     private float loggedRadius = -1f;
     private int radiusLogFrame = 120;
 
+    /** Kill switch for the deferred add of newly uploaded sections (see addSection). */
+    private static final boolean ADD_DEFER = !"0".equals(
+            String.valueOf(System.getenv("VOXY_BOUND_ADD_DEFER")).trim());
+
+    /** Defer uploads until Sodium lists them: Metal only, the GL backend keeps its order. */
+    private final boolean deferAdds = ADD_DEFER && RenderBackendFactory.get().getType()
+            != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+
+    /** Deferred adds promoted by Sodium's immediate present / by its next list build, since the last log. */
+    private int promotedNow, promotedAtBuild;
+    private int deferLogCountdown = 0;
+
     /** Throttle for the split-counts diagnostic log (~10s at 60fps). */
     private int splitLogCountdown = 0;
 
@@ -405,6 +446,12 @@ public class ChunkBoundRenderer {
                     + " every built section writes real depth. VOXY_BOUND_TRANS_SPLIT=all forces it on");
         }
         this.seedFromMirror();
+        if (RenderBackendFactory.get().getType() != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+            Logger.info("[Metal-LODTEST] bound-mask new sections join " + (this.deferAdds
+                    ? "when Sodium lists them (at once if it presents them in their upload frame, else at its"
+                            + " next render-list build); VOXY_BOUND_ADD_DEFER=0 reverts"
+                    : "in their upload frame (Round 23 order, VOXY_BOUND_ADD_DEFER=0)"));
+        }
 
         String vert = ShaderLoader.parse("voxy:chunkoutline/outline.vsh");
         String taa = pipeline.taaFunction("getTAA");
@@ -466,11 +513,47 @@ public class ChunkBoundRenderer {
     }
 
     public void addSection(long pos, boolean hasOpaque) {
-        if (this.epsSet != null && !hasOpaque) {
-            this.epsSet.add(pos);
+        this.addSection(pos, hasOpaque, false);
+    }
+
+    /**
+     * @param fromUpload the section became built in Sodium's uploadChunks
+     *        (processChunkBuildResults). Sodium 0.8.1 builds each frame's render
+     *        list BEFORE that upload, and its collector only lists sections that
+     *        are already built, so such a section is drawn in its upload frame only
+     *        if Sodium presents it at once (blocking job, or within 64 blocks and
+     *        visible: isSectionImmediatePresentationCandidate). Any other one is
+     *        drawn from Sodium's next render-list build. On Metal it waits in the
+     *        defer queue until {@link #promoteSection} (Sodium presented it now) or
+     *        {@link #promoteAllSections} (Sodium is building a list), so the mask
+     *        never covers a section in a frame Sodium does not draw it. Round 23
+     *        added every new section in its upload frame: far ones were masked one
+     *        frame early, a hole showing what lies below (grey squares on water and
+     *        ice along the loading front, ahead of a moving player).
+     *        VOXY_BOUND_ADD_DEFER=0 restores that order; GL never defers.
+     */
+    public void addSection(long pos, boolean hasOpaque, boolean fromUpload) {
+        InstanceSet set = (this.epsSet != null && !hasOpaque) ? this.epsSet : this.primary;
+        if (fromUpload && this.deferAdds) {
+            set.addDeferred(pos);
         } else {
-            this.primary.add(pos);
+            set.add(pos);
         }
+    }
+
+    /** Sodium presented this freshly uploaded section in the current frame's list. */
+    public void promoteSection(long pos) {
+        if (!this.deferAdds) return;
+        if (this.primary.promote(pos) || (this.epsSet != null && this.epsSet.promote(pos))) {
+            this.promotedNow++;
+        }
+    }
+
+    /** Sodium is building a render list: every deferred section is in it from now on. */
+    public void promoteAllSections() {
+        if (!this.deferAdds) return;
+        this.promotedAtBuild += this.primary.promoteAll();
+        if (this.epsSet != null) this.promotedAtBuild += this.epsSet.promoteAll();
     }
 
     public void removeSection(long pos) {
@@ -611,11 +694,26 @@ public class ChunkBoundRenderer {
         // frame while ABSENT from the mask, so the SOLID-head LOD depth
         // inject stomped its pixels (real-terrain flicker during camera
         // movement; the dominant underwater x-ray trigger).
+        // H14 follow-up: on Metal a section built during uploadChunks reaches
+        // addQueue only once Sodium lists it (addSection / promote*), so
+        // draining here is right for every add: immediate presents and the
+        // sections Sodium's list build of this frame took in.
         this.primary.drainAdds();
         if (this.epsSet != null) this.epsSet.drainAdds();
 
         int count = this.primary.chunk2idx.size();
         int epsCount = this.epsSet != null ? this.epsSet.chunk2idx.size() : 0;
+        if (this.deferAdds && this.deferLogCountdown-- <= 0) {
+            this.deferLogCountdown = 600; // ~10s at 60fps
+            if (this.promotedNow + this.promotedAtBuild > 0) {
+                Logger.info("[Metal-LODTEST] bound-mask deferred adds: presented at once=" + this.promotedNow
+                        + " joined at Sodium's next list build=" + this.promotedAtBuild
+                        + " still waiting=" + (this.primary.deferQueue.size()
+                        + (this.epsSet != null ? this.epsSet.deferQueue.size() : 0)));
+            }
+            this.promotedNow = 0;
+            this.promotedAtBuild = 0;
+        }
         if (this.epsSet != null && this.splitLogCountdown-- <= 0) {
             this.splitLogCountdown = 600; // ~10s at 60fps
             Logger.info("[Metal-LODTEST] bound-mask split counts: opaque=" + count
