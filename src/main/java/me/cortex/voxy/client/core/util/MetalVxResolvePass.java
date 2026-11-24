@@ -1269,6 +1269,24 @@ public final class MetalVxResolvePass {
                 unit++; p.samplerCount++;
             }
         }
+        // H12 (VxLodCloudDistance): the pack's clouds.glsl now declares
+        // `uniform sampler2D vxLodCoverage`, and voxy_translucent includes it. Iris binds
+        // it for its own programs, but this program is ours: left unassigned it defaults
+        // to unit 0, where uVxAlbedo is a sampler2DRect. Two sampler types on one unit
+        // make the resolve draw fail (GL_INVALID_OPERATION): black textureless LOD water.
+        // Give it unit 5: no other sampler of this program uses it (0-3 planes, 4 trans
+        // depth, 6.. pack samplers), and a unit past the pack samplers could exceed Apple
+        // GL's 16 fragment units. The resolve only calls DrawCloudVolumetric for
+        // reflections (fadeFaster), which never samples it, and vxLodCoverageInfo stays 0
+        // here; the unit only has to be conflict-free, whatever is bound on it.
+        int coverageLoc = glGetUniformLocation(prog, "vxLodCoverage");
+        if (coverageLoc >= 0) {
+            int coverageUnit = 5;
+            glUniform1i(coverageLoc, coverageUnit);
+            Logger.info("[Metal-CLOUDS] vx resolve (" + (translucent ? "translucent" : "opaque")
+                    + "): vxLodCoverage active in the pack text, moved to its own unit " + coverageUnit
+                    + " (on unit 0 it clashed with uVxAlbedo and the resolve draw failed)");
+        }
         if (translucent) {
             Logger.info("[Metal-LODTEST] vx SSR mirror rebind " + (SSR_ALT && p.gaux2Unit >= 0 ? "ON" : "OFF")
                     + " (gaux2 unit=" + p.gaux2Unit + " -> colortex5 ALT, deferred1's last-frame reflection"
