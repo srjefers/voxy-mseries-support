@@ -64,6 +64,21 @@ import static org.lwjgl.opengl.GL11.*;
 //TODO: NOTE!!! is it worth even uploading as a 16x16 texture, since automatic lod selection... doing 8x8 textures might be perfectly ok!!!
 // this _quarters_ the memory requirements for the texture atlas!!! WHICH IS HUGE saving
 public class ModelFactory {
+    /**
+     * Metal only: bake ice / frosted ice into the solid LOD layer (see the render-layer choice in the
+     * bake). VOXY_LOD_ICE_OPAQUE=0 keeps them translucent. GL keeps the upstream layer.
+     */
+    private static final boolean ICE_OPAQUE =
+            !"0".equals(String.valueOf(System.getenv("VOXY_LOD_ICE_OPAQUE")).trim())
+            && me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                    != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+    static {
+        if (ICE_OPAQUE) {
+            me.cortex.voxy.common.Logger.info("[Metal-LODTEST] LOD ice baked as solid (no stacked translucent"
+                    + " layers on frozen water); VOXY_LOD_ICE_OPAQUE=0 reverts");
+        }
+    }
+
     /** Far-LOD plant work S1 (2026-09-25): plant cross models bake without
      *  dilation and get centred side faces on Metal. VOXY_LOD_PLANT_CROSS=0
      *  reverts to the hollow-box behaviour. Read from the bakery too. */
@@ -492,6 +507,18 @@ public class ModelFactory {
             blockRenderLayer = ItemBlockRenderTypes.getRenderLayer(blockState.getFluidState());
         } else {
             if (blockState.getBlock() instanceof LeavesBlock) {
+                blockRenderLayer = ChunkSectionLayer.SOLID;
+            } else if (ICE_OPAQUE && (blockState.is(Blocks.ICE) || blockState.is(Blocks.FROSTED_ICE))) {
+                // Metal (H15, 2026-11-24): frozen ocean stacks three translucent LOD
+                // layers within a block — the ice top, the ice bottom and the top of
+                // the water under it (translucent ice occludes nothing). Without a
+                // shader pack the LOD translucent pass blends with no depth write and
+                // no sorting, so every greedy quad came out lighter or greyer
+                // depending on its draw order: the grey rectangle mosaic on far ice.
+                // Render LOD ice as solid: it then occludes the water top beneath
+                // and goes through the depth-written opaque pass (alpha forced to 1;
+                // the ice texture covers the face, so no alpha discard). From LOD
+                // distances it reads as the ice colour. VOXY_LOD_ICE_OPAQUE=0 reverts.
                 blockRenderLayer = ChunkSectionLayer.SOLID;
             } else {
                 blockRenderLayer = ItemBlockRenderTypes.getChunkRenderType(blockState);
