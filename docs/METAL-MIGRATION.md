@@ -115,6 +115,8 @@ real translucent biome-tinted water, full texture detail, ~111 FPS.
 | `VOXY_NO_DEPTH_BOUND=1` | off | Kill switch: skip the chunk-bound depth test (restores the pre-mask Metal behaviour) |
 | `VOXY_BOUND_DEBUG=1` | off | Tint bound-discarded LOD fragments red instead of discarding (mask verification) |
 | `VOXY_WATER_ANIMATE=0` | off | Kill switch: freeze LOD water (disables the `water_still` model-atlas cell re-upload that animates LOD water in step with MC) |
+| `VOXY_LOD_CLOUDS=0` | off (layer on) | Kill switch: vanilla clouds untouched (they stop at the Cloud Distance and fade from the camera, no clouds over the LODs). Default: `LodCloudLayer` continues the vanilla cloud mesh over the LOD terrain, the vanilla mesh stops fading and grows to cover the vanilla terrain. No shader pack only. Marker `[Metal-CLOUDS]` |
+| `VOXY_LOD_CLOUDS_DEBUG=1` | off | Paint the LOD cloud layer's clouds magenta, to see where the vanilla mesh hands over |
 | `VOXY_IRIS_GBUFFER_INJECT=0` | off | Kill switch: disable the Iris gbuffer injection (LODs stay hidden while a pack is active, the pre-injection behaviour) |
 | `VOXY_LIGHTMAP_SYNC_EVERY_FRAME=1` | off | Kill switch: `glGetTexImage` MC's lightmap every frame (pre-throttle behaviour) instead of only on frames where `LightTexture.updateLightTexture` rewrote it (client tick, ~20 Hz). Marker `[Metal] lightmap sync throttled to <mode>`; `[Metal-LayerB] … lightmapSync=<run>/<skipped>` |
 | `VOXY_BRIDGE_RESYNC=every` | `once` | Kill switch: CGLTexImageIOSurface2D re-specification on every GL acquire (the pre-lever-C behaviour; 7+ per frame). Default re-specifies each bridge once per Metal frame (marker `[Metal-RESYNC]`, counts on `[Metal-TIMING]`) |
@@ -165,6 +167,15 @@ Useful log markers: `[Metal-DEFINES]` (shader variant), `[Metal-WATERBAKE]`
   when Voxy composites, so the bridge's fog-coloured clear acts as the far
   sky and the alpha-discard composite cannot be enabled yet. Fixing this
   requires hooking the composite after MC's sky pass.
+- **Clouds over the LODs** (`LodCloudLayer`, kill switch `VOXY_LOD_CLOUDS=0`):
+  without a shader pack, the vanilla cloud mesh covers the vanilla terrain
+  and a cell-marching cloud slab drawn in the LOD frame continues it out to
+  the LOD distance (same cells, drift, height and face shades). Not done:
+  the camera inside the 4-block cloud layer (vanilla clouds only there),
+  and shader packs, which draw their own clouds (BSL's default volumetric
+  clouds end about 1 750 blocks out at the default fog density, 3 500 at
+  most, by the pack's own design: `fadeEnd` in
+  `lib/atmospherics/clouds.glsl`).
 - **Synchronous GPU model**: 3 × `waitUntilCompleted` per frame. The fence
   machinery added in `abcf14b3` is the building block for going async
   (estimated to push well past the current ~111 FPS).

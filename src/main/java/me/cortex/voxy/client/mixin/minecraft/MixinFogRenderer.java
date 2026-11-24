@@ -4,6 +4,7 @@ import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.sugar.Local;
 import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.client.core.IGetVoxyRenderSystem;
+import me.cortex.voxy.client.core.rendering.clouds.LodClouds;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
@@ -22,6 +23,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public class MixinFogRenderer {
     @Inject(method = "setupFog", at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;getDevice()Lcom/mojang/blaze3d/systems/GpuDevice;", remap = false))
     private void voxy$modifyFog(Camera camera, int rdInt, DeltaTracker tracker, float pTick, ClientLevel lvl, CallbackInfoReturnable<Vector4f> cir, @Local(type=FogData.class) FogData data) {
+        // LOD cloud layer: decides this frame and, when it runs, stops the vanilla cloud
+        // mesh from fading (cloudEnd). Returns without touching data on GL.
+        LodClouds.onFogSetup(data);
+
         if (!VoxyConfig.CONFIG.isRenderingEnabled()) return;
 
         var vrs = IGetVoxyRenderSystem.getNullable();

@@ -183,6 +183,11 @@ public final class ShaderCompilerSmokeTest {
                         "lod/gl46/cull/raster.vert"),
                 new ShaderCase("lod/gl46/cull/raster.frag", RuntimeShaderCompiler.Stage.FRAGMENT, empty,
                         "lod/gl46/cull/raster.frag"),
+                // LOD cloud layer (LodCloudLayer): proxy quad + cell march with gl_FragDepth.
+                new ShaderCase("clouds/lod_clouds.vert", RuntimeShaderCompiler.Stage.VERTEX, empty,
+                        "clouds/lod_clouds.vert (LOD cloud layer proxy quad)"),
+                new ShaderCase("clouds/lod_clouds.frag", RuntimeShaderCompiler.Stage.FRAGMENT, empty,
+                        "clouds/lod_clouds.frag (LOD cloud layer cell march)"),
                 // M12 chunk 5 Metal cull stub — force-all-visible compute.
                 new ShaderCase("lod/gl46/force_all_visible.comp", RuntimeShaderCompiler.Stage.COMPUTE, empty,
                         "lod/gl46/force_all_visible.comp (M12 Metal cull stub)"),
