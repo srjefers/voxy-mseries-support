@@ -128,7 +128,8 @@ public final class MetalMsaaSmokeTest {
             if (Math.abs(drawn4x - drawn1x) > drawn1x / 10) throw new RuntimeException("4x coverage far from 1x");
 
             System.out.println();
-            System.out.println("MSAA SMOKE OK — " + MetalLodMsaa.SAMPLES + "x memoryless pass resolved, edges antialiased, interior unchanged");
+            System.out.println("MSAA SMOKE OK — " + msaa.samples() + "x pass (asked " + MetalLodMsaa.SAMPLES
+                    + ") resolved, edges antialiased, interior unchanged");
         } finally {
             msaa.close();
             if (pipeline != null) pipeline.close();

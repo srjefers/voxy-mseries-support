@@ -46,6 +46,11 @@ public final class MetalLodMsaa implements AutoCloseable {
         }
     }
 
+    /** Sample count actually in use (0 before the first pass; may be below SAMPLES if the GPU refuses it). */
+    public int samples() {
+        return this.samples;
+    }
+
     /** Whether the LOD pass should be multisampled at all (env + earlier failures). */
     public boolean enabled() {
         return SAMPLES > 1 && !this.disabled;
