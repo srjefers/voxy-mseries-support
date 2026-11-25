@@ -389,3 +389,57 @@ Java_me_cortex_voxy_client_core_metal_MetalNative_mtlDeviceNewComputePipelineSta
         return voxy_handle_from(pso);
     }
 }
+
+// ---------- H17: LOD multisample antialiasing ----------
+//
+// The LOD pass renders into a multisample colour + depth pair and resolves the
+// colour into the IOSurface bridge at the end of the pass. Both MSAA textures
+// are memoryless when the device allows it: on Apple GPUs the samples live in
+// tile memory only, the resolve happens on tile store, so 4x MSAA costs no
+// extra RAM or bandwidth. Memoryless attachments must not be loaded or stored,
+// which holds because the LOD pass clears them and only keeps the resolve.
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_me_cortex_voxy_client_core_metal_MetalNative_mtlDeviceSupportsTextureSampleCount(
+        JNIEnv *, jclass, jlong deviceHandle, jint sampleCount) {
+    @autoreleasepool {
+        if (deviceHandle == 0) return JNI_FALSE;
+        id<MTLDevice> device = voxy_handle_cast<id<MTLDevice>>(deviceHandle);
+        return [device supportsTextureSampleCount:(NSUInteger)sampleCount] ? JNI_TRUE : JNI_FALSE;
+    }
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_me_cortex_voxy_client_core_metal_MetalNative_mtlDeviceNewMultisampleTexture(
+        JNIEnv *, jclass, jlong deviceHandle, jint pixelFormat,
+        jint width, jint height, jint sampleCount, jboolean memoryless) {
+    @autoreleasepool {
+        if (deviceHandle == 0) return 0;
+        id<MTLDevice> device = voxy_handle_cast<id<MTLDevice>>(deviceHandle);
+        MTLTextureDescriptor *desc = [[MTLTextureDescriptor alloc] init];
+        desc.textureType = MTLTextureType2DMultisample;
+        desc.pixelFormat = (MTLPixelFormat)pixelFormat;
+        desc.width = (NSUInteger)width;
+        desc.height = (NSUInteger)height;
+        desc.depth = 1;
+        desc.mipmapLevelCount = 1;
+        desc.arrayLength = 1;
+        desc.sampleCount = (NSUInteger)sampleCount;
+        desc.usage = MTLTextureUsageRenderTarget;
+        desc.storageMode = memoryless ? MTLStorageModeMemoryless : MTLStorageModePrivate;
+        id<MTLTexture> tex = [device newTextureWithDescriptor:desc];
+        if (tex == nil) return 0;
+        return voxy_handle_from(tex);
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_me_cortex_voxy_client_core_metal_MetalNative_mtlRenderPassSetColorResolveTexture(
+        JNIEnv *, jclass, jlong descHandle, jint index, jlong resolveTextureHandle) {
+    @autoreleasepool {
+        if (descHandle == 0) return;
+        MTLRenderPassDescriptor *desc = voxy_handle_cast<MTLRenderPassDescriptor *>(descHandle);
+        MTLRenderPassColorAttachmentDescriptor *att = desc.colorAttachments[(NSUInteger)index];
+        att.resolveTexture = resolveTextureHandle ? voxy_handle_cast<id<MTLTexture>>(resolveTextureHandle) : nil;
+    }
+}

@@ -346,6 +346,8 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
      * source framebuffer.
      */
     private me.cortex.voxy.client.core.rendering.util.DepthMirror metalDepthMirror;
+    /** H17: multisample targets of the LOD pass (lazy, Metal plain path only). */
+    private me.cortex.voxy.client.core.metal.MetalLodMsaa metalLodMsaa;
     /** Animation counter for the placeholder Metal render — replaced by real Voxy output incrementally. */
     private int metalFrame;
     private long fpsWindowStartNs;
@@ -554,6 +556,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         if (this.metalTransReadBuffer != null) { this.metalTransReadBuffer.free(); this.metalTransReadBuffer = null; }
         if (this.metalDepthRestore != null) { this.metalDepthRestore.close(); this.metalDepthRestore = null; }
         if (this.lodCloudLayer != null) { this.lodCloudLayer.close(); this.lodCloudLayer = null; }
+        if (this.metalLodMsaa != null) { this.metalLodMsaa.close(); this.metalLodMsaa = null; }
         if (this.metalVxOpaque0 != null) { this.metalVxOpaque0.close(); this.metalVxOpaque0 = null; }
         if (this.metalVxOpaque1 != null) { this.metalVxOpaque1.close(); this.metalVxOpaque1 = null; }
         if (this.metalVxOpaque2 != null) { this.metalVxOpaque2.close(); this.metalVxOpaque2 = null; }
@@ -875,7 +878,20 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             int rdBlocks = net.minecraft.client.Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
             submersionSkip = envEnd < 128.0f && rdBlocks > envEnd * 2.0f;
         }
-        try (var enc = backend.beginRenderPass(pass)) {
+        // H17: multisampled LOD pass (MetalLodMsaa, VOXY_LOD_MSAA=1 is the kill switch). Only on the
+        // plain path: the Iris export reads metalDepthTex after the pass and the vx opaque material
+        // draws into three planes, so both keep one sample. begin() returns null when MSAA is off
+        // or the device refuses it, and the pass opens normally.
+        if (this.metalLodMsaa == null) {
+            this.metalLodMsaa = new me.cortex.voxy.client.core.metal.MetalLodMsaa();
+        }
+        me.cortex.voxy.client.core.gpu.RenderEncoder msaaEnc = null;
+        if (irisGbufferInject || vxOpaqueMat) {
+            this.metalLodMsaa.noteSkipped(irisGbufferInject ? "Iris export" : "vx opaque material");
+        } else {
+            msaaEnc = this.metalLodMsaa.begin(mrb, pass);
+        }
+        try (var enc = msaaEnc != null ? msaaEnc : backend.beginRenderPass(pass)) {
             enc.setViewport(0, 0, fbw, fbh, 0.0f, 1.0f);
             // M12 close — invoke MDIC's Metal-aware draws in the same order
             // GL runPipeline uses (opaque → temporal → translucent). Iris is

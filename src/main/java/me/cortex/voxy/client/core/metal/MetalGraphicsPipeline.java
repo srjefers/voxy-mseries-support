@@ -25,10 +25,20 @@ public final class MetalGraphicsPipeline implements IGpuPipeline {
     final int cullMode;
     final int winding;
     final int fillMode;
+    /**
+     * H17: builds this pipeline's state again with another rasterSampleCount (the multisampled LOD
+     * pass). Variants are created on first use and cached by sample count; index 0/1 is unused.
+     */
+    private final java.util.function.IntToLongFunction variantFactory;
+    private final String label;
+    private final long[] variants = new long[9];
 
     MetalGraphicsPipeline(long pipelineState, long vertexLibrary, long fragmentLibrary,
                           long vertexFunction, long fragmentFunction,
-                          long depthStencilState, int cullMode, int winding, int fillMode) {
+                          long depthStencilState, int cullMode, int winding, int fillMode,
+                          java.util.function.IntToLongFunction variantFactory, String label) {
+        this.variantFactory = variantFactory;
+        this.label = label;
         this.pipelineState = pipelineState;
         this.vertexLibrary = vertexLibrary;
         this.fragmentLibrary = fragmentLibrary;
@@ -44,12 +54,40 @@ public final class MetalGraphicsPipeline implements IGpuPipeline {
         return this.pipelineState;
     }
 
+    /**
+     * The state to bind in a pass whose attachments have {@code sampleCount} samples: the normal
+     * state for 1, a lazily built variant otherwise (H17 multisampled LOD pass).
+     */
+    long pipelineStateHandle(int sampleCount) {
+        if (sampleCount <= 1) return this.pipelineState;
+        if (this.variantFactory == null || sampleCount >= this.variants.length) {
+            throw new IllegalStateException("pipeline " + this.label + " has no " + sampleCount + "-sample variant");
+        }
+        long v = this.variants[sampleCount];
+        if (v == 0) {
+            v = this.variantFactory.applyAsLong(sampleCount);
+            if (v == 0) {
+                throw new RuntimeException("Pipeline " + this.label + " x" + sampleCount + " link failed: "
+                        + MetalNative.mtlGetLastCompileError());
+            }
+            if (this.label != null) MetalNative.mtlSetLabel(v, this.label + " x" + sampleCount);
+            this.variants[sampleCount] = v;
+        }
+        return v;
+    }
+
     long depthStencilStateHandle() {
         return this.depthStencilState;
     }
 
     @Override
     public void close() {
+        for (int i = 0; i < this.variants.length; i++) {
+            if (this.variants[i] != 0) {
+                MetalNative.mtlRelease(this.variants[i]);
+                this.variants[i] = 0;
+            }
+        }
         if (this.pipelineState != 0) {
             MetalNative.mtlRelease(this.pipelineState);
             this.pipelineState = 0;

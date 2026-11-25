@@ -616,6 +616,18 @@ tasks.register('testMetalTriangle', JavaExec) {
     errorOutput = System.err
 }
 
+// H17 verification: the LOD pass's multisample path (MetalLodMsaa) — a triangle drawn 1x and 4x
+// with the same pipeline; the 4x read-back must have blended edges and an unchanged interior.
+tasks.register('testMetalMsaa', JavaExec) {
+    group = 'verification'
+    description = 'Smoke-test the 4x MSAA LOD pass (memoryless targets, resolve, pipeline variants).'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'me.cortex.voxy.tools.MetalMsaaSmokeTest'
+    workingDir = rootProject.projectDir
+    standardOutput = System.out
+    errorOutput = System.err
+}
+
 // M7 verification: compile a tiny SSBO-writing compute shader, dispatch
 // it on Metal, and verify the GPU wrote the expected per-invocation values.
 tasks.register('testMetalCompute', JavaExec) {

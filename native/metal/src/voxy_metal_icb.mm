@@ -215,3 +215,16 @@ Java_me_cortex_voxy_client_core_metal_MetalNative_mtlBlitEncoderOptimizeIndirect
         [encoder optimizeIndirectCommandBuffer:icb withRange:range];
     }
 }
+
+// H17: rasterSampleCount must equal the sample count of the pass the PSO is
+// used in; MetalGraphicsPipeline builds a 4-sample variant lazily for the
+// multisampled LOD pass.
+extern "C" JNIEXPORT void JNICALL
+Java_me_cortex_voxy_client_core_metal_MetalNative_mtlRenderPipelineDescriptorSetRasterSampleCount(
+        JNIEnv *, jclass, jlong descHandle, jint sampleCount) {
+    @autoreleasepool {
+        if (descHandle == 0) return;
+        MTLRenderPipelineDescriptor *desc = voxy_handle_cast<MTLRenderPipelineDescriptor *>(descHandle);
+        desc.rasterSampleCount = (NSUInteger)sampleCount;
+    }
+}
