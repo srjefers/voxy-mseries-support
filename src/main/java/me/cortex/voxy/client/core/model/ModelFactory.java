@@ -174,6 +174,47 @@ public class ModelFactory {
         return state.getValue(BambooStalkBlock.AGE) == BambooStalkBlock.AGE_THIN_BAMBOO ? 7.0f / 16.0f : 6.5f / 16.0f;
     }
 
+    /**
+     * H19 (Metal only): leaves, and every other model with a DARK_CUTOUT texture (in vanilla only leaves and
+     * mangrove roots). Vanilla mips these textures with the hole pixels counted as black, so far leaves get
+     * darker, and at mip 0 it paints each hole with 3/4 of the texture's darkest pixel at alpha 0. Voxy bakes
+     * leaves as SOLID (no discard in the bake), so the GL bake keeps those dark hole pixels (its stencil marks
+     * them drawn) and MipGen darkens the mips the same way as vanilla. The Metal bake has no stencil and took
+     * alpha 0 for "not drawn": it filled every hole with the average of the leaf pixels at alpha 255. The LOD
+     * leaves came out 7-36 % brighter than vanilla's at every level (green channel: jungle +17 %, oak +19 %,
+     * spruce +24 %, birch +29 %), and MipGen's darkening found no hole left to darken. For these bakes the
+     * bakery now keeps the holes and counts any drawn pixel (any channel above zero) as written, which is
+     * what the GL stencil records. Coverage, face bounds and occlusion stay as before (every texel is drawn).
+     * VOXY_LOD_LEAVES_DARK=0 reverts. GL is unchanged.
+     */
+    public static final boolean LEAVES_DARK =
+            !"0".equals(String.valueOf(System.getenv("VOXY_LOD_LEAVES_DARK")).trim())
+            && me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                    != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+
+    /**
+     * H19 (Metal only): bamboo leaves. Vanilla's bamboo leaves (bamboo_small_leaves / bamboo_large_leaves) are
+     * {@code "shade": false} and {@code "ambientocclusion": false}; the stalk under them is shaded. Voxy keeps one
+     * shade flag per model (any shaded quad sets it), so a leafy bamboo block took the stalk's flag and the LOD
+     * darkened its leaves by the side-face shade (0.8 north/south, 0.6 east/west) and by the AO stand-in
+     * (VOXY_LOD_BRIGHTNESS, which quads.frag now applies only to models with AO): leafy bamboo slopes came out
+     * about 17 % darker than Sodium at level 0. Leafy bamboo states are now unshaded, like their leaves; the
+     * 3/16-wide stalk on those blocks loses its side shade, a far smaller error. VOXY_LOD_BAMBOO_UNSHADED=0
+     * reverts. GL is unchanged.
+     */
+    public static final boolean BAMBOO_UNSHADED =
+            !"0".equals(String.valueOf(System.getenv("VOXY_LOD_BAMBOO_UNSHADED")).trim())
+            && me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                    != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+    private static final java.util.concurrent.atomic.AtomicInteger BAMBOO_UNSHADED_LOGGED =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /** True for the bamboo states {@link #BAMBOO_UNSHADED} bakes unshaded: those with leaves. */
+    public static boolean metalBambooUnshaded(BlockState state) {
+        return BAMBOO_UNSHADED && state.getBlock() instanceof BambooStalkBlock
+                && state.getValue(BambooStalkBlock.LEAVES) != net.minecraft.world.level.block.state.properties.BambooLeaves.NONE;
+    }
+
     public static final int MODEL_TEXTURE_SIZE = 16;
     public static final int LAYERS = Integer.numberOfTrailingZeros(MODEL_TEXTURE_SIZE);
 
@@ -929,6 +970,15 @@ public class ModelFactory {
         modelFlags |= isBiomeColourDependent?2:0;//Basicly whether to use the next int as a colour or as a base index/id into a colour buffer for biome dependent colours
         modelFlags |= blockRenderLayer == ChunkSectionLayer.TRANSLUCENT?4:0;//Is translucent
 
+
+        // H19 bamboo leaves (see BAMBOO_UNSHADED): leafy bamboo is unshaded and has no AO, like its leaves.
+        if (isShaded && metalBambooUnshaded(blockState)) {
+            isShaded = false;
+            if (BAMBOO_UNSHADED_LOGGED.getAndIncrement() < 2) {
+                Logger.info("[Metal-LODTEST] H19 bamboo leaves unshaded: " + blockState
+                        + " (no side-face shade, no AO darkening; VOXY_LOD_BAMBOO_UNSHADED=0 reverts)");
+            }
+        }
 
         //TODO: THIS
         modelFlags |= isShaded?8:0;//model has AO and shade
