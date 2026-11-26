@@ -179,6 +179,8 @@ public final class MetalViewCapture {
      *   Also true for H16 flat blocks (snow layers, carpets, bottom slabs...;
      *   ModelFactory.FLAT_HEIGHT): the fill made a 1/8-tall snow side a full
      *   opaque tile, so the LOD drew the layer as a full cube.
+     *   And for H18 bamboo (ModelFactory.BAMBOO_STALK): the fill made the 3 px stalk strip a full
+     *   tile, so every bamboo block was drawn as a block-wide column with a flat top.
      */
     public void emitToStream(long destAddr, boolean skipDilate) {
         // CPU read from Shared storage. Backend.submit() in endBake() already

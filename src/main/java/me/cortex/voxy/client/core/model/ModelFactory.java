@@ -31,6 +31,7 @@ import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
+import net.minecraft.world.level.block.BambooStalkBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeavesBlock;
@@ -140,6 +141,37 @@ public class ModelFactory {
             return -1;
         }
         return box.maxY;
+    }
+
+    /**
+     * H18 (Metal only): bamboo stalks. Vanilla draws a 2 px (age 0) or 3 px (age 1) square stalk at the
+     * cell centre, plus leaves on two axis-aligned planes through the centre. The Metal bake writes no
+     * depth (MetalViewCapture.emitToStream) and fills every empty pixel of a face cell with the cell's
+     * average colour, so the stalk's side cells came out as full opaque tiles on the cell walls: the LOD
+     * drew every bamboo block as a full-width column with a flat top and no leaves, at every level and
+     * under the spyglass too. For bamboo the bakery now keeps the real coverage (no fill) and the side
+     * faces get the stalk's real indent ({@link #metalBambooIndent}, what the GL bake's depth measures);
+     * model flag 64 keeps that indent scaled with the cell at every level (quad_util), so a coarse bamboo
+     * voxel stays a centred stalk, and exempts the faces from the distance-mip alpha test (quads.frag),
+     * which would erase a 3/16-wide stalk at LOD distances. VOXY_LOD_BAMBOO=0 reverts. GL is unchanged.
+     */
+    public static final boolean BAMBOO_STALK =
+            !"0".equals(String.valueOf(System.getenv("VOXY_LOD_BAMBOO")).trim())
+            && me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                    != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+    private static final java.util.concurrent.atomic.AtomicInteger BAMBOO_LOGGED =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /**
+     * Indent in (0, 0.5) of a {@link #BAMBOO_STALK} state's side faces: the stalk's distance from the
+     * cell wall (vanilla models bamboo{1..4}_age0: 7..9, _age1: 6.5..9.5). -1 for every other state
+     * (and waterlogged ones, whose fluid overlay rides the same model) and when the switch is off.
+     */
+    public static float metalBambooIndent(BlockState state) {
+        if (!BAMBOO_STALK || !(state.getBlock() instanceof BambooStalkBlock) || !state.getFluidState().isEmpty()) {
+            return -1;
+        }
+        return state.getValue(BambooStalkBlock.AGE) == BambooStalkBlock.AGE_THIN_BAMBOO ? 7.0f / 16.0f : 6.5f / 16.0f;
     }
 
     public static final int MODEL_TEXTURE_SIZE = 16;
@@ -712,6 +744,31 @@ public class ModelFactory {
             }
         }
 
+        // H18 bamboo (see BAMBOO_STALK): the side faces get the stalk's real indent. The bakery already
+        // skipped the fill for them, so the face bounds (computeBounds below) are the stalk strip, or the
+        // leaves' width on leafy blocks, instead of the whole cell. UP/DOWN stay on the cell boundary,
+        // where the stalk ends in vanilla too.
+        boolean bambooModel = false;
+        if (!isFluid && !plantCrossModel && !flatModel) {
+            float indent = metalBambooIndent(blockState);
+            if (indent > 0) {
+                for (int face = 2; face < 6; face++) { // NORTH, SOUTH, WEST, EAST
+                    if (sizes[face] >= 0.0f && sizes[face] < 0.01f) {
+                        sizes[face] = indent;
+                        bambooModel = true; // GPU model flag bit 64 (quad_util, quads.frag), Metal only
+                    }
+                }
+                if (bambooModel && BAMBOO_LOGGED.getAndIncrement() < 6) {
+                    int north = Direction.NORTH.get3DDataValue();
+                    int[] nb = TextureUtils.computeBounds(textureData[north], checkMode);
+                    Logger.info("[Metal-LODTEST] H18 bamboo " + blockState + ": side indent " + indent
+                            + ", north face cols " + nb[0] + ".." + nb[1] + " rows " + nb[2] + ".." + nb[3]
+                            + ", " + TextureUtils.getWrittenPixelCount(textureData[north], checkMode)
+                            + " px written (VOXY_LOD_BAMBOO=0 reverts)");
+                }
+            }
+        }
+
         //TODO: THIS, note this can be tested for in 2 ways, re render the model with quad culling disabled and see if the result
         // is the same, (if yes then needs double sided quads)
         // another way to test it is if e.g. up and down havent got anything rendered but the sides do (e.g. all plants etc)
@@ -877,6 +934,7 @@ public class ModelFactory {
         modelFlags |= isShaded?8:0;//model has AO and shade
         modelFlags |= plantCrossModel?16:0;//Metal plant cross (see quads.frag VOXY_LOD_PLANT_EDGEFADE); never set on GL
         modelFlags |= flatModel?32:0;//Metal flat block, H16 (see quad_util VOXY_LOD_ABS_INDENT); never set on GL
+        modelFlags |= bambooModel?64:0;//Metal bamboo stalk, H18 (see quad_util, quads.frag); never set on GL
 
         //modelFlags |= blockRenderLayer == RenderLayer.getSolid()?0:1;// should discard alpha
         MemoryUtil.memPutInt(uploadPtr, modelFlags); uploadPtr += 4;
