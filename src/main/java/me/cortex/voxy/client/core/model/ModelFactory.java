@@ -215,6 +215,26 @@ public class ModelFactory {
                 && state.getValue(BambooStalkBlock.LEAVES) != net.minecraft.world.level.block.state.properties.BambooLeaves.NONE;
     }
 
+    /**
+     * H13 snow (Metal only): snowy=true blocks (grass, podzol, mycelium with snow on top). Vanilla never shows their
+     * top face (the snow layer covers it) and their model (grass_block_snow) has no tinted quad. The Metal surface
+     * mip now keeps such a block for a coarse cell whose top is snow (Mipper, VOXY_MIP_SNOW_GRASS), so the bake
+     * draws its UP face as snow_block's and the model gets no colour provider: the Metal capture marks every pixel
+     * tinted (MetalViewCapture), which tinted the white snow fringe of the side and would tint the snow top with the
+     * biome's grass colour. The cell then looks like level 0: white on top, dirt with a snow fringe on the sides.
+     * VOXY_LOD_SNOWY_TOP=0 reverts. GL is unchanged.
+     */
+    public static final boolean SNOWY_TOP =
+            !"0".equals(String.valueOf(System.getenv("VOXY_LOD_SNOWY_TOP")).trim())
+            && me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                    != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+
+    /** True for the states {@link #SNOWY_TOP} bakes with a snow top and no tint. */
+    public static boolean metalSnowyTop(BlockState state) {
+        return SNOWY_TOP && state.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.SNOWY)
+                && state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.SNOWY);
+    }
+
     public static final int MODEL_TEXTURE_SIZE = 16;
     public static final int LAYERS = Integer.numberOfTrailingZeros(MODEL_TEXTURE_SIZE);
 
@@ -595,7 +615,8 @@ public class ModelFactory {
             }
         }
 
-        var colourProvider = getColourProvider(blockState.getBlock());
+        // H13 snow (SNOWY_TOP): snowy grass has no tinted quad in vanilla; on Metal the capture would tint it all.
+        var colourProvider = metalSnowyTop(blockState) ? null : getColourProvider(blockState.getBlock());
 
         boolean isBiomeColourDependent = false;
         if (colourProvider != null) {

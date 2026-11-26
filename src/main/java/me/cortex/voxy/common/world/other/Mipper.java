@@ -17,18 +17,27 @@ public class Mipper {
     //     water (1) over sand or gravel (15), ice (1) over shallow water and gravel, a snow layer (0) over grass
     //     (15). Simulated from the region files, the frozen ocean at (237, 383) seen from above has 34 % ice and
     //     40 % snow at level 0 but only 1 % ice and 13 % snow at level 4: the rest turns into sand, gravel and green
-    //     snowy-grass tops. Measured against Sodium at level 1 (Y 450): colour error dE 10.1 -> 7.4 with this rule,
-    //     snow kept white 32 % -> 62 % (~/voxy-test-results/H20/h13-medida-regla-final).
+    //     snowy-grass tops. Measured against Sodium at level 1 (Y 450): colour error dE 10.1 -> 8.3 with this rule,
+    //     brightness 0.90 -> 0.98, snow kept white 32 % -> 61 % (~/voxy-test-results/H20/h13-medida-pasto; 7.4 / 62 %
+    //     when every snowy cell was a snow block, which broke the side view, see below).
     //  2. dbf1188b encoded the tie order as the case label x<<2|y<<1|z, so on equal opacity a bottom child with x=1
     //     beats a top child with x=0. The rule before it checked the top layer first (I111, I110, I011, I010, ...),
     //     so this was probably not intended: on slopes the dirt under the grass wins.
     // The surface rule keeps upstream's opacity order and changes only the cases above:
     //  - a fluid or ice child with nothing solid on top of it inside the cell counts as fully opaque;
     //  - a snow layer that sits on a solid child that is not leaves counts as fully opaque, and if it wins the cell
-    //    becomes a snow block (the solid's full cube with the snow's colour, so the terrain keeps its height). Not on
-    //    leaves: a snowy spruce keeps green sides under its white top, and a white cube made the forest seen from
-    //    Y 700 40 % brighter than the real blocks (H20/h13-2026-11-26_12.31.21). VOXY_MIP_SNOW=0: no snow part,
-    //    =2: on leaves too;
+    //    takes the solid's full cube so the terrain keeps its height. Not on leaves: a snowy spruce keeps green sides
+    //    under its white top, and a white cube made the forest seen from Y 700 40 % brighter than the real blocks
+    //    (H20/h13-2026-11-26_12.31.21). VOXY_MIP_SNOW=0: no snow part, =2: on leaves too.
+    //    Which cube: when the solid is a snowy=true block (grass, podzol, mycelium; 59 % of the snow layers in
+    //    voxytest) the cell keeps that block. Its sides are vanilla's snowy side (dirt with a snow fringe) and the
+    //    Metal bake draws its top as snow (ModelFactory.SNOWY_TOP; vanilla never shows that top, the snow layer
+    //    always covers it), so the cell looks like level 0 from above and from the side. Any other solid (sand on
+    //    frozen beaches, 14 %) becomes a snow block. Before, every cell became a snow block, white on all six faces:
+    //    seen from the side a coarse level was twice as white as level 0, and since the LOD level of a spot
+    //    changes with its place on screen, snow "moved with the camera" (owner, 2026-11-26; same world spot across
+    //    a 20-degree turn, level 0 -> 1: white 4.2 % -> 8.1 %; H20/giro-2026-11-26_16.01.44).
+    //    VOXY_MIP_SNOW_GRASS=0 makes snowy grass a snow block again;
     //  - ties: an uncovered child first, then the top layer first (then x, then z). A majority vote among the
     //    uncovered children was tried and dropped: it did nothing for H13 and cost the H20 level-1 view (eye-scale
     //    SSIM relative to level 0, 0.83 -> 0.79; ~/voxy-test-results/H20/variantes-2026-11-26_13.06.51).
@@ -40,6 +49,7 @@ public class Mipper {
     private static volatile boolean SURFACE_RULE = false;
     private static volatile boolean SURFACE_SNOW = false;
     private static volatile boolean SURFACE_SNOW_ON_LEAVES = false;
+    private static volatile boolean SURFACE_SNOW_GRASS = false;
     // Set on the Metal backend whether the rule is on or off, so that flipping VOXY_MIP_SURFACE and re-importing
     // rewrites the stored mips both ways (with upstream's early stop an import under VOXY_MIP_SURFACE=0 would leave
     // the surface-rule cells in place).
@@ -55,10 +65,13 @@ public class Mipper {
         String snow = System.getenv("VOXY_MIP_SNOW");
         SURFACE_SNOW = !"0".equals(snow);
         SURFACE_SNOW_ON_LEAVES = "2".equals(snow);
+        SURFACE_SNOW_GRASS = SURFACE_SNOW && !"0".equals(System.getenv("VOXY_MIP_SNOW_GRASS"));
         SURFACE_RULE = true;
         me.cortex.voxy.common.Logger.info("[Voxy-MIP] surface mip ON on " + backend
                 + " (H13/H20: water, ice" + (SURFACE_SNOW ? (SURFACE_SNOW_ON_LEAVES ? " and snow (also on leaves, VOXY_MIP_SNOW=2)" : " and snow on the ground") : "")
-                + " stay the top of coarse LOD cells, top layer wins ties; VOXY_MIP_SURFACE=0 reverts, VOXY_MIP_SNOW=0 drops"
+                + " stay the top of coarse LOD cells, top layer wins ties; snow on snowy grass keeps the "
+                + (SURFACE_SNOW_GRASS ? "grass (VOXY_MIP_SNOW_GRASS=0: snow block)" : "snow block (VOXY_MIP_SNOW_GRASS=0)")
+                + "; VOXY_MIP_SURFACE=0 reverts, VOXY_MIP_SNOW=0 drops"
                 + " the snow part). Stored areas keep their old cells until '/voxy import current' (imports rewrite every"
                 + " mip level on this backend).");
     }
@@ -130,7 +143,11 @@ public class Mipper {
         }
         long id = c[best];
         if (SURFACE_SNOW && score[best] == 15 && mapper.getBlockStateSurfaceKind(blk[best]) == Mapper.SURFACE_SNOW_LAYER) {
-            id = Mapper.composeMappingId((byte) Mapper.getLightId(id), mapper.getSnowBlockId(), Mapper.getBiomeId(id));
+            // A snow layer only scores 15 in the top layer, on a solid child: that child is right below it.
+            int under = Mapper.getBlockId(c[best & ~0b010]);
+            int cube = SURFACE_SNOW_GRASS && mapper.isBlockStateSnowy(under) ? under : mapper.getSnowBlockId();
+            // The snow layer's light: it is the exposed child (the solid under it is dark inside).
+            id = Mapper.composeMappingId((byte) Mapper.getLightId(id), cube, Mapper.getBiomeId(id));
         }
         return id;
     }

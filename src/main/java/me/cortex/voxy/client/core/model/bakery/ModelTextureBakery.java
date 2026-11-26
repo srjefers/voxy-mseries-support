@@ -640,7 +640,35 @@ public class ModelTextureBakery {
         if (!isBlock) {
             maybeLogWaterBakeDiag(state, destAddr);
         }
+        if (isBlock && me.cortex.voxy.client.core.model.ModelFactory.metalSnowyTop(state)) {
+            snowTopFace(state, destAddr);
+        }
         return (isAnyShaded ? 1 : 0) | (isAnyDarkend ? 2 : 0);
+    }
+
+    private static final java.util.concurrent.atomic.AtomicInteger SNOWY_TOP_LOGS =
+            new java.util.concurrent.atomic.AtomicInteger(3);
+
+    /** H13 snow (ModelFactory.SNOWY_TOP): replaces the UP face of a snowy=true bake with snow_block's UP face. The
+     * whole bake of this state is already in destAddr; snow_block is baked into a scratch buffer with the same
+     * renderer and its UP face copied over (face-major layout, w*h uvec2 per face). */
+    private void snowTopFace(BlockState state, long destAddr) {
+        final long faceBytes = (long) this.width * this.height * 8L;
+        long scratch = org.lwjgl.system.MemoryUtil.nmemAlloc(6L * faceBytes);
+        if (scratch == 0L) {
+            return;// out of native memory: keep the grass top rather than copy from nowhere
+        }
+        try {
+            this.renderToStreamMetal(Blocks.SNOW_BLOCK.defaultBlockState(), scratch);
+            long up = (long) Direction.UP.get3DDataValue() * faceBytes;
+            org.lwjgl.system.MemoryUtil.memCopy(scratch + up, destAddr + up, faceBytes);
+        } finally {
+            org.lwjgl.system.MemoryUtil.nmemFree(scratch);
+        }
+        if (SNOWY_TOP_LOGS.getAndDecrement() > 0) {
+            me.cortex.voxy.common.Logger.info("[Metal-LODTEST] H13 snowy top: " + state
+                    + " bakes its up face as snow_block's, no tint (VOXY_LOD_SNOWY_TOP=0 reverts)");
+        }
     }
 
     private static final java.util.concurrent.atomic.AtomicInteger DARK_CUTOUT_LOGS =

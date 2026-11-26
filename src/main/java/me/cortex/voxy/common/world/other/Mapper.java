@@ -20,6 +20,7 @@ import net.minecraft.world.level.block.IceBlock;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.SnowLayerBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import org.lwjgl.system.MemoryUtil;
 
 import java.io.ByteArrayInputStream;
@@ -280,6 +281,10 @@ public class Mapper {
         return this.blockId2stateEntry.get(blockId).surfaceKind;
     }
 
+    public boolean isBlockStateSnowy(int blockId) {
+        return this.blockId2stateEntry.get(blockId).snowy;
+    }
+
     private volatile int snowBlockId = -1;
     /** Mapping id of minecraft:snow_block (registered on first use). The surface mip draws a cell whose visible top is
      *  a snow layer over a solid block as a snow block: the solid's full cube, the snow's colour. */
@@ -387,6 +392,8 @@ public class Mapper {
         public final int opacity;
         /** Metal surface mip (H13/H20, {@link Mipper}): {@link #SURFACE_FLUID_ICE}, {@link #SURFACE_SNOW_LAYER}, {@link #SURFACE_LEAVES} or 0. */
         public final byte surfaceKind;
+        /** snowy=true (grass, podzol, mycelium under snow): the Metal surface mip keeps it under a snow layer. */
+        public final boolean snowy;
         public StateEntry(int id, BlockState state) {
             this.id = id;
             this.state = state;
@@ -397,6 +404,7 @@ public class Mapper {
                 this.opacity = state.getLightBlock();
             }
             this.surfaceKind = surfaceKindOf(state);
+            this.snowy = state.hasProperty(BlockStateProperties.SNOWY) && state.getValue(BlockStateProperties.SNOWY);
         }
 
         public byte[] serialize() {
