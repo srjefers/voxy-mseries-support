@@ -226,9 +226,9 @@ need `-Dvoxy.forceMetal=true`.
 
 ### Keep Minecraft's render distance at 16 chunks or less
 
-**Strongly recommended for every player, whatever the chip.** Set *Options → Video
-Settings → Render Distance* to **16 chunks or less** and let Voxy draw
-everything beyond it.
+**Strongly recommended for every player, whatever the chip.** Set *Options... >
+Video Settings... > Sodium > General > Render Distance* to **16 chunks or
+less** and let Voxy draw everything beyond it.
 
 Why: Minecraft draws its own terrain with no antialiasing, and neither Sodium
 nor vanilla has an option for it. Past about 250 blocks (in a 1080p-class

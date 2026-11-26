@@ -220,10 +220,18 @@ Pick the graphics settings from your chip. To see your GPU core count, run
 |---|---|---|---|
 | M1 to M4, base (7 to 10 GPU cores) | 8 to 12 | 256 to 512 | None |
 | M1 to M4 Pro (14 to 20 GPU cores) | 12 to 16 | 512 to 1024 | BSL with *Shadow Distance* 128 and *Shadowmap Quality* Low (1K) |
-| M4 Max (the tested Mac, 40 GPU cores) | 32 | 2016 | BSL defaults |
+| M4 Max (the tested Mac, 40 GPU cores) | 16 (measured at 32) | 2016 | BSL defaults |
 
 Only the last row was measured. The others are estimates. Start from the
 row closest to your GPU core count.
+
+**Keep Minecraft's render distance at 16 or less on every Mac**, even when
+your chip could run more. Minecraft draws its own terrain without
+antialiasing, so past about 250 blocks fine lines crawl over hills when the
+camera moves, worst on snow. Voxy draws everything beyond your render
+distance, and its far terrain is antialiased (H17). If you see those lines,
+say in your report whether they are nearer or farther than your render
+distance.
 
 - Minecraft render distance: *Options... > Video Settings... > Sodium >
   General > Render Distance*.
