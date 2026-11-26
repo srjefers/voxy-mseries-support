@@ -58,6 +58,7 @@ smoke tests (one per Metal/Vulkan milestone) in `me.cortex.voxy.tools`. Run one 
 ./gradlew testMetalTriangle      # graphics pipeline + draw + readback
 ./gradlew testMetalCompute       # compute dispatch + SSBO writeback
 ./gradlew testMetalIcb           # MTLIndirectCommandBuffer (the MDIC primitive)
+./gradlew testMetalMsaa          # 4x MSAA LOD pass: memoryless targets, resolve, pipeline variants
 ./gradlew testIOSurfaceBridge    # IOSurface-backed MTLTexture allocation
 ./gradlew testJomlCompat -PtestJava=launcher   # JomlCompat vs JOML byte for byte, on the players' Java 21
 # also: testMetalRender, testMetalVertexBuffer, testVulkan{Loader,Compute,Triangle,Clear}

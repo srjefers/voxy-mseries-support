@@ -538,21 +538,75 @@ public class MetalRenderBackend implements RenderBackend {
                         d.clearDepth(), d.level());
             }
 
-            // Pending stream copies must land before the pass's encoder opens
-            // (one encoder at a time per buffer; copies feed the pass anyway).
-            this.endActiveBlitEncoder();
-            this.ensureActiveCommandBuffer();
-
-            encoder = MetalNative.mtlCommandBufferNewRenderEncoder(this.activeCommandBuffer, passDescHandle);
-            if (encoder == 0) {
-                throw new RuntimeException("mtlCommandBufferNewRenderEncoder returned NULL");
-            }
+            encoder = this.openRenderEncoder(passDescHandle);
         } finally {
             // The render encoder retains a reference to the descriptor; we can drop ours.
             MetalNative.mtlRelease(passDescHandle);
         }
 
         MetalRenderEncoder result = new MetalRenderEncoder(encoder);
+        this.lastRenderEncoder = result;
+        return result;
+    }
+
+    private long openRenderEncoder(long passDescHandle) {
+        // Pending stream copies must land before the pass's encoder opens
+        // (one encoder at a time per buffer; copies feed the pass anyway).
+        this.endActiveBlitEncoder();
+        this.ensureActiveCommandBuffer();
+
+        long encoder = MetalNative.mtlCommandBufferNewRenderEncoder(this.activeCommandBuffer, passDescHandle);
+        if (encoder == 0) {
+            throw new RuntimeException("mtlCommandBufferNewRenderEncoder returned NULL");
+        }
+        return encoder;
+    }
+
+    /**
+     * H17: {@link #beginRenderPass} drawn into multisample attachments instead of {@code desc}'s.
+     * Colour attachment i draws into {@code msaaColors[i]} and is resolved into {@code desc}'s
+     * texture i when the pass ends; depth draws into {@code msaaDepth} and is discarded (nothing
+     * reads the LOD depth after the pass on the paths that use this). Both may be memoryless, so
+     * every attachment must CLEAR (or DONT_CARE), never LOAD. Pipelines bound on the returned
+     * encoder use their {@code sampleCount} variant.
+     */
+    public RenderEncoder beginRenderPassMultisample(RenderPassDesc desc, long[] msaaColors, long msaaDepth,
+                                                    int sampleCount) {
+        long passDescHandle = MetalNative.mtlNewRenderPassDescriptor();
+        if (passDescHandle == 0) {
+            throw new RuntimeException("mtlNewRenderPassDescriptor returned NULL");
+        }
+        long encoder;
+        try {
+            for (int i = 0; i < desc.colorAttachments().size(); i++) {
+                RenderPassDesc.ColorAttachment c = desc.colorAttachments().get(i);
+                if (c.loadAction() == RenderPassDesc.LoadAction.LOAD) {
+                    throw new IllegalArgumentException("multisample LOD pass cannot LOAD colour " + i);
+                }
+                MetalNative.mtlRenderPassSetColorAttachment(passDescHandle, i, msaaColors[i],
+                        mapLoadAction(c.loadAction()), MetalNative.MTLStoreActionMultisampleResolve, 0);
+                MetalNative.mtlRenderPassSetColorResolveTexture(passDescHandle, i,
+                        MetalHandleMap.getHandle(c.texture().id()));
+                if (c.loadAction() == RenderPassDesc.LoadAction.CLEAR) {
+                    MetalNative.mtlRenderPassSetColorClearColor(passDescHandle, i,
+                            c.clearR(), c.clearG(), c.clearB(), c.clearA());
+                }
+            }
+            if (desc.depthAttachment() != null) {
+                RenderPassDesc.DepthAttachment d = desc.depthAttachment();
+                if (d.loadAction() == RenderPassDesc.LoadAction.LOAD) {
+                    throw new IllegalArgumentException("multisample LOD pass cannot LOAD depth");
+                }
+                MetalNative.mtlRenderPassSetDepthAttachment(passDescHandle, msaaDepth,
+                        mapLoadAction(d.loadAction()), MetalNative.MTLStoreActionDontCare,
+                        d.clearDepth(), 0);
+            }
+            encoder = this.openRenderEncoder(passDescHandle);
+        } finally {
+            MetalNative.mtlRelease(passDescHandle);
+        }
+
+        MetalRenderEncoder result = new MetalRenderEncoder(encoder, sampleCount);
         this.lastRenderEncoder = result;
         return result;
     }
@@ -597,7 +651,6 @@ public class MetalRenderBackend implements RenderBackend {
         long vertexFn = 0;
         long fragmentFn = 0;
         long pipelineState = 0;
-        long pipelineDesc = 0;
         long dssHandle = 0;
         try {
             fragmentLib = MetalNative.mtlDeviceNewLibraryWithSource(this.device, fragmentMsl);
@@ -620,6 +673,67 @@ public class MetalRenderBackend implements RenderBackend {
                 }
             }
 
+            pipelineState = this.newPipelineState(desc, vertexFn, fragmentFn, 1);
+
+            // Build the depth-stencil state. Skip if both test + write are off.
+            if (desc.state.depth.testEnabled || desc.state.depth.writeEnabled) {
+                long dssDesc = MetalNative.mtlNewDepthStencilDescriptor();
+                if (dssDesc == 0) throw new RuntimeException("mtlNewDepthStencilDescriptor returned NULL");
+                try {
+                    int compareFn = desc.state.depth.testEnabled
+                            ? mapCompareOp(desc.state.depth.compareOp)
+                            : MetalNative.MTLCompareFunctionAlways;
+                    MetalNative.mtlDepthStencilDescriptorSetCompareFunction(dssDesc, compareFn);
+                    MetalNative.mtlDepthStencilDescriptorSetDepthWriteEnabled(dssDesc, desc.state.depth.writeEnabled);
+                    dssHandle = MetalNative.mtlDeviceNewDepthStencilState(this.device, dssDesc);
+                    if (dssHandle == 0) throw new RuntimeException("mtlDeviceNewDepthStencilState returned NULL");
+                } finally {
+                    MetalNative.mtlRelease(dssDesc);
+                }
+            }
+            int cullModeI = mapCullMode(desc.state.raster.cullMode);
+            int windingI = mapFrontFace(desc.state.raster.frontFace);
+            int fillModeI = mapPolygonMode(desc.state.raster.polygonMode);
+            if (pipelineState == 0) {
+                throw new RuntimeException("Pipeline state link failed: " + MetalNative.mtlGetLastCompileError());
+            }
+            if (desc.label != null) {
+                MetalNative.mtlSetLabel(pipelineState, desc.label);
+            }
+
+            // H17: the multisampled LOD pass needs PSOs with a matching rasterSampleCount;
+            // the pipeline builds that variant from the same functions on first use.
+            final long vFn = vertexFn, fFn = fragmentFn;
+            MetalGraphicsPipeline result = new MetalGraphicsPipeline(
+                    pipelineState, vertexLib, fragmentLib, vertexFn, fragmentFn,
+                    dssHandle, cullModeI, windingI, fillModeI,
+                    samples -> this.newPipelineState(desc, vFn, fFn, samples), desc.label);
+            // result owns the handles now; clear locals so the catch path doesn't double-release.
+            pipelineState = 0;
+            vertexFn = 0;
+            fragmentFn = 0;
+            vertexLib = 0;
+            fragmentLib = 0;
+            dssHandle = 0;
+            return result;
+        } finally {
+            if (pipelineState != 0) MetalNative.mtlRelease(pipelineState);
+            if (dssHandle != 0) MetalNative.mtlRelease(dssHandle);
+            if (fragmentFn != 0) MetalNative.mtlRelease(fragmentFn);
+            if (vertexFn != 0) MetalNative.mtlRelease(vertexFn);
+            if (fragmentLib != 0) MetalNative.mtlRelease(fragmentLib);
+            if (vertexLib != 0) MetalNative.mtlRelease(vertexLib);
+        }
+    }
+
+    /**
+     * Builds the MTLRenderPipelineState of {@code desc} from already compiled functions.
+     * {@code sampleCount} 1 is the normal pipeline (rasterSampleCount left at Metal's default);
+     * a higher count is the variant for the multisampled LOD pass (H17). Returns 0 if linking fails.
+     */
+    long newPipelineState(GraphicsPipelineDesc desc, long vertexFn, long fragmentFn, int sampleCount) {
+        long pipelineDesc = 0;
+        try {
             // colorAttachmentFormat == 0 means "depth-only render pass — no
             // color target" (e.g. HiZBuffer's blit pipeline writes only
             // gl_FragDepth). Skip the color attachment format entirely in
@@ -698,57 +812,17 @@ public class MetalRenderBackend implements RenderBackend {
                 MetalNative.mtlRenderPipelineDescriptorSetVertexDescriptor(pipelineDesc, vertexDescHandle);
             }
 
-            pipelineState = MetalNative.mtlDeviceNewRenderPipelineState(this.device, pipelineDesc);
+            if (sampleCount > 1) {
+                MetalNative.mtlRenderPipelineDescriptorSetRasterSampleCount(pipelineDesc, sampleCount);
+            }
+            long state = MetalNative.mtlDeviceNewRenderPipelineState(this.device, pipelineDesc);
             if (vertexDescHandle != 0) {
                 // Pipeline state retained the descriptor; drop our reference.
                 MetalNative.mtlRelease(vertexDescHandle);
             }
-
-            // Build the depth-stencil state. Skip if both test + write are off.
-            if (desc.state.depth.testEnabled || desc.state.depth.writeEnabled) {
-                long dssDesc = MetalNative.mtlNewDepthStencilDescriptor();
-                if (dssDesc == 0) throw new RuntimeException("mtlNewDepthStencilDescriptor returned NULL");
-                try {
-                    int compareFn = desc.state.depth.testEnabled
-                            ? mapCompareOp(desc.state.depth.compareOp)
-                            : MetalNative.MTLCompareFunctionAlways;
-                    MetalNative.mtlDepthStencilDescriptorSetCompareFunction(dssDesc, compareFn);
-                    MetalNative.mtlDepthStencilDescriptorSetDepthWriteEnabled(dssDesc, desc.state.depth.writeEnabled);
-                    dssHandle = MetalNative.mtlDeviceNewDepthStencilState(this.device, dssDesc);
-                    if (dssHandle == 0) throw new RuntimeException("mtlDeviceNewDepthStencilState returned NULL");
-                } finally {
-                    MetalNative.mtlRelease(dssDesc);
-                }
-            }
-            int cullModeI = mapCullMode(desc.state.raster.cullMode);
-            int windingI = mapFrontFace(desc.state.raster.frontFace);
-            int fillModeI = mapPolygonMode(desc.state.raster.polygonMode);
-            if (pipelineState == 0) {
-                throw new RuntimeException("Pipeline state link failed: " + MetalNative.mtlGetLastCompileError());
-            }
-            if (desc.label != null) {
-                MetalNative.mtlSetLabel(pipelineState, desc.label);
-            }
-
-            MetalGraphicsPipeline result = new MetalGraphicsPipeline(
-                    pipelineState, vertexLib, fragmentLib, vertexFn, fragmentFn,
-                    dssHandle, cullModeI, windingI, fillModeI);
-            // result owns the handles now; clear locals so the catch path doesn't double-release.
-            pipelineState = 0;
-            vertexFn = 0;
-            fragmentFn = 0;
-            vertexLib = 0;
-            fragmentLib = 0;
-            dssHandle = 0;
-            return result;
+            return state;
         } finally {
             if (pipelineDesc != 0) MetalNative.mtlRelease(pipelineDesc);
-            if (pipelineState != 0) MetalNative.mtlRelease(pipelineState);
-            if (dssHandle != 0) MetalNative.mtlRelease(dssHandle);
-            if (fragmentFn != 0) MetalNative.mtlRelease(fragmentFn);
-            if (vertexFn != 0) MetalNative.mtlRelease(vertexFn);
-            if (fragmentLib != 0) MetalNative.mtlRelease(fragmentLib);
-            if (vertexLib != 0) MetalNative.mtlRelease(vertexLib);
         }
     }
 

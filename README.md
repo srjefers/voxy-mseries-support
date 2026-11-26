@@ -199,7 +199,7 @@ need `-Dvoxy.forceMetal=true`.
 | Chip (GPU cores) | M1–M4 base, 7–10 cores† | M1–M4 Pro, 14–20 cores† | M4 Max, 40 cores |
 | Unified memory | 16 GB | 24–32 GB | 48 GB |
 | Java heap | `-Xmx2G` (the launcher's default) | `-Xmx4G`–`-Xmx6G` | `-Xmx2G` and `-Xmx6G` (the dev run defaulted to 12 GB) |
-| Minecraft render distance | 8–12 chunks | 12–16 chunks | 32 chunks |
+| Minecraft render distance | 8–12 chunks | 12–16 chunks (**16 or less**, see below) | 32 chunks |
 | Voxy render distance (menu value) | 256–512 chunks (512 is the default) | 512–1024 chunks | 2016 chunks |
 | Voxy *Pixels² of subdivision size* | 128 | 96 | 96 |
 | Shader pack | none | BSL with *Shadow Distance* 128 and *Shadowmap Quality* Low (1K)† | BSL defaults |
@@ -221,8 +221,36 @@ need `-Dvoxy.forceMetal=true`.
   is Java heap, which the JVM grows toward its limit, so `-Xmx6G` saves
   about 3 GB and played smoothly in testing.
 - A lower Minecraft render distance moves work to Voxy, which draws far
-  terrain much more cheaply.
+  terrain much more cheaply, and with antialiasing (next section).
 - With BSL, lower *LOD Density* to about 0.25 (see Known issues).
+
+### Keep Minecraft's render distance at 16 chunks or less
+
+**Strongly recommended for every player, whatever the chip.** Set *Options... >
+Video Settings... > Sodium > General > Render Distance* to **16 chunks or
+less** and let Voxy draw everything beyond it.
+
+Why: Minecraft draws its own terrain with no antialiasing, and neither Sodium
+nor vanilla has an option for it. Past about 250 blocks (in a 1080p-class
+window) a terrain step
+covers only a pixel or two, so on slopes every row of the image is either the
+top of a step or its side. When the camera turns, even by a fraction of a
+pixel, whole rows flip, and fine lines crawl across the hills. It is worst on
+snowy slopes (white tops against dark dirt sides) and can be tiring to look
+at. This is a Minecraft limitation, not a Voxy bug: the lines that remain
+are on the terrain Minecraft draws itself.
+
+Voxy draws its LOD terrain with 4× multisample antialiasing (MSAA) on the
+Metal path, so far slopes drawn by Voxy crawl much less. With a render distance
+of 16 chunks, Minecraft's own terrain ends at 256 blocks, where blocks are
+still several pixels wide, and Voxy draws the rest. Voxy's closest level is
+an exact copy of the blocks (without entities or animations), so you lose
+little detail, and you gain frame rate.
+At 32 chunks, the 250–512 block band is Minecraft's and keeps crawling.
+
+- `VOXY_LOD_MSAA=1` turns Voxy's MSAA off (to compare, or if you suspect it).
+- With an Iris shader pack, Voxy's MSAA is not used; packs with their own
+  antialiasing (TAA), such as BSL or Complementary, smooth the whole image.
 
 **Measured frame rates (Tested tier, BSL defaults, Voxy render distance
 2016 chunks, subdivision 96, vsync on at 120 Hz):** median about 37 FPS
@@ -377,6 +405,11 @@ Seen during the on-device test campaign for 0.2.8-alpha-metal.1 (details in
   branches apply fog, AO, shadows and clouds to LOD pixels. Full per-pixel
   pack lighting of LODs (material g-buffer resolve) is in progress
   (milestone "Native Iris shader contract on Metal").
+- **Fine lines crawl on far hills when the camera moves**, mostly on snow,
+  inside Minecraft's render distance. Minecraft's terrain has no
+  antialiasing; keep the render distance at 16 chunks or less so Voxy, which
+  antialiases its LODs, draws the far terrain (see *Keep Minecraft's render
+  distance at 16 chunks or less*).
 - **BSL fog tuning for LOD view distances**: BSL applies its full fog density
   across LOD distances by default, washing the far field out white. Lower
   *Shader Pack Settings → Environment → Fog → More Fog Density Config → LOD

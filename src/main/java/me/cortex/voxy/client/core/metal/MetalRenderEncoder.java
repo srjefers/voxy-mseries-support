@@ -30,8 +30,16 @@ public final class MetalRenderEncoder implements RenderEncoder {
         return this.encoderHandle;
     }
 
+    /** Sample count of the pass's attachments; pipelines bind their matching variant (H17 MSAA). */
+    private final int sampleCount;
+
     MetalRenderEncoder(long encoderHandle) {
+        this(encoderHandle, 1);
+    }
+
+    MetalRenderEncoder(long encoderHandle, int sampleCount) {
         this.encoderHandle = encoderHandle;
+        this.sampleCount = sampleCount;
     }
 
     @Override
@@ -41,7 +49,7 @@ public final class MetalRenderEncoder implements RenderEncoder {
                     "MetalRenderEncoder.setPipeline expected MetalGraphicsPipeline, got "
                             + (pipeline == null ? "null" : pipeline.getClass().getName()));
         }
-        MetalNative.mtlRenderEncoderSetRenderPipelineState(this.encoderHandle, mp.pipelineStateHandle());
+        MetalNative.mtlRenderEncoderSetRenderPipelineState(this.encoderHandle, mp.pipelineStateHandle(this.sampleCount));
         // Depth-stencil, cull, winding, and triangle fill mode live on the encoder
         // (not on the render pipeline state object) — apply them every time the
         // pipeline changes so the encoder picks up the per-pipeline raster state.

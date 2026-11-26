@@ -761,6 +761,26 @@ public final class MetalNative {
     public static native void mtlRenderPipelineDescriptorSetDepthAttachmentPixelFormat(
             long descHandle, int pixelFormat);
 
+    // ========== H17: LOD multisample antialiasing ==========
+
+    /** {@code rasterSampleCount} of a render pipeline descriptor (must match the pass's attachments). */
+    public static native void mtlRenderPipelineDescriptorSetRasterSampleCount(long descHandle, int sampleCount);
+
+    /** {@code [MTLDevice supportsTextureSampleCount:]}. */
+    public static native boolean mtlDeviceSupportsTextureSampleCount(long device, int sampleCount);
+
+    /**
+     * New {@code MTLTextureType2DMultisample} render target (usage RenderTarget only). {@code memoryless}
+     * keeps the samples in tile memory (no RAM); such a texture can only be cleared and resolved, never
+     * loaded or stored. Returns 0 on failure.
+     */
+    public static native long mtlDeviceNewMultisampleTexture(long device, int pixelFormat,
+                                                             int width, int height, int sampleCount,
+                                                             boolean memoryless);
+
+    /** {@code resolveTexture} of a colour attachment; pair with {@link #MTLStoreActionMultisampleResolve}. */
+    public static native void mtlRenderPassSetColorResolveTexture(long descHandle, int index, long resolveTexture);
+
     // ========== MTLIndirectCommandBuffer (Blocker 1) ==========
     // Used by MDICSectionRenderer's count-aware indirect draws on Metal.
     // GL has glMultiDrawElementsIndirectCountARB natively; Metal needs an
@@ -882,6 +902,8 @@ public final class MetalNative {
     public static final int MTLLoadActionClear    = 2;
     public static final int MTLStoreActionDontCare = 0;
     public static final int MTLStoreActionStore    = 1;
+    /** H17: resolve the multisample attachment into its resolveTexture, discard the samples. */
+    public static final int MTLStoreActionMultisampleResolve = 2;
 
     // Command Buffer Status
     public static final int MTLCommandBufferStatusCompleted = 4;
