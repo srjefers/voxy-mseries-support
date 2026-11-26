@@ -156,6 +156,7 @@ development:
 | `VOXY_LOD_BAMBOO_UNSHADED=0` | Kill switch (H19): leafy bamboo gets the stalk's side-face shade again, so LOD bamboo leaves read olive and about 17 % darker than Sodium's. Default: unshaded, like vanilla's bamboo leaves. Takes effect at model bake (restart). Marker `[Metal-LODTEST] H19 bamboo leaves unshaded` |
 | `VOXY_LOD_BRIGHTNESS_AO=0` | Kill switch (H19): the 0.92 AO stand-in (`VOXY_LOD_BRIGHTNESS`) darkens every opaque LOD quad again. Default: only quads whose model has AO, as in vanilla; plants and bamboo leaves keep Sodium's brightness. Marker: the `LOD brightness compensation` log line says `AO models only` |
 | `VOXY_LOD_MSAA=1` | Kill switch (H17): the LOD pass back to one sample per pixel. Default 4 samples (`=2` for 2x) on the plain path, no Iris pack: far snowy slopes stop crawling when the camera turns. Marker `[Metal-LODTEST] H17 LOD MSAA` |
+| `VOXY_LOD_UV_CENTROID=0` | Kill switch (H20): no `centroid` on the LOD atlas `uv` under MSAA. With it off, ice and water seen from above show a grid of 1 px lines along quad edges (the edge pixels read the neighbouring atlas tile). Marker `[Metal-LODTEST] uv centroid ON` |
 | `VOXY_WATER_ANIMATE=0` | Kill switch: freeze LOD water animation |
 | `VOXY_LOD_CLOUDS=0` | Kill switch: vanilla clouds only (no clouds over the LODs); with BSL, the pack's clouds as the pack ships them |
 | `VOXY_LOD_CLOUDS_DEBUG=1` | Magenta LOD cloud layer (shows where the vanilla cloud mesh hands over); with BSL, a solid cloud slab over the LOD terrain coverage |

@@ -42,7 +42,16 @@ layout(binding = 9, std430) readonly restrict buffer BoundDepthBuffer {
 
 layout(location = 0) in flat uvec4 interData;
 #ifndef USE_NV_BARRY
+#ifdef VOXY_LOD_UV_CENTROID
+// H20 grid, Metal + MSAA only (MDICSectionRenderer sets the define). With multisampling a pixel on a quad's edge
+// is shaded once, at its centre, even when the centre lies outside the quad, so uv comes out a little past the
+// quad. modf(uv) of a negative uv gives a negative fraction and texPos lands in the neighbouring atlas tile: a
+// 1 px line of another texture along every quad's low-u/low-v edge, a grid over the big flat quads of ice and
+// water. Centroid interpolation evaluates uv inside the covered samples; with one sample it is the pixel centre.
+layout(location = 1) centroid in vec2 uv;
+#else
 layout(location = 1) in vec2 uv;
+#endif
 #endif
 
 // M13 chunk 5: per-vertex world distance to camera, interpolated.
