@@ -539,8 +539,16 @@ void main() {
     // the thin upper blades fade and keeps only the dense base. Dilated cells
     // (cubes, leaves, fences) have mip alpha 1 everywhere: untouched.
     // VOXY_LOD_MIP_DISCARD=0 reverts; VOXY_LOD_MIP_DISCARD_ALPHA tunes (0.5).
+    // H18: bamboo stalks (interData.x bit 1, quad_util) keep only the mip-0
+    // test. A stalk face is a 3-texel strip of its 16-texel cell, so its
+    // distance-mip alpha is <= 0.5 from mip 2 on (a block ~4 px wide): the
+    // whole stalk would vanish at LOD distances, while vanilla's opaque stalk
+    // stays a thin line. A leafless stalk's quad is already only as wide as
+    // the strip; leafy faces and merged quads are carved by the mip-0 test,
+    // as upstream does for every cutout face.
     if (useDiscard() && (textureLod(blockModelAtlas, texPos, 0).a <= 0.1f
-            || textureLod(blockModelAtlas, texPos, voxyCutoutLod).a <= VOXY_LOD_MIP_DISCARD_ALPHA)) {
+            || (((interData.x >> 1u) & 1u) == 0u
+                && textureLod(blockModelAtlas, texPos, voxyCutoutLod).a <= VOXY_LOD_MIP_DISCARD_ALPHA))) {
     #else
     if (useDiscard() && (textureLod(blockModelAtlas, texPos, 0).a <= 0.1f)) {
     #endif

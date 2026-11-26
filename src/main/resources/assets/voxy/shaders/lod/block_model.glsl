@@ -50,6 +50,12 @@ bool modelIsFlat(BlockModel model) {
     return ((model.flagsA)&32u) != 0;
 }
 
+//Metal-only bamboo stalk, H18 (ModelFactory.BAMBOO_STALK sets bit 64 only on non-GL backends):
+// side faces indented to the stalk at the cell centre, undilated bake
+bool modelIsBamboo(BlockModel model) {
+    return ((model.flagsA)&64u) != 0;
+}
+
 bool modelIsShaded(BlockModel model) {
     return ((model.flagsA)&8u) != 0;
 }

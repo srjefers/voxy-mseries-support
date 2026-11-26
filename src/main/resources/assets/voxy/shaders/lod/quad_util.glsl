@@ -69,6 +69,11 @@ uint makeQuadFlags(uint faceData, uint modelId, ivec2 quadSize, const in BlockMo
     // vertex stage (which always has it) forwards the flag in this unused bit.
     flags |= uint(modelIsPlantCross(model))<<7;
     #endif
+    #ifdef VOXY_LOD_MIP_DISCARD
+    //Fork (Metal only, never defined on GL): bit 1 (free since upstream dropped the non-mip path) =
+    // bamboo stalk (H18), which quads.frag keeps out of the distance-mip alpha test.
+    flags |= uint(modelIsBamboo(model))<<1;
+    #endif
 
     return flags;
 }
@@ -207,7 +212,12 @@ void setupQuad(out QuadData quad, const in Quad rawQuad, uvec2 sPos, bool genera
     // blocks between a coarse snow cell's short sides and its top. Keeping
     // the upstream scaling keeps that voxel a closed slab. Water is not flat
     // (fluids never get the flag) and stays absolute.
-    if (!modelIsFlat(model)) {
+    // H18: bamboo (model flag 64, VOXY_LOD_BAMBOO) keeps the upstream scaling
+    // too: its side faces sit at the stalk, 6.5/16 in from the walls, so the
+    // scaled indent keeps a coarse cell's stalk at the cell centre; an absolute
+    // one would put the four faces 6.5/16 of a block from the walls, a hollow
+    // box (2^L - 0.8) blocks wide.
+    if (!modelIsFlat(model) && !modelIsBamboo(model)) {
         depthOffset /= lodScale;
     }
     #endif

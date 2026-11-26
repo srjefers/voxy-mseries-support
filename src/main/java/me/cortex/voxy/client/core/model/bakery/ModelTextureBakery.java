@@ -552,6 +552,11 @@ public class ModelTextureBakery {
         // real side coverage too: the fill would turn a 1/8-tall snow side into a full opaque tile.
         boolean flatBlock = isBlock
                 && me.cortex.voxy.client.core.model.ModelFactory.metalFlatHeight(state) > 0;
+        // H18 bamboo (ModelFactory.BAMBOO_STALK): keep the stalk strip and the leaves' real alpha; the
+        // fill made every side cell a full opaque tile, i.e. a block-wide column. No 45-degree turn
+        // like plants: bamboo's leaves are already two axis-aligned planes through the centre.
+        boolean bamboo = isBlock
+                && me.cortex.voxy.client.core.model.ModelFactory.metalBambooIndent(state) > 0;
 
         // Always clear at the start of the bake — fluid path appends with
         // LoadAction.LOAD so all faces accumulate cleanly into the same target.
@@ -625,7 +630,7 @@ public class ModelTextureBakery {
             }
         }
 
-        this.metalCapture.emitToStream(destAddr, plantCross || flatBlock);
+        this.metalCapture.emitToStream(destAddr, plantCross || flatBlock || bamboo);
         if (!isBlock) {
             maybeLogWaterBakeDiag(state, destAddr);
         }
