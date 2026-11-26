@@ -535,6 +535,6 @@ public class WorldImporter implements IDataImporter {
         );
 
         WorldConversionFactory.mipSection(csec, this.world.getMapper());
-        WorldUpdater.insertUpdate(this.world, csec);
+        WorldUpdater.insertUpdate(this.world, csec, me.cortex.voxy.common.world.other.Mipper.importRewritesAllLevels());//H13/H20: refresh every mip level (Metal)
     }
 }

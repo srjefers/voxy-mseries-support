@@ -11,6 +11,17 @@ public class WorldUpdater {
 
     //NOTE: THIS RUNS ON THE THREAD IT WAS EXECUTED ON, when this method exits, the calling method may assume that VoxelizedSection is no longer needed
     public static void insertUpdate(WorldEngine into, VoxelizedSection section) {//TODO: add a bitset of levels to update and if it should force update
+        insertUpdate(into, section, false);
+    }
+
+    /**
+     * allLevels: write every mip level even when a level comes out unchanged. Upstream stops at the first unchanged
+     * level, which is right while the mip rule never changes; after a rule change (the Metal surface mip, H13/H20)
+     * a re-import gives the same level 0 and the stale levels 1-4 would never be rewritten. The importers pass
+     * Mipper.importRewritesAllLevels() (true on the Metal backend only, rule on or off), so '/voxy import current'
+     * re-mips a store either way; live ingest and the GL backend keep the early stop.
+     */
+    public static void insertUpdate(WorldEngine into, VoxelizedSection section, boolean allLevels) {
 
         //Do some very cheeky stuff for MiB
         if (VoxyCommon.IS_MINE_IN_ABYSS) {
@@ -80,7 +91,12 @@ public class WorldUpdater {
             } else {
                 //If nothing changed just need to release, dont need to update parent mips
                 worldSection.release();
-                break;
+                if (!allLevels) {
+                    break;
+                }
+                //allLevels: a parent level may still differ (it was mipped with another rule), keep going
+                shouldCheckEmptiness = false;
+                previousSection = null;
             }
         }
 
