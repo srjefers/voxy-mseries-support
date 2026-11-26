@@ -331,10 +331,14 @@ public final class ShaderCompilerSmokeTest {
 
         java.util.List<MdicLayer> out = new java.util.ArrayList<>();
         // No shader pack: env fog on, LOD brightness compensation.
-        out.add(new MdicLayer("no pack, opaque", with(opaque, "USE_ENV_FOG", "", "VOXY_LOD_BRIGHTNESS", "0.9200"), true, false, false));
+        out.add(new MdicLayer("no pack, opaque", with(opaque, "USE_ENV_FOG", "", "VOXY_LOD_BRIGHTNESS", "0.9200",
+                "VOXY_LOD_BRIGHTNESS_AO_ONLY", ""), true, false, false));
         out.add(new MdicLayer("no pack, translucent", with(translucent, "USE_ENV_FOG", ""), false, false, false));
         // A pack without voxy.json (gbuffer inject): env fog off, brightness kept.
-        out.add(new MdicLayer("pack without contract, opaque", with(opaque, "VOXY_LOD_BRIGHTNESS", "0.9200"), true, false, false));
+        out.add(new MdicLayer("pack without contract, opaque", with(opaque, "VOXY_LOD_BRIGHTNESS", "0.9200",
+                "VOXY_LOD_BRIGHTNESS_AO_ONLY", ""), true, false, false));
+        // VOXY_LOD_BRIGHTNESS_AO=0 (H19 kill switch): brightness on every quad.
+        out.add(new MdicLayer("no pack, VOXY_LOD_BRIGHTNESS_AO=0, opaque", with(opaque, "USE_ENV_FOG", "", "VOXY_LOD_BRIGHTNESS", "0.9200"), true, false, false));
         out.add(new MdicLayer("pack without contract, translucent", translucent, false, false, false));
         // Contract pack (BSL): both layers go through the material g-buffer emitter.
         out.add(new MdicLayer("contract pack, opaque", with(opaque, "PATCHED_SHADER", "", "VOXY_VX_GBUFFER", ""), true, true, true));

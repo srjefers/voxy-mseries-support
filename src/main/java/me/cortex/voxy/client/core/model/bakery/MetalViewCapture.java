@@ -183,6 +183,16 @@ public final class MetalViewCapture {
      *   tile, so every bamboo block was drawn as a block-wide column with a flat top.
      */
     public void emitToStream(long destAddr, boolean skipDilate) {
+        emitToStream(destAddr, skipDilate, false);
+    }
+
+    /**
+     * @param drawnByColour true for H19 DARK_CUTOUT bakes (leaves; ModelFactory.LEAVES_DARK, with
+     *   skipDilate): a pixel counts as written when any channel is non-zero, not only alpha. Leaves bake
+     *   as SOLID, so their holes are drawn with vanilla's dark hole colour at alpha 0; the GL stencil
+     *   marks them written, and an alpha test took them for empty cells (the clear is 0,0,0,0).
+     */
+    public void emitToStream(long destAddr, boolean skipDilate, boolean drawnByColour) {
         // CPU read from Shared storage. Backend.submit() in endBake() already
         // waited for the GPU; getBytes is then just a memcpy.
         this.bakeTarget.getBytes(0, 0, 0, this.totalW, this.totalH, this.readbackBuffer);
@@ -275,7 +285,8 @@ public final class MetalViewCapture {
                     // written". Mark opaque pixels with bit 7 so solid faces
                     // survive TextureUtils.WRITE_CHECK_STENCIL while empty
                     // cells remain empty.
-                    MemoryUtil.memPutInt(dstPx + 4, (rgba & 0xFF000000) != 0 ? 0x80 : 0);
+                    boolean written = drawnByColour ? rgba != 0 : (rgba & 0xFF000000) != 0;
+                    MemoryUtil.memPutInt(dstPx + 4, written ? 0x80 : 0);
                 }
             }
         }

@@ -700,7 +700,16 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                     }
                     if (brightness != 1.0f) {
                         opaqueDefines.put("VOXY_LOD_BRIGHTNESS", String.format(java.util.Locale.ROOT, "%.4f", brightness));
-                        Logger.info("[Metal-LODTEST] LOD brightness compensation = " + brightness + " (SSAO parity interim)");
+                        // H19: the factor stands in for Sodium's AO, which vanilla applies only to models
+                        // with ambient occlusion: plants, bamboo leaves and other unshaded models have
+                        // none, so the factor made them darker than Sodium's. quads.frag applies it only
+                        // to quads whose model has AO. VOXY_LOD_BRIGHTNESS_AO=0 darkens every quad again.
+                        boolean aoOnly = !"0".equals(String.valueOf(System.getenv("VOXY_LOD_BRIGHTNESS_AO")).trim());
+                        if (aoOnly) {
+                            opaqueDefines.put("VOXY_LOD_BRIGHTNESS_AO_ONLY", "");
+                        }
+                        Logger.info("[Metal-LODTEST] LOD brightness compensation = " + brightness + " (SSAO parity interim"
+                                + (aoOnly ? ", AO models only, H19; VOXY_LOD_BRIGHTNESS_AO=0 reverts)" : ", every quad)"));
                     }
                 }
                 // Water parity knobs — NEUTRAL by default since the chunk-bound

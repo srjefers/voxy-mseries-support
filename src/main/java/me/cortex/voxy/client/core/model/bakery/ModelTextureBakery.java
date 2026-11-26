@@ -630,11 +630,38 @@ public class ModelTextureBakery {
             }
         }
 
-        this.metalCapture.emitToStream(destAddr, plantCross || flatBlock || bamboo);
+        // H19 leaves (ModelFactory.LEAVES_DARK): DARK_CUTOUT textures keep vanilla's dark hole pixels
+        // (drawn at alpha 0) instead of the fill, so MipGen darkens their mips like vanilla and the GL bake.
+        boolean darkCutout = isBlock && me.cortex.voxy.client.core.model.ModelFactory.LEAVES_DARK && isAnyDarkend;
+        this.metalCapture.emitToStream(destAddr, plantCross || flatBlock || bamboo || darkCutout, darkCutout);
+        if (darkCutout) {
+            maybeLogDarkCutoutBake(state, destAddr);
+        }
         if (!isBlock) {
             maybeLogWaterBakeDiag(state, destAddr);
         }
         return (isAnyShaded ? 1 : 0) | (isAnyDarkend ? 2 : 0);
+    }
+
+    private static final java.util.concurrent.atomic.AtomicInteger DARK_CUTOUT_LOGS =
+            new java.util.concurrent.atomic.AtomicInteger(4);
+
+    /** Bounded one-shot [Metal-LODTEST] H19 line: the UP face of a DARK_CUTOUT bake, leaf pixels against the
+     * dark hole pixels it kept (alpha 0, colour 3/4 of the darkest leaf pixel in vanilla). */
+    private void maybeLogDarkCutoutBake(BlockState state, long destAddr) {
+        if (DARK_CUTOUT_LOGS.getAndDecrement() <= 0) return;
+        final int facePixels = this.width * this.height;
+        long base = destAddr + (long) Direction.UP.get3DDataValue() * facePixels * 8L;
+        int leaf = 0, holes = 0, empty = 0, hole = 0;
+        for (int i = 0; i < facePixels; i++) {
+            int rgba = org.lwjgl.system.MemoryUtil.memGetInt(base + i * 8L);
+            if ((rgba >>> 24) != 0) leaf++;
+            else if (rgba != 0) { holes++; hole = rgba; }
+            else empty++;
+        }
+        me.cortex.voxy.common.Logger.info("[Metal-LODTEST] H19 leaves " + state + ": up face " + leaf
+                + " leaf px, " + holes + " dark hole px kept (colour " + (hole & 0xFF) + "," + ((hole >> 8) & 0xFF)
+                + "," + ((hole >> 16) & 0xFF) + "), " + empty + " empty (VOXY_LOD_LEAVES_DARK=0 reverts)");
     }
 
     /** Bounded one-shot [Metal-WATERBAKE] diagnostic: stops after the first

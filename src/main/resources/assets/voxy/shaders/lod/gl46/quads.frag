@@ -619,6 +619,11 @@ void main() {
     // BEFORE fog so the compensation darkens terrain, not the fog colour.
     // Injected Metal-only with the tunable value (VOXY_LOD_BRIGHTNESS env).
     #ifdef VOXY_LOD_BRIGHTNESS
+    #ifdef VOXY_LOD_BRIGHTNESS_AO_ONLY
+    // H19: only quads whose model has AO (interData.w bit 6, quad_util's hasAO): vanilla gives plants,
+    // bamboo leaves and other unshaded models no AO, so darkening them made them darker than Sodium's.
+    if (((interData.w >> 6u) & 1u) != 0u)
+    #endif
     outColour.rgb *= VOXY_LOD_BRIGHTNESS;
     #endif
 
