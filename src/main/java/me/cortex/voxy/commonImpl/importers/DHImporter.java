@@ -383,7 +383,7 @@ public class DHImporter implements IDataImporter {
                         WorldConversionFactory.mipSection(section, this.engine.getMapper());
 
                         section.setPosition(X*4+(x>>4), sy+(this.bottomOfWorld>>4), (Z*4)+sz);
-                        WorldUpdater.insertUpdate(this.engine, section);
+                        WorldUpdater.insertUpdate(this.engine, section, me.cortex.voxy.common.world.other.Mipper.importRewritesAllLevels());//H13/H20: refresh every mip level (Metal)
                     }
 
                     int count = this.processedChunks.incrementAndGet();

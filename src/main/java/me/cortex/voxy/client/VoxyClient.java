@@ -77,6 +77,9 @@ public class VoxyClient implements ClientModInitializer {
                         + "MDIC draws real LOD geometry with the Metal model atlas bakery. "
                         + "Remaining M13 gaps: depth import (real HiZ + cull stub) and SSAO. "
                         + "Set VOXY_BAKERY_OFF=1 for the hash-colour fallback.");
+                // H13/H20: coarse LOD cells keep water, ice and snow on top (Mipper surface rule). Set here, before
+                // any world is joined and ingested; the GL backend never reaches this branch.
+                me.cortex.voxy.common.world.other.Mipper.enableSurfaceRule(String.valueOf(backend.getType()));
             } else {
                 //Log-check keys on "Voxy disabled on"; the old opt-in message said "Set VOXY_FORCE_METAL=1"
                 Logger.warn("[VOXY_FORCE_METAL] Voxy disabled on " + backend.getType()
@@ -288,8 +291,15 @@ public class VoxyClient implements ClientModInitializer {
                         fired[i] = true;
                         String cmd = cmds.get(i).cmd();
                         Logger.info("[VOXY_DEBUG_CMD] running: /" + cmd);
-                        server.execute(() -> server.getCommands().performPrefixedCommand(
-                                server.createCommandSourceStack(), cmd));
+                        if (cmd.startsWith("voxy ")) {
+                            // Voxy's own commands are client commands (e.g. 'voxy import current', H20 re-import):
+                            // the server dispatcher does not know them. Fabric's command API runs a client command
+                            // sent through the connection before anything reaches the server.
+                            if (client.player != null) client.player.connection.sendCommand(cmd);
+                        } else {
+                            server.execute(() -> server.getCommands().performPrefixedCommand(
+                                    server.createCommandSourceStack(), cmd));
+                        }
                     }
                 }
             });

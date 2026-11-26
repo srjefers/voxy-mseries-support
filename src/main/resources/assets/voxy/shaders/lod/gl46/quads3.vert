@@ -21,7 +21,12 @@
 
 layout(location = 0) out flat uvec4 interData;
 #ifndef USE_NV_BARRY
+#ifdef VOXY_LOD_UV_CENTROID
+// Metal + MSAA only (MDICSectionRenderer): see the matching input in quads.frag.
+layout(location = 1) centroid out vec2 uv;
+#else
 layout(location = 1) out vec2 uv;
+#endif
 #endif
 
 // M13 2026-05-14 workaround: Metal's drawIndexedPrimitives:indirectBuffer:

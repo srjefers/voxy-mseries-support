@@ -426,6 +426,16 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                             + (boundDebug ? "; mask-removed LOD fragments are red (VOXY_BOUND_DEBUG)" : ""));
                 }
                 opaqueDefines.put("VOXY_FORCE_OPAQUE_ALPHA", "");
+                // H20 grid: under the H17 MSAA a quad-edge pixel is shaded at its centre even when only some of
+                // its samples are covered, so the uv is extrapolated past the quad and modf() reads the
+                // neighbouring atlas tile (1 px lines along quad edges, a grid over ice and water). Centroid
+                // interpolation keeps uv inside the quad. Only with MSAA; VOXY_LOD_UV_CENTROID=0 is the kill switch.
+                if (me.cortex.voxy.client.core.metal.MetalLodMsaa.SAMPLES > 1
+                        && !"0".equals(System.getenv("VOXY_LOD_UV_CENTROID"))) {
+                    opaqueDefines.put("VOXY_LOD_UV_CENTROID", "");
+                    translucentDefines.put("VOXY_LOD_UV_CENTROID", "");
+                    Logger.info("[Metal-LODTEST] uv centroid ON (H20 grid under MSAA; VOXY_LOD_UV_CENTROID=0 reverts)");
+                }
 
                 // 2026-07-16 round-15 pane probe: orange-tint in-ring OPAQUE-layer
                 // LOD fragments (see quads.frag). The pale border panes evaded every

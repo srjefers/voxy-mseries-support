@@ -16,8 +16,11 @@ import net.minecraft.util.datafix.fixes.References;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.IceBlock;
 import net.minecraft.world.level.block.LeavesBlock;
+import net.minecraft.world.level.block.SnowLayerBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import org.lwjgl.system.MemoryUtil;
 
 import java.io.ByteArrayInputStream;
@@ -253,6 +256,47 @@ public class Mapper {
         return this.blockId2stateEntry.get(blockId).opacity;
     }
 
+    // Surface kinds for the Metal surface mip (Mipper.mipSurface, H13/H20). Read only when that rule is on.
+    /** A fluid (water, lava, waterlogged or underwater plants) or ice: seen from above it is a closed surface. */
+    public static final byte SURFACE_FLUID_ICE = 1;
+    /** A snow layer thinner than a full block. */
+    public static final byte SURFACE_SNOW_LAYER = 2;
+    /** Leaves (opacity forced to 15 above): snow on them only whitens the top face, their sides stay green. */
+    public static final byte SURFACE_LEAVES = 3;
+
+    static byte surfaceKindOf(BlockState state) {
+        if (!state.getFluidState().isEmpty() || state.getBlock() instanceof IceBlock) {
+            return SURFACE_FLUID_ICE;
+        }
+        if (state.getBlock() instanceof SnowLayerBlock && state.getValue(SnowLayerBlock.LAYERS) < SnowLayerBlock.MAX_HEIGHT) {
+            return SURFACE_SNOW_LAYER;
+        }
+        if (state.getBlock() instanceof LeavesBlock) {
+            return SURFACE_LEAVES;
+        }
+        return 0;
+    }
+
+    public int getBlockStateSurfaceKind(int blockId) {
+        return this.blockId2stateEntry.get(blockId).surfaceKind;
+    }
+
+    public boolean isBlockStateSnowy(int blockId) {
+        return this.blockId2stateEntry.get(blockId).snowy;
+    }
+
+    private volatile int snowBlockId = -1;
+    /** Mapping id of minecraft:snow_block (registered on first use). The surface mip draws a cell whose visible top is
+     *  a snow layer over a solid block as a snow block: the solid's full cube, the snow's colour. */
+    public int getSnowBlockId() {
+        int id = this.snowBlockId;
+        if (id < 0) {
+            id = this.getIdForBlockState(Blocks.SNOW_BLOCK.defaultBlockState());
+            this.snowBlockId = id;
+        }
+        return id;
+    }
+
     public int getIdForBiome(Holder<Biome> biome) {
         String biomeId = biome.unwrapKey().get().identifier().toString();
         var entry = this.biome2biomeEntry.get(biomeId);
@@ -346,6 +390,10 @@ public class Mapper {
         public final int id;
         public final BlockState state;
         public final int opacity;
+        /** Metal surface mip (H13/H20, {@link Mipper}): {@link #SURFACE_FLUID_ICE}, {@link #SURFACE_SNOW_LAYER}, {@link #SURFACE_LEAVES} or 0. */
+        public final byte surfaceKind;
+        /** snowy=true (grass, podzol, mycelium under snow): the Metal surface mip keeps it under a snow layer. */
+        public final boolean snowy;
         public StateEntry(int id, BlockState state) {
             this.id = id;
             this.state = state;
@@ -355,6 +403,8 @@ public class Mapper {
             } else {
                 this.opacity = state.getLightBlock();
             }
+            this.surfaceKind = surfaceKindOf(state);
+            this.snowy = state.hasProperty(BlockStateProperties.SNOWY) && state.getValue(BlockStateProperties.SNOWY);
         }
 
         public byte[] serialize() {
