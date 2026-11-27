@@ -84,6 +84,57 @@ public class ModelFactory {
         }
     }
 
+    /**
+     * H4 (Metal, with ICE_OPAQUE): the solid LOD ice showed the bare ice texture, while Sodium draws ice translucent
+     * (alpha ~0.75) over the dark water under it. Measured at level 0 against Sodium, sea ice came out x1.18 brighter
+     * and bluer (dE 9.8). The bake now puts each ice pixel over the water first, with its own alpha:
+     * rgb = a * ice + (1 - a) * ICE_WATER, alpha 255. ICE_WATER is what Sodium shows under the ice, fitted on the
+     * frozen ocean at (237, 383) from Y 300 at noon: open water there is (36, 36, 105), but with it the LOD ice came out
+     * 3 % / 7 % too high in green / blue (dE 5.1); the water under ice is darker (lit through the ice) and the
+     * sensitivity is ~0.24 per unit, giving (36, 19, 47). VOXY_LOD_ICE_OVER_WATER=0 reverts.
+     */
+    private static final boolean ICE_OVER_WATER = ICE_OPAQUE
+            && !"0".equals(String.valueOf(System.getenv("VOXY_LOD_ICE_OVER_WATER")).trim());
+    private static final int[] ICE_WATER = {36, 19, 47};
+    static {
+        if (ICE_OVER_WATER) {
+            me.cortex.voxy.common.Logger.info("[Metal-LODTEST] H4 LOD ice baked over water (36,19,47) with its alpha,"
+                    + " like Sodium's translucent ice; VOXY_LOD_ICE_OVER_WATER=0 reverts");
+        }
+    }
+
+    /**
+     * H4 (Metal): leaf models carry model flag 128 so the LOD brightness compensation (MDICSectionRenderer,
+     * VOXY_LOD_BRIGHTNESS_LEAVES_ONLY) darkens canopies only: Sodium's AO darkens a canopy (~x0.89) but not flat
+     * open ground. The switch VOXY_LOD_AO_LEAVES=0 lives in MDICSectionRenderer; the flag is harmless without it.
+     */
+    private static final boolean METAL_LEAVES = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+            != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
+
+    /** H4 ICE_OVER_WATER: replaces each written face with the ice composited over the water (see ICE_WATER). */
+    private static void metalIceOverWater(ColourDepthTextureData[] textureData) {
+        for (int face = 0; face < textureData.length; face++) {
+            var tex = textureData[face];
+            if (tex == null) continue;
+            int[] src = tex.colour();
+            int[] out = new int[src.length];
+            for (int i = 0; i < src.length; i++) {
+                int p = src[i];
+                int a = p >>> 24;
+                if (a == 0) {
+                    out[i] = p;
+                    continue;
+                }
+                int r = (p & 0xFF), g = (p >> 8) & 0xFF, b = (p >> 16) & 0xFF;
+                r = (r * a + ICE_WATER[0] * (255 - a) + 127) / 255;
+                g = (g * a + ICE_WATER[1] * (255 - a) + 127) / 255;
+                b = (b * a + ICE_WATER[2] * (255 - a) + 127) / 255;
+                out[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
+            }
+            textureData[face] = new ColourDepthTextureData(out, tex.depth(), tex.width(), tex.height());
+        }
+    }
+
     /** Far-LOD plant work S1 (2026-09-25): plant cross models bake without
      *  dilation and get centred side faces on Metal. VOXY_LOD_PLANT_CROSS=0
      *  reverts to the hollow-box behaviour. Read from the bakery too. */
@@ -597,6 +648,11 @@ public class ModelFactory {
 
         //TODO: add thing for `blockState.hasEmissiveLighting()` and `blockState.getLuminance()`
 
+        // H4: before the dedup below (it hashes the texture data)
+        if (ICE_OVER_WATER && (blockState.is(Blocks.ICE) || blockState.is(Blocks.FROSTED_ICE))) {
+            metalIceOverWater(textureData);
+        }
+
         boolean isFluid = blockState.getBlock() instanceof LiquidBlock;
         int modelId = -1;
 
@@ -1006,6 +1062,7 @@ public class ModelFactory {
         modelFlags |= plantCrossModel?16:0;//Metal plant cross (see quads.frag VOXY_LOD_PLANT_EDGEFADE); never set on GL
         modelFlags |= flatModel?32:0;//Metal flat block, H16 (see quad_util VOXY_LOD_ABS_INDENT); never set on GL
         modelFlags |= bambooModel?64:0;//Metal bamboo stalk, H18 (see quad_util, quads.frag); never set on GL
+        modelFlags |= METAL_LEAVES && blockState.getBlock() instanceof LeavesBlock?128:0;//Metal leaves, H4 (LOD brightness on leaves only, quads.frag); never set on GL
 
         //modelFlags |= blockRenderLayer == RenderLayer.getSolid()?0:1;// should discard alpha
         MemoryUtil.memPutInt(uploadPtr, modelFlags); uploadPtr += 4;

@@ -168,6 +168,11 @@ uvec3 makeRemainingAttributes(const in BlockModel model, const in Quad quad, uin
     attributes.z |= (lodLevel&7u)<<16;
     #endif
 
+    #ifdef VOXY_LOD_BRIGHTNESS_LEAVES_ONLY
+    // H4 (Metal): leaf model flag for the leaves-only LOD brightness in quads.frag, bit 20 (no other reader).
+    attributes.z |= uint(modelIsLeaves(model))<<20;
+    #endif
+
     return attributes;
 }
 
