@@ -1196,6 +1196,8 @@ pipeline, disabling shaders!`, `loc=-1` or `vx fog cap FAILED`.
 |---|---|
 | `VOXY_VX_MATERIAL_OPAQUE=0` | The light seam |
 | `VOXY_VX_LOD_AO_PARITY=0` | Dark tufts |
+| `VOXY_VX_LOD_LEAVES_PARITY=0` | A darker LOD forest past Sodium (H11) |
+| `VOXY_VX_ICE_TRANSLUCENT=0` | Dull far LOD ice with no sun glints |
 | `VOXY_LOD_MIP_DISCARD=0` | Turns off mip-aware cutout discard |
 | `VOXY_LOD_PLANT_EDGEFADE=0` | Turns off the plant edge-on fade |
 | `VOXY_LOD_PLANT_CROSS=0` | Turns off the plant cross bake |
@@ -1203,8 +1205,10 @@ pipeline, disabling shaders!`, `loc=-1` or `vx fog cap FAILED`.
 | `VOXY_VX_SKY_FLOOR_UNDERWATER=skip` or `=1` | The old water floor |
 | `VOXY_VX_FOG_CAP=0` | Turns off the fog cap |
 
-**Notes.** Known, not failures: LOD leaves look solid, and the LOD ring gets
-no shadows past BSL's *Shadow Distance*.
+**Notes.** Known, not failures: LOD leaves look solid, and at Render Distance 32
+the Sodium ring from 256 to 512 blocks gets no shadows, because BSL's *Shadow Distance*
+is 256 (raise it to 512 or play at Render Distance 16). LOD leaves read a little
+yellower than Sodium's with BSL (H4).
 
 ### P2-NIGHT-BLOCKLIGHT: Torch and lava light at LOD distance at night
 

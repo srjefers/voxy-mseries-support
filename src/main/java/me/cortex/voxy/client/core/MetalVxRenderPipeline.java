@@ -50,7 +50,23 @@ public class MetalVxRenderPipeline extends NormalRenderPipeline {
     @Override
     public void setupExtraModelBakeryData(ModelBakerySubsystem modelService) {
         modelService.factory.setCustomBlockStateMapping(WorldRenderingSettings.INSTANCE.getBlockStateIds());
+        // H11/H4 with BSL (2026-11-27): Sodium's ice goes through the pack's water program (sky reflection and sun
+        // specular by fresnel); the solid LOD ice of the no-pack path (H15 solid bake, H4 bake over water) went through
+        // voxy_opaque without either and read up to 25 % duller at the Render Distance 16 ring (CIEDE2000 4.3 noon,
+        // 6.9 low sun). Kept translucent it reaches the pack's voxy_translucent: 1.3 / 3.0, and no H15 mosaic (the
+        // pack composites the LOD translucent layer itself). VOXY_VX_ICE_TRANSLUCENT=0 keeps the solid ice.
+        modelService.factory.setPackIceTranslucent(PACK_ICE_TRANSLUCENT);
+        if (!loggedIce) {
+            loggedIce = true;
+            me.cortex.voxy.common.Logger.info("[Metal-LODTEST] vx pack LOD ice "
+                    + (PACK_ICE_TRANSLUCENT ? "translucent (the pack's water program shades it, like Sodium's ice)"
+                                            : "solid (VOXY_VX_ICE_TRANSLUCENT=0: the no-pack H15/H4 bake)")
+                    + "; VOXY_VX_ICE_TRANSLUCENT=0 keeps it solid");
+        }
     }
+
+    private static final boolean PACK_ICE_TRANSLUCENT = !"0".equals(System.getenv("VOXY_VX_ICE_TRANSLUCENT"));
+    private static boolean loggedIce;
 
     /** The pack contract data, consumed by the GL resolve pass (increment 5). */
     public IrisVoxyRenderPipelineData getPipelineData() {

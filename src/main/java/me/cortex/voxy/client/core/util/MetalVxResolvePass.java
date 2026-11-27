@@ -323,6 +323,51 @@ public final class MetalVxResolvePass {
                     : "FAILED (shadowMask needle not found — pack text drifted)"));
         }
 
+        // Leaves parity with the pack's near terrain (H11, 2026-11-27; VOXY_VX_LOD_LEAVES_PARITY=0
+        // reverts, the pack text stays byte-identical). BSL lights Sodium leaves with the vertex AO
+        // squared (GetLighting: albedo *= smoothLighting^2, separateAo=true); LOD leaves reach
+        // GetLighting with tinting.a = 1, and then BSL's screen-space GetLODShadows march, which sees
+        // LOD leaves as solid cubes (no cutout holes), darkens them as if the canopy were opaque.
+        // Measured with BSL against Sodium (H11/h11-sombras): without the march the LOD leaves keep
+        // Sodium's distribution shape but read x1.2-1.4 brighter; with it the excess cancels only on
+        // average, by twice the canopy in shadow at noon (27 % vs 13 %, dE 7.5). How much canopy
+        // self-shadowing Sodium shows depends on distance: past ~200 blocks its shadow map no longer
+        // resolves it (0 % of the canopy in shadow at 256..512 even with Shadow Distance 512), while
+        // nearer it does. So the parity fades in with view distance (VOXY_VX_LOD_LEAVES_FADE,
+        // default 128..256 blocks): nearer, the pack's own behaviour; farther — everything at Render
+        // Distance 16, where the LOD starts at 256 — leaves get the AO stand-in (color.a *=
+        // VOXY_VX_LOD_LEAVES_AO, squared by the pack) and their contact-march seed scaled by
+        // VOXY_VX_LOD_LEAVES_MARCH (0 = leaves skip the march; the shadows leaves cast on the ground
+        // are untouched — those pixels keep their own seed). Measured at RD 16 against Sodium with
+        // shadows: the LOD side of the ring went from 0.89-0.96 to 0.94-1.01 of Sodium's brightness.
+        if (!translucent && !"0".equals(System.getenv("VOXY_VX_LOD_LEAVES_PARITY"))) {
+            float leavesAo = parseUnitEnv("VOXY_VX_LOD_LEAVES_AO", 0.90f);
+            float leavesMarch = parseUnitEnv("VOXY_VX_LOD_LEAVES_MARCH", 0.0f);
+            float[] fade = parseFadeEnv("VOXY_VX_LOD_LEAVES_FADE", 128f, 256f);
+            String litNeedle = "GetLighting(albedo.rgb, shadow, viewPos, worldPos, normal, lightmap, color.a, NoL,";
+            String maskNeedle = "shadowMask *= lightmap.y * lightmap.y;";
+            boolean litFound = countOf(patchText, litNeedle) == 1;
+            boolean maskFound = countOf(patchText, maskNeedle) == 1;
+            if (litFound && maskFound) {
+                patchText = patchText.replace(litNeedle, String.format(java.util.Locale.ROOT,
+                        "float vxLeavesFade = leaves * smoothstep(%.1f, %.1f, length(viewPos)); "
+                                + "/* voxy: LOD leaves parity (VOXY_VX_LOD_LEAVES_PARITY=0 reverts) */ "
+                                + "GetLighting(albedo.rgb, shadow, viewPos, worldPos, normal, lightmap, "
+                                + "color.a * mix(1.0, %.4f, vxLeavesFade), NoL,",
+                        fade[0], fade[1], leavesAo));
+                patchText = patchText.replace(maskNeedle, String.format(java.util.Locale.ROOT,
+                        "%s shadowMask *= mix(1.0, %.4f, vxLeavesFade); /* voxy: LOD leaves contact-march seed */",
+                        maskNeedle, leavesMarch));
+            }
+            Logger.info(String.format(java.util.Locale.ROOT,
+                    "[Metal-LODTEST] vx resolve LOD leaves parity %s (from %.0f to %.0f blocks: AO stand-in color.a x%.2f "
+                            + "-> x%.2f after the pack squares it, contact-march seed on leaves x%.2f); "
+                            + "VOXY_VX_LOD_LEAVES_PARITY=0 reverts, VOXY_VX_LOD_LEAVES_AO / _MARCH / _FADE=start,end tune",
+                    (litFound && maskFound) ? "ON" : "FAILED (needle not found once: lit=" + litFound + " mask=" + maskFound
+                            + " — pack text drifted, leaves unchanged)",
+                    fade[0], fade[1], leavesAo, leavesAo * leavesAo, leavesMarch));
+        }
+
         // Near-fallback mirror dim (VOXY_VX_NEAR_MIRROR_DIM, =1 disables). The
         // masked near-cull (VOXY_TRANS_NEAR_CULL_MASKED) keeps LOD water INSIDE
         // the MC render ring over Sodium sections that aren't built yet; with
@@ -1047,6 +1092,35 @@ public final class MetalVxResolvePass {
         } catch (NumberFormatException e) {
             return def;
         }
+    }
+
+    /** {@link #parseEnvFloat} limited to [0, 1]; out-of-range or NaN keeps the default. */
+    private static float parseUnitEnv(String name, float def) {
+        float f = parseEnvFloat(name, def);
+        return (f >= 0.0f && f <= 1.0f) ? f : def;
+    }
+
+    /** "start,end" in blocks with 0 <= start < end; anything else keeps the defaults. */
+    private static float[] parseFadeEnv(String name, float defStart, float defEnd) {
+        String v = System.getenv(name);
+        if (v != null && !v.isBlank()) {
+            String[] p = v.trim().split(",");
+            if (p.length == 2) {
+                try {
+                    float s = Float.parseFloat(p[0].trim()), e = Float.parseFloat(p[1].trim());
+                    if (s >= 0f && e > s) return new float[]{s, e};
+                } catch (NumberFormatException ignored) {
+                    // keep the defaults
+                }
+            }
+        }
+        return new float[]{defStart, defEnd};
+    }
+
+    private static int countOf(String haystack, String needle) {
+        int n = 0;
+        for (int i = haystack.indexOf(needle); i >= 0; i = haystack.indexOf(needle, i + needle.length())) n++;
+        return n;
     }
 
     private static int ct5AltTexture(net.irisshaders.iris.pipeline.IrisRenderingPipeline ipipe) {
