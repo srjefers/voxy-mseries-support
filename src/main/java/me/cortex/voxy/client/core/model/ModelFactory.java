@@ -79,8 +79,8 @@ public class ModelFactory {
                     != me.cortex.voxy.client.core.gpu.BackendType.OPENGL;
     static {
         if (ICE_OPAQUE) {
-            me.cortex.voxy.common.Logger.info("[Metal-LODTEST] LOD ice baked as solid (no stacked translucent"
-                    + " layers on frozen water); VOXY_LOD_ICE_OPAQUE=0 reverts");
+            me.cortex.voxy.common.Logger.info("[Metal-LODTEST] LOD ice baked as solid without a vx shader pack (no"
+                    + " stacked translucent layers on frozen water); VOXY_LOD_ICE_OPAQUE=0 reverts");
         }
     }
 
@@ -98,8 +98,8 @@ public class ModelFactory {
     private static final int[] ICE_WATER = {36, 19, 47};
     static {
         if (ICE_OVER_WATER) {
-            me.cortex.voxy.common.Logger.info("[Metal-LODTEST] H4 LOD ice baked over water (36,19,47) with its alpha,"
-                    + " like Sodium's translucent ice; VOXY_LOD_ICE_OVER_WATER=0 reverts");
+            me.cortex.voxy.common.Logger.info("[Metal-LODTEST] H4 LOD ice baked over water (36,19,47) with its alpha"
+                    + " without a vx shader pack, like Sodium's translucent ice; VOXY_LOD_ICE_OVER_WATER=0 reverts");
         }
     }
 
@@ -387,6 +387,18 @@ public class ModelFactory {
         this.customBlockStateIdMapping = mapping;
     }
 
+    /**
+     * Set by MetalVxRenderPipeline (Metal + an Iris pack with the vx contract) before any bake: ice stays in its
+     * vanilla translucent layer, without the H15 solid bake and the H4 bake over water. Those two match the plain
+     * no-pack path; under a pack Sodium's ice goes through the pack's water program (BSL: id 202, sky reflection and
+     * sun specular by fresnel), and only a translucent LOD ice reaches the pack's voxy_translucent to get the same.
+     */
+    private boolean packIceTranslucent = false;
+
+    public void setPackIceTranslucent(boolean packIceTranslucent) {
+        this.packIceTranslucent = packIceTranslucent;
+    }
+
     private static final class RawBakeResult {
         private final int blockId;
         private final BlockState blockState;
@@ -649,7 +661,7 @@ public class ModelFactory {
         //TODO: add thing for `blockState.hasEmissiveLighting()` and `blockState.getLuminance()`
 
         // H4: before the dedup below (it hashes the texture data)
-        if (ICE_OVER_WATER && (blockState.is(Blocks.ICE) || blockState.is(Blocks.FROSTED_ICE))) {
+        if (ICE_OVER_WATER && !this.packIceTranslucent && (blockState.is(Blocks.ICE) || blockState.is(Blocks.FROSTED_ICE))) {
             metalIceOverWater(textureData);
         }
 
@@ -714,7 +726,7 @@ public class ModelFactory {
         } else {
             if (blockState.getBlock() instanceof LeavesBlock) {
                 blockRenderLayer = ChunkSectionLayer.SOLID;
-            } else if (ICE_OPAQUE && (blockState.is(Blocks.ICE) || blockState.is(Blocks.FROSTED_ICE))) {
+            } else if (ICE_OPAQUE && !this.packIceTranslucent && (blockState.is(Blocks.ICE) || blockState.is(Blocks.FROSTED_ICE))) {
                 // Metal (H15, 2026-11-24): frozen ocean stacks three translucent LOD
                 // layers within a block — the ice top, the ice bottom and the top of
                 // the water under it (translucent ice occludes nothing). Without a

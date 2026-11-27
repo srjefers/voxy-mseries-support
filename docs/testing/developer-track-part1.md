@@ -1197,6 +1197,7 @@ pipeline, disabling shaders!`, `loc=-1` or `vx fog cap FAILED`.
 | `VOXY_VX_MATERIAL_OPAQUE=0` | The light seam |
 | `VOXY_VX_LOD_AO_PARITY=0` | Dark tufts |
 | `VOXY_VX_LOD_LEAVES_PARITY=0` | A darker LOD forest past Sodium (H11) |
+| `VOXY_VX_ICE_TRANSLUCENT=0` | Dull far LOD ice with no sun glints |
 | `VOXY_LOD_MIP_DISCARD=0` | Turns off mip-aware cutout discard |
 | `VOXY_LOD_PLANT_EDGEFADE=0` | Turns off the plant edge-on fade |
 | `VOXY_LOD_PLANT_CROSS=0` | Turns off the plant cross bake |
