@@ -699,13 +699,21 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                 // so the interim darkening would double-darken — neutral.
                 boolean vxContract = me.cortex.voxy.client.core.util.IrisUtil.vxContractActive();
                 if (!vxContract) {
-                    float brightness = 0.92f;
+                    // H4: Sodium's AO darkens where blocks touch: inside a canopy a lot (measured x0.89-0.90 at
+                    // level 0), flat open ground not at all (snow plains, sea ice, sand: x1.00). The flat 0.92 on
+                    // every AO model made snow and stone 8 % greyer than Sodium and still left canopies ~6 %
+                    // brighter. Without any factor the LOD matches Sodium-without-AO within ~3 % on every material
+                    // but ice (H4 ICE_OVER_WATER), so the compensation now goes to leaf models only
+                    // (ModelFactory flag 128), x0.87: canopy LOD / Sodium 1.15 -> ~1.00. VOXY_LOD_AO_LEAVES=0 restores
+                    // the 0.92 on every AO model (H19); VOXY_LOD_BRIGHTNESS overrides the factor in both modes.
+                    boolean leavesOnly = !"0".equals(String.valueOf(System.getenv("VOXY_LOD_AO_LEAVES")).trim());
+                    float brightness = leavesOnly ? 0.87f : 0.92f;
                     String b = System.getenv("VOXY_LOD_BRIGHTNESS");
                     if (b != null && !b.isBlank()) {
                         try {
                             brightness = Float.parseFloat(b.trim());
                         } catch (NumberFormatException e) {
-                            brightness = 0.92f;
+                            brightness = leavesOnly ? 0.87f : 0.92f;
                         }
                     }
                     if (brightness != 1.0f) {
@@ -715,11 +723,14 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                         // none, so the factor made them darker than Sodium's. quads.frag applies it only
                         // to quads whose model has AO. VOXY_LOD_BRIGHTNESS_AO=0 darkens every quad again.
                         boolean aoOnly = !"0".equals(String.valueOf(System.getenv("VOXY_LOD_BRIGHTNESS_AO")).trim());
-                        if (aoOnly) {
+                        if (leavesOnly) {
+                            opaqueDefines.put("VOXY_LOD_BRIGHTNESS_LEAVES_ONLY", "");
+                        } else if (aoOnly) {
                             opaqueDefines.put("VOXY_LOD_BRIGHTNESS_AO_ONLY", "");
                         }
                         Logger.info("[Metal-LODTEST] LOD brightness compensation = " + brightness + " (SSAO parity interim"
-                                + (aoOnly ? ", AO models only, H19; VOXY_LOD_BRIGHTNESS_AO=0 reverts)" : ", every quad)"));
+                                + (leavesOnly ? ", leaf models only, H4; VOXY_LOD_AO_LEAVES=0 reverts to 0.92 on AO models)"
+                                : aoOnly ? ", AO models only, H19; VOXY_LOD_BRIGHTNESS_AO=0 reverts)" : ", every quad)"));
                     }
                 }
                 // Water parity knobs — NEUTRAL by default since the chunk-bound

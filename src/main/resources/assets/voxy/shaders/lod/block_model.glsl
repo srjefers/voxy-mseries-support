@@ -56,6 +56,12 @@ bool modelIsBamboo(BlockModel model) {
     return ((model.flagsA)&64u) != 0;
 }
 
+//Metal-only leaves, H4 (ModelFactory sets bit 128 only on non-GL backends): the LOD brightness compensation
+// darkens leaves only (VOXY_LOD_BRIGHTNESS_LEAVES_ONLY)
+bool modelIsLeaves(BlockModel model) {
+    return ((model.flagsA)&128u) != 0;
+}
+
 bool modelIsShaded(BlockModel model) {
     return ((model.flagsA)&8u) != 0;
 }
