@@ -575,17 +575,29 @@ public final class MetalVxResolvePass {
             if (me.cortex.voxy.client.iris.VxFogCap.enabled()) {
                 String fogNeedle = "Fog(albedo.rgb, viewPos);";
                 if (patchText.contains(fogNeedle)) {
+                    float capF = me.cortex.voxy.client.iris.VxFogCap.capFactor();
+                    // H23: horizontal soft cap at the vanilla border (see VxFogCap). The border is
+                    // uVxRingCull itself with FULLRING, uVxRingCull + margin without it (the old
+                    // text's fixed +16 overshot the border by 16 blocks once FULLRING is on).
                     // Locale.ROOT: a comma decimal separator would emit broken GLSL.
-                    patchText = patchText.replace(fogNeedle, String.format(java.util.Locale.ROOT,
+                    String capped = me.cortex.voxy.client.iris.VxFogCap.horizontal()
+                            ? me.cortex.voxy.client.iris.VxFogCap.horizontalCapCall("albedo.rgb", "viewPos",
+                                    String.format(java.util.Locale.ROOT, "max(uVxRingCull + %.1f, 64.0) * %.3f",
+                                            RING_FULLRING ? 0f : RING_MARGIN, capF), "T")
+                            : String.format(java.util.Locale.ROOT,
                             "{ vec3 voxyFogPosT = viewPos; float voxyFogLenT = length(voxyFogPosT);"
                             + " float voxyFogMaxT = max(uVxRingCull + 16.0, 64.0) * %.3f;"
                             + " if (voxyFogLenT > voxyFogMaxT) voxyFogPosT *= voxyFogMaxT / voxyFogLenT;"
-                            + " Fog(albedo.rgb, voxyFogPosT); }",
-                            me.cortex.voxy.client.iris.VxFogCap.capFactor()));
+                            + " Fog(albedo.rgb, voxyFogPosT); }", capF);
+                    patchText = patchText.replace(fogNeedle, capped);
                     Logger.info(String.format(java.util.Locale.ROOT,
                             "[Metal-LODTEST] vx fog cap ON for LOD water (voxy_translucent Fog"
-                            + " clamped to %.2f*(uVxRingCull+16) live blocks);"
-                            + " VOXY_VX_FOG_CAP=0 reverts", me.cortex.voxy.client.iris.VxFogCap.capFactor()));
+                            + " clamped to %.2f*(%s) live blocks);"
+                            + " VOXY_VX_FOG_CAP=0 reverts; cap %s", capF,
+                            me.cortex.voxy.client.iris.VxFogCap.horizontal()
+                                    ? (RING_FULLRING ? "uVxRingCull" : "uVxRingCull+" + RING_MARGIN)
+                                    : "uVxRingCull+16",
+                            me.cortex.voxy.client.iris.VxFogCap.describe()));
                 } else {
                     Logger.warn("[Metal-LODTEST] vx fog cap FAILED for LOD water (Fog anchor not"
                             + " found in voxy_translucent — pack text drifted); cap inert there");
@@ -1046,9 +1058,11 @@ public final class MetalVxResolvePass {
     // 2026-07-16 round-14 FALSIFIED as the pane fix (panes persisted with it
     // live and untinted in the probe run) — now opt-in via
     // VOXY_TRANS_NEAR_CULL_FULLRING=1, default back to the -margin radius.
+    // 2026-11-28 H23: default ON again (it removes the bright 240-256 ring of LOD
+    // water under Sodium's water; see MDICSectionRenderer). =0 reverts.
     private static final boolean RING_FULLRING =
             !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_MASKED"))
-            && "1".equals(System.getenv("VOXY_TRANS_NEAR_CULL_FULLRING"));
+            && !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_FULLRING"));
     // Hold the ring dims (parity + grazing mirror dim) at FULL strength all the
     // way to the cull radius and release them across the RELEASE blocks BEYOND
     // it, instead of fading them out across the last 5% INSIDE the ring. The
@@ -1071,8 +1085,8 @@ public final class MetalVxResolvePass {
      *  — the mirror dim's documented baked-radius staleness defect does not recur
      *  here. Any future change to MDIC's formula must be mirrored here
      *  (intentionally identical). Consumers: parity/grazing-dim ring gates and
-     *  the LOD-water fog cap (cap = uVxRingCull + margin ~= the vanilla far
-     *  plane; FULLRING overshoots it by the margin — negligible for a fog clamp). */
+     *  the LOD-water fog cap (cap = the vanilla border: uVxRingCull with
+     *  FULLRING, uVxRingCull + margin without it; H23). */
     private static float ringCullNow() {
         float rdBlocks;
         try {

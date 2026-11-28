@@ -210,10 +210,12 @@ public final class VxContractInjector {
      *  border) so the auto seafloor-dim ring tracks the same radius. Same env
      *  pair as MDIC/MetalVxResolvePass — the three rings move together.
      *  2026-07-16 round-14 FALSIFIED as the pane fix — now opt-in via
-     *  VOXY_TRANS_NEAR_CULL_FULLRING=1 (all three rings together). */
+     *  VOXY_TRANS_NEAR_CULL_FULLRING=1 (all three rings together).
+     *  2026-11-28 H23: default ON again with the other two (removes the bright
+     *  240-256 ring of LOD water under Sodium's water); =0 reverts all three. */
     private static final boolean SF_FULLRING =
             !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_MASKED"))
-            && "1".equals(System.getenv("VOXY_TRANS_NEAR_CULL_FULLRING"));
+            && !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_FULLRING"));
     /** Diagnostic (VOXY_BOUND_DEBUG house style): paint every pixel the
      *  seafloor dim actually touches red, so "dim engaged but insufficient"
      *  and "dim never engages" are distinguishable on a screenshot. */

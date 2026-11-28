@@ -260,10 +260,19 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
     // full ring live; the probe run showed they never enter the resolve water
     // branch at all) — now opt-in via VOXY_TRANS_NEAR_CULL_FULLRING=1, default
     // back to the -margin radius.
+    // 2026-11-28 H23: default ON again, for a different defect it does fix. With
+    // the -margin radius the LOD water from 240 to 256 blocks (RD 16) is drawn
+    // UNDER Sodium's water, which is there out to 256 in every direction: a
+    // bright ring at the border (+2.4 L*, CIEDE2000 2.0 against Sodium's own
+    // water at RD 32, noon, 99 blocks over the sea). FULLRING: -0.3 L* (0.5).
+    // Not further than rdBlocks: coverage is per pixel with no depth test, and
+    // past rdBlocks a ray can cross a Sodium box and still hit LOD water
+    // beyond Sodium's last water (a gap, tens of blocks wide at low cameras).
+    // VOXY_TRANS_NEAR_CULL_FULLRING=0 reverts to the -margin radius.
     private static final boolean TRANS_NEAR_CULL_MASKED_ON =
             !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_MASKED"));
     private static final boolean TRANS_NEAR_CULL_FULLRING = TRANS_NEAR_CULL_MASKED_ON
-            && "1".equals(System.getenv("VOXY_TRANS_NEAR_CULL_FULLRING"));
+            && !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_FULLRING"));
     private static boolean loggedNearCullRuntime;
 
     private static float parseEnvFloat(String name, float def) {
