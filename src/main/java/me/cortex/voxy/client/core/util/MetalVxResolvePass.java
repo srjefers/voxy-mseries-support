@@ -1046,9 +1046,11 @@ public final class MetalVxResolvePass {
     // 2026-07-16 round-14 FALSIFIED as the pane fix (panes persisted with it
     // live and untinted in the probe run) — now opt-in via
     // VOXY_TRANS_NEAR_CULL_FULLRING=1, default back to the -margin radius.
+    // 2026-11-28 H23: default ON again (it removes the bright 240-256 ring of LOD
+    // water under Sodium's water; see MDICSectionRenderer). =0 reverts.
     private static final boolean RING_FULLRING =
             !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_MASKED"))
-            && "1".equals(System.getenv("VOXY_TRANS_NEAR_CULL_FULLRING"));
+            && !"0".equals(System.getenv("VOXY_TRANS_NEAR_CULL_FULLRING"));
     // Hold the ring dims (parity + grazing mirror dim) at FULL strength all the
     // way to the cull radius and release them across the RELEASE blocks BEYOND
     // it, instead of fading them out across the last 5% INSIDE the ring. The
