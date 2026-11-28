@@ -6,8 +6,8 @@
 >
 > **No download: you build the jar yourself. It is easier than it sounds,
 > and safer.** The Voxy team is fine with this source on GitHub but asked
-> that jar builds not be shared. [Build the jar](#build-the-jar) of the first
-> pre-release, **0.2.8-alpha-metal.1** (Minecraft 1.21.11), by pasting one
+> that jar builds not be shared. [Build the jar](#build-the-jar) of the latest
+> pre-release, **0.2.8-alpha-metal.2** (Minecraft 1.21.11), by pasting one
 > block of text into Terminal, or let an
 > [AI assistant do it with you](#build-the-jar-with-an-ai-assistant).
 
@@ -75,7 +75,7 @@ It is also the safer way to get a mod:
 3. Copy this whole block, paste it into Terminal and press Return:
 
    ```bash
-   git clone -c advice.detachedHead=false --branch v0.2.8-alpha-metal.1 https://github.com/srjefers/voxy-mseries-support.git ~/voxy-mseries-support &&
+   git clone -c advice.detachedHead=false --branch v0.2.8-alpha-metal.2 https://github.com/srjefers/voxy-mseries-support.git ~/voxy-mseries-support &&
    cd ~/voxy-mseries-support &&
    export JAVA_HOME="$HOME/Library/Application Support/minecraft/runtime/java-runtime-delta/mac-os-arm64/java-runtime-delta/jre.bundle/Contents/Home" &&
    ./gradlew build &&
@@ -86,8 +86,8 @@ It is also the safer way to get a mod:
    such as `buildMetalNative: FAILED` or `Deprecated Gradle features`: they
    are normal. The first build downloads what it needs (about 1.6 GB of disk
    space) and took 3 minutes on an M4 Max.
-5. A Finder window opens with your jar, for example
-   `voxy-0.2.8-alpha-metal.1-e68957b8.jar`. Put it in the `mods` folder of a
+5. A Finder window opens with your jar, `voxy-0.2.8-alpha-metal.2-<commit>.jar`,
+   where `<commit>` is the release's commit. Put it in the `mods` folder of a
    Fabric profile with the versions below. The
    [player guide](docs/testing/player-track.md) shows each launcher step.
 
@@ -106,7 +106,7 @@ that builds not be shared, and anyone can build their own the same way.
 |---|---|
 | A window asking to install the command line developer tools | Click *Install*, wait until it finishes, then paste the block again. |
 | `ERROR: JAVA_HOME is set to an invalid directory` | The Java 21 is missing. Do step 1, then paste the block again without its first line. With another launcher, install a JDK 21 (for example Temurin 21 from adoptium.net) and use `export JAVA_HOME="$(/usr/libexec/java_home -v 21 --failfast)" &&` as the third line. |
-| `already exists and is not an empty directory` | You downloaded it before. Paste the block again without its first line. |
+| `already exists and is not an empty directory` | You built an earlier version. Paste this instead, which moves that folder to this version and builds it: `cd ~/voxy-mseries-support && git fetch --tags && git -c advice.detachedHead=false checkout v0.2.8-alpha-metal.2 && ./gradlew build && open build/libs` (with the `export JAVA_HOME=…` line of the block first if Terminal was closed). |
 
 Developers: `--branch` picks the pre-release tag; leave it out to build the
 newest `dev` code. `buildMetalNative` rebuilds the Metal library only when
@@ -125,14 +125,14 @@ I am not a programmer: explain each step simply, and tell me what every command
 does before you run it.
 
 1. Use only https://github.com/srjefers/voxy-mseries-support at the tag
-   v0.2.8-alpha-metal.1. Do not download a Voxy jar from anywhere else, do not
+   v0.2.8-alpha-metal.2. Do not download a Voxy jar from anywhere else, do not
    change any code and do not use sudo.
 2. Check that Git works (macOS may offer to install the command line developer
    tools) and find a Java 21. The official Minecraft launcher keeps one in
    "$HOME/Library/Application Support/minecraft/runtime/java-runtime-delta/mac-os-arm64/java-runtime-delta/jre.bundle/Contents/Home".
    If it is not there, help me install a JDK 21.
 3. Run these commands. A "buildMetalNative: FAILED" warning is expected:
-   git clone --branch v0.2.8-alpha-metal.1 https://github.com/srjefers/voxy-mseries-support.git ~/voxy-mseries-support
+   git clone --branch v0.2.8-alpha-metal.2 https://github.com/srjefers/voxy-mseries-support.git ~/voxy-mseries-support
    cd ~/voxy-mseries-support
    export JAVA_HOME="<the Java 21 folder>"
    ./gradlew build
@@ -368,27 +368,23 @@ look alarming but are not errors.
 
 ## Known issues / not yet done
 
-Seen during the on-device test campaign for 0.2.8-alpha-metal.1 (details in
+Seen during the on-device test campaigns for 0.2.8-alpha-metal.1 and .2 (details in
 `docs/testing/`). None of them crashes the game.
 
-- **Log noise after reloads and rejoins:** thousands of `Chunk already in map`
-  warnings after *Apply* in Video Settings, the shader toggle (K) or leaving
-  and re-entering a world in the same session. Untested risk: re-entering a
-  different world or place in the same session could leave a square hole in
-  the LODs until a restart.
-- After *Enable Voxy* OFF → ON, the mask that hides LODs under nearby chunks
-  can stay incomplete until the next reload.
 - **Holes in LOD terrain** inside an area pre-generated with Chunky were seen
   once (empty rectangles that fill in when you get close). The latest test, on
   a fresh 4 × 4 km Chunky area, had none.
 - **LOD trees** can show a single leaf colour until their chunks load.
-- **Seen from high above the ocean:** a grey wall, sometimes with a thin gap,
-  where nearby water meets LOD water, and thin dotted lines on far LOD water.
-  Cosmetic.
+- **Seen from high above the ocean:** a grey wall where nearby water meets LOD
+  water was reported in .1. Not seen since the border fixes of .2 (#47), but
+  not confirmed either.
 - **Spyglass and zoom:** visual glitches have been reported; not yet
   documented.
-- **With BSL:** distant grass can look brighter, as if unshadowed, away from
-  noon; and up to three rings can show at the LOD border.
+- **With BSL:**
+  - the circle at the Render Distance border is mostly gone (#60), but on
+    flat water a thin line can still show just past the border;
+  - far LOD leaves read a little yellower than Sodium's, and far LOD land a
+    little darker.
 - **LOD water animation phase** can be slightly offset from MC's water, and
   flowing water (rivers/waterfalls seen up close) uses a static frame —
   accepted open issue.
@@ -404,7 +400,8 @@ Seen during the on-device test campaign for 0.2.8-alpha-metal.1 (details in
   pack's dedicated `vxDepthTex` side-channel and the pack's own `#ifdef VOXY`
   branches apply fog, AO, shadows and clouds to LOD pixels. Full per-pixel
   pack lighting of LODs (material g-buffer resolve) is in progress
-  (milestone "Native Iris shader contract on Metal").
+  (milestone "Native Iris shader contract on Metal"). Tested with BSL 10.1.3;
+  other packs are next (see *What's next*).
 - **Fine lines crawl on far hills when the camera moves**, mostly on snow,
   inside Minecraft's render distance. Minecraft's terrain has no
   antialiasing; keep the render distance at 16 chunks or less so Voxy, which
@@ -415,6 +412,19 @@ Seen during the on-device test campaign for 0.2.8-alpha-metal.1 (details in
   *Shader Pack Settings → Environment → Fog → More Fog Density Config → LOD
   Density* to ~0.25 (BSL added that slider specifically for LOD mods). Equivalent file
   setting: `FOG_DENSITY_LOD=0.25` in `shaderpacks/<pack>.zip.txt`.
+
+## What's next: integration with other mods
+
+The next phase tests this port together with other mods:
+
+- **terrain generation mods**, such as Tellus, Tectonic and Terraform, among
+  others: far terrain that does not look like vanilla's;
+- **shader packs** beyond BSL, for example Luster, a shader pack made for Macs
+  ([#19](https://github.com/srjefers/voxy-mseries-support/issues/19)).
+
+Reports with these mods are welcome; use the
+[test report form](https://github.com/srjefers/voxy-mseries-support/issues/new?template=test-report.yml)
+and name the mods and versions.
 
 ## Documentation
 
