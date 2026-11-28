@@ -311,7 +311,7 @@ Without the official launcher, give the path of any Java 21 `java` instead:
    ends with BUILD SUCCESSFUL, and the jar carries the old library from the
    repository. Count it as a fail.
 4. Check the jar name from `ls`. It must be `voxy-<version>-<commit>.jar`,
-   for example `voxy-0.2.8-alpha-metal.1-<commit>.jar`.
+   for example `voxy-0.2.8-alpha-metal.2-<commit>.jar`.
 5. Check that the last line says `minos 13.0`.
 6. Run `git status --short`. If `libvoxy_metal.dylib` shows as modified, your
    Xcode built a different binary. That is not a fail of this test, but your
