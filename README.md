@@ -106,7 +106,7 @@ that builds not be shared, and anyone can build their own the same way.
 |---|---|
 | A window asking to install the command line developer tools | Click *Install*, wait until it finishes, then paste the block again. |
 | `ERROR: JAVA_HOME is set to an invalid directory` | The Java 21 is missing. Do step 1, then paste the block again without its first line. With another launcher, install a JDK 21 (for example Temurin 21 from adoptium.net) and use `export JAVA_HOME="$(/usr/libexec/java_home -v 21 --failfast)" &&` as the third line. |
-| `already exists and is not an empty directory` | You downloaded it before. Paste the block again without its first line. |
+| `already exists and is not an empty directory` | You built an earlier version. Paste this instead, which moves that folder to this version and builds it: `cd ~/voxy-mseries-support && git fetch --tags && git -c advice.detachedHead=false checkout v0.2.8-alpha-metal.2 && ./gradlew build && open build/libs` (with the `export JAVA_HOME=…` line of the block first if Terminal was closed). |
 
 Developers: `--branch` picks the pre-release tag; leave it out to build the
 newest `dev` code. `buildMetalNative` rebuilds the Metal library only when
