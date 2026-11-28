@@ -1198,6 +1198,7 @@ pipeline, disabling shaders!`, `loc=-1` or `vx fog cap FAILED`.
 | `VOXY_VX_LOD_AO_PARITY=0` | Dark tufts |
 | `VOXY_VX_LOD_LEAVES_PARITY=0` | A darker LOD forest past Sodium (H11) |
 | `VOXY_VX_ICE_TRANSLUCENT=0` | Dull far LOD ice with no sun glints |
+| `VOXY_VX_FOG_CAP_XZ=0` | A circle at the Render Distance border, LOD side darker (H23) |
 | `VOXY_TRANS_NEAR_CULL_FULLRING=0` | A bright ring on the sea just inside the border (H23) |
 | `VOXY_LOD_MIP_DISCARD=0` | Turns off mip-aware cutout discard |
 | `VOXY_LOD_PLANT_EDGEFADE=0` | Turns off the plant edge-on fade |

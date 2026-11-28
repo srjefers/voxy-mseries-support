@@ -34,23 +34,84 @@ import java.util.Locale;
  * counterpart lives in MetalVxResolvePass (voxy_translucent rewrite, live
  * uVxRingCull uniform). Single-line replacement keeps the pack's line
  * numbering intact for shader-error mapping.
+ *
+ * 2026-11-28 H23 (the circle at the RD 16 border, on the sea and on land;
+ * A/B on device, H23/agua-* runs): the clamp measured the 3D view distance
+ * against `far`, a horizontal radius. Sodium's chunks get the pack's fog at
+ * their real distance, so from a camera h blocks above the ground the LOD
+ * side of the border got fog(far) while the last real chunk got
+ * fog(sqrt(far^2 + h^2)): a step in fog right at the border, growing with
+ * height (99 blocks over the sea: LOD water 1.4 L* darker at 272 blocks,
+ * 3.5 L* at 400; VOXY_VX_FOG_CAP=0 brought it to +0.2). And past the border
+ * the fog stopped growing at once, a kink where the pack's own fog keeps
+ * rising. Now the cap is horizontal (the ray is scaled to where it crosses
+ * the far radius, so the border pixel gets exactly the fog of the last real
+ * chunk) and soft: past the radius the horizontal distance rolls off as
+ * far + W*(1 - exp(-(d - far)/W)), W = KNEE*far, same value and slope at the
+ * border, never more than far + W. Rain/night fog still stops growing,
+ * at far + W instead of far.
+ * VOXY_VX_FOG_CAP_XZ=0 restores the old 3D hard clamp (text byte-identical),
+ * VOXY_VX_FOG_KNEE tunes W (multiple of the cap distance, default 1.0, 0 =
+ * hard horizontal clamp).
  */
 public final class VxFogCap {
-    private static final float CAP_F = parseEnvF();
+    private static final float CAP_F = parseEnvF("VOXY_VX_FOG_CAP", 1.0f);
+    private static final boolean XZ = !"0".equals(System.getenv("VOXY_VX_FOG_CAP_XZ"));
+    private static final float KNEE = Math.max(parseEnvF("VOXY_VX_FOG_KNEE", 1.0f), 0f);
     private static boolean loggedApply, loggedMiss;
 
-    private static float parseEnvF() {
-        String v = System.getenv("VOXY_VX_FOG_CAP");
-        if (v == null || v.isBlank()) return 1.0f;
+    private static float parseEnvF(String name, float def) {
+        String v = System.getenv(name);
+        if (v == null || v.isBlank()) return def;
         try {
-            return Float.parseFloat(v.trim());
+            float f = Float.parseFloat(v.trim());
+            return Float.isNaN(f) ? def : f;
         } catch (NumberFormatException e) {
-            return 1.0f;
+            return def;
         }
     }
 
     public static float capFactor() {
         return CAP_F;
+    }
+
+    /** H23: horizontal soft cap on (false = the old 3D hard clamp). */
+    public static boolean horizontal() {
+        return XZ;
+    }
+
+    /** Short description of the active cap for the [Metal-LODTEST] lines. */
+    public static String describe() {
+        if (!XZ) return "3D hard clamp (VOXY_VX_FOG_CAP_XZ=0)";
+        return KNEE > 0f
+                ? String.format(Locale.ROOT, "horizontal, soft knee W=%.2f*cap (VOXY_VX_FOG_CAP_XZ=0 restores the"
+                        + " 3D hard clamp, VOXY_VX_FOG_KNEE tunes W, 0 = hard)", KNEE)
+                : "horizontal, hard (VOXY_VX_FOG_KNEE=0; VOXY_VX_FOG_CAP_XZ=0 restores the 3D clamp)";
+    }
+
+    /**
+     * H23: one GLSL statement block (single line) that calls the pack's Fog() on {@code colour} with
+     * {@code viewPos} pulled in along its ray so its horizontal distance never exceeds the soft cap.
+     * {@code capExpr} is the cap distance in blocks (a GLSL float expression), {@code sfx} keeps the
+     * local names unique per site. Needs {@code gbufferModelViewInverse} in scope (deferred1: the
+     * uniform; voxy_translucent: the pack's alias of vxModelViewInv). The names start with voxyFogPos
+     * so {@link #patchDeferred} still sees the line as patched.
+     */
+    public static String horizontalCapCall(String colour, String viewPos, String capExpr, String sfx) {
+        String p = "voxyFogPos" + sfx, h = "voxyFogH" + sfx, m = "voxyFogMax" + sfx;
+        String roll;
+        if (KNEE > 0f) {
+            String w = "voxyFogW" + sfx;
+            roll = String.format(Locale.ROOT,
+                    " float %4$s = %3$s * %5$.3f; %1$s *= (%3$s + %4$s * (1.0 - exp((%3$s - %2$s) / %4$s))) / %2$s;",
+                    p, h, m, w, KNEE);
+        } else {
+            roll = String.format(Locale.ROOT, " %1$s *= %3$s / %2$s;", p, h, m);
+        }
+        return "{ vec3 " + p + " = " + viewPos + "; float " + m + " = " + capExpr + ";"
+                + " float " + h + " = length((mat3(gbufferModelViewInverse) * " + p + ").xz);"
+                + " if (" + h + " > " + m + ") {" + roll + " }"
+                + " Fog(" + colour + ", " + p + "); }";
     }
 
     public static boolean enabled() {
@@ -93,7 +154,10 @@ public final class VxFogCap {
             // Never run past the vx branch into the Distant Horizons branch.
             if (l.contains("DISTANT_HORIZONS") || l.contains("dhZ")) break;
             if (l.contains(DEFERRED_ANCHOR)) {
-                String capped = String.format(Locale.ROOT,
+                String capped = XZ
+                        ? horizontalCapCall("color.rgb", "viewPos.xyz",
+                                String.format(Locale.ROOT, "max(far * %.3f, 64.0)", CAP_F), "")
+                        : String.format(Locale.ROOT,
                         "{ vec3 voxyFogPos = viewPos.xyz; float voxyFogLen = length(voxyFogPos);"
                         + " float voxyFogMax = max(far * %.3f, 64.0);"
                         + " if (voxyFogLen > voxyFogMax) voxyFogPos *= voxyFogMax / voxyFogLen;"
@@ -106,8 +170,8 @@ public final class VxFogCap {
                             "[Metal-LODTEST] vx fog cap ON (%s vx-branch Fog clamped to"
                             + " %.2f*far — rain/night fog saturated at LOD distances and washed"
                             + " the far ring to sky; weather A/B confirmed trigger+untrigger);"
-                            + " VOXY_VX_FOG_CAP=0 reverts, value tunes the cap multiple",
-                            pathLabel, CAP_F));
+                            + " VOXY_VX_FOG_CAP=0 reverts, value tunes the cap multiple; cap %s",
+                            pathLabel, CAP_F, describe()));
                 }
                 return ImmutableList.copyOf(out);
             }
